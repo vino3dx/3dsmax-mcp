@@ -35,6 +35,9 @@ desktop.ini
 .tmp-e2e/
 .tmp-config-persistence-test/
 
+# Scratch directory written by test/catalog_contract_test.py
+.tmp-contract/
+
 # Local pre-change snapshots (project convention: backup/<yyyymmdd>_<desc>/).
 # Kept on disk as the safety net; the merged-away previous iteration (with its
 # own git history) lives in backup/20261018_project_merge_before/.

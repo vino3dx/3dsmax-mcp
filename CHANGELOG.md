@@ -6,6 +6,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Sixth static gate: `test/catalog_contract_test.py`.** The live regression
+  script talks straight to the bridge, so the Python MCP layer (required
+  validation, preset merging, type coercion, the `collapse_stack` alias) had no
+  coverage. The new test drives the real `maxmcp` server over stdio against a
+  MockBridge (port 8796, never 8765) and checks: (A) a per-tool static contract
+  over all 384 tools — unique names, category prefix convention with a
+  documented whitelist, bilingual descriptions, schema legality, preset keys
+  limited to bridge-recognised keys, bridge methods registered in MAXScript
+  (parsing reused from `registration_sync_test.py`), mutating-flag heuristic;
+  (B) an output-only dangerous-tool gate table (19 mutating delete/remove/
+  clear/collapse/reset/cleanup/optimize tools with confirm and undo status);
+  (C) MockBridge payload assertions — minimal legal arguments per tool,
+  required-parameter rejection without a bridge call, type coercion, and key
+  regressions around the collapse gate and payload shapes. `--list` prints the
+  case inventory without starting any service, `--json` emits a pure machine
+  report, scratch files live in `.tmp-contract/` and are removed unless
+  `--keep-tmp`. Result: 384 tools checked, 0 violations, 580/580 payload cases
+  passed. The "mandatory checks" list is now six gates (README, CHANGELOG,
+  docs/BRIDGE_CONVENTIONS.md, repo memory).
+
 ### Changed
 
 - **`render_batch` no longer lies about missing cameras.** A job whose `camera`

@@ -598,6 +598,7 @@ mcpSelfTest()
 ├── test/                      # 静态与诊断测试（无需 Max 即可跑大部分）
 │   ├── ms_check.py            #   编码 / 括号 / 方法链取成员 / 符号检查
 │   ├── registration_sync_test.py #  Python catalog ↔ MAXScript 注册 ↔ 部署树漂移
+│   ├── catalog_contract_test.py #  Python 层契约测试（第六关：schema/preset/强转/门禁）
 │   ├── modeling_ext_test.py   #   建模扩展实机测试（需要 Max 桥接监听）
 │   ├── bridge_*_test.py       #   桥接契约 / 管道 / 重启测试
 │   └── mock_bridge.py         #   无 Max 的 TCP 模拟桥接
@@ -651,6 +652,12 @@ python test/ms_check.py src/ms
 
 # 注册一致性：catalog ↔ mcpRegister ↔ 部署树（ENU/CHS）是否漂移
 python test/registration_sync_test.py
+
+# Python 层契约（第六关）：全部工具的 schema / preset / 必填校验 / 类型强转 /
+#         危险工具门禁，MockBridge 顶替 Max，不连 8765
+python test/catalog_contract_test.py            # 人读输出
+python test/catalog_contract_test.py --list     # 只列用例清单，不启任何服务
+python test/catalog_contract_test.py --json     # 机器可读报告
 
 # 端到端：用 MockBridge 顶替 Max，验证 initialize / tools/list / tools/call /
 #         中文往返 / 错误透传 / 语言切换 / 配置持久化

@@ -240,7 +240,12 @@ mcpRegister "mod_add" mcpH_mod_add label:"Add Modifier"
 ## 7. Checklist before you finish
 
 1. Every catalog tool has a matching `mcpRegister "<name>"`.
-2. `python src/maxmcp/__main__.py --selftest-python` prints *all checks passed*.
-3. `python src/maxmcp/__main__.py --list-tools` shows the new names.
-4. No forbidden constructs, no trailing backslash continuations.
-5. Every user visible string goes through `mcpMsg` or the bilingual catalog.
+2. `PYTHONPATH=src/python python -m maxmcp --selftest-python` prints *all checks passed*.
+3. `PYTHONPATH=src/python python -m maxmcp --list-tools` shows the new names.
+4. `python test/catalog_contract_test.py` (sixth static gate) reports *catalog
+   contract holds*: schema legality, preset keys, required-parameter rejection
+   and type coercion for every tool, via MockBridge -- no Max needed.  New
+   naming or mutating-flag exceptions go into the whitelists in that file with
+   a written reason.
+5. No forbidden constructs, no trailing backslash continuations.
+6. Every user visible string goes through `mcpMsg` or the bilingual catalog.
