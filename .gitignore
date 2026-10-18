@@ -1,0 +1,43 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+build/
+dist/
+.pytest_cache/
+.mypy_cache/
+
+# Node
+node_modules/
+
+# Logs / runtime
+*.log
+logs/
+runtime/
+
+# Editors
+.vscode/
+.idea/
+*.swp
+
+# OS
+Thumbs.db
+desktop.ini
+.DS_Store
+
+# Local test scenes / renders
+/tmp/
+/out/
+
+# Scratch directories written by scripts/test_e2e.py
+.tmp-e2e/
+.tmp-config-persistence-test/
+
+# Local pre-change snapshots (project convention: backup/<yyyymmdd>_<desc>/).
+# Kept on disk as the safety net; the merged-away previous iteration (with its
+# own git history) lives in backup/20261018_project_merge_before/.
+backup/
+
+.workbuddy/

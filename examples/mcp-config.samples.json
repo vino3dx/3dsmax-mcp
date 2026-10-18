@@ -1,0 +1,172 @@
+{
+  "_comment": [
+    "Sample MCP client configs for 3dsmax-mcp.",
+    "scripts/install.py writes these for you; this file is for reference or for",
+    "clients the installer does not know about.",
+    "Replace <YOU> with your Windows user name, and adjust the paths if you",
+    "installed the server somewhere other than %LOCALAPPDATA%\\3dsmax-mcp.",
+    "",
+    "MCP is a client-side capability: the model behind the client (Claude, GPT,",
+    "GLM, DeepSeek, Kimi, ...) does not matter, only that the client speaks MCP.",
+    "Section A lists stdio (client launches the process).",
+    "Section B lists HTTP (cloud/URL-registered clients that cannot)."
+  ],
+
+  "A_stdio": {
+
+    "_workbuddy": {
+      "path": "%USERPROFILE%\\.workbuddy\\mcp.json",
+      "body": {
+        "mcpServers": {
+          "3dsmax-mcp": {
+            "command": "C:\\Users\\<YOU>\\AppData\\Local\\Programs\\Python\\Python313\\python.exe",
+            "args": ["-m", "maxmcp", "--port", "8765", "--language", "auto", "--profile", "full"],
+            "env": {
+              "PYTHONPATH": "C:\\Users\\<YOU>\\AppData\\Local\\3dsmax-mcp",
+              "MAXMCP_PORT": "8765",
+              "MAXMCP_LANGUAGE": "auto"
+            }
+          }
+        }
+      }
+    },
+
+    "_cursor": {
+      "path": "%USERPROFILE%\\.cursor\\mcp.json",
+      "body": {
+        "mcpServers": {
+          "3dsmax-mcp": {
+            "command": "C:\\Users\\<YOU>\\AppData\\Local\\Programs\\Python\\Python313\\python.exe",
+            "args": ["-m", "maxmcp", "--port", "8765", "--language", "auto", "--profile", "full"],
+            "env": {
+              "PYTHONPATH": "C:\\Users\\<YOU>\\AppData\\Local\\3dsmax-mcp",
+              "MAXMCP_PORT": "8765",
+              "MAXMCP_LANGUAGE": "auto"
+            }
+          }
+        }
+      }
+    },
+
+    "_claude_desktop": {
+      "path": "%APPDATA%\\Claude\\claude_desktop_config.json",
+      "body": {
+        "mcpServers": {
+          "3dsmax-mcp": {
+            "command": "C:\\Users\\<YOU>\\AppData\\Local\\Programs\\Python\\Python313\\python.exe",
+            "args": ["-m", "maxmcp", "--port", "8765", "--language", "auto", "--profile", "full"],
+            "env": {
+              "PYTHONPATH": "C:\\Users\\<YOU>\\AppData\\Local\\3dsmax-mcp",
+              "MAXMCP_PORT": "8765",
+              "MAXMCP_LANGUAGE": "auto"
+            }
+          }
+        }
+      }
+    },
+
+    "_claude_code": {
+      "path": "%USERPROFILE%\\.claude.json",
+      "body": {
+        "mcpServers": {
+          "3dsmax-mcp": {
+            "type": "stdio",
+            "command": "C:\\Users\\<YOU>\\AppData\\Local\\Programs\\Python\\Python313\\python.exe",
+            "args": ["-m", "maxmcp", "--port", "8765", "--language", "auto"],
+            "env": { "PYTHONPATH": "C:\\Users\\<YOU>\\AppData\\Local\\3dsmax-mcp" }
+          }
+        }
+      }
+    },
+
+    "_cline_vscode": {
+      "path": "%APPDATA%\\Code\\User\\globalStorage\\saoudrizwan.claude-dev\\settings\\cline_mcp_settings.json",
+      "body": {
+        "mcpServers": {
+          "3dsmax-mcp": {
+            "command": "C:\\Users\\<YOU>\\AppData\\Local\\Programs\\Python\\Python313\\python.exe",
+            "args": ["-m", "maxmcp", "--port", "8765", "--language", "auto"],
+            "env": { "PYTHONPATH": "C:\\Users\\<YOU>\\AppData\\Local\\3dsmax-mcp" }
+          }
+        }
+      }
+    },
+
+    "_deepseek_harness": {
+      "note": "DeepSeek Harness supports both stdio child processes and Streamable HTTP. Use the stdio block above, or the HTTP block in section B.",
+      "body": { "mcpServers": { "3dsmax-mcp": { "command": "<python.exe>", "args": ["-m", "maxmcp"] } } }
+    }
+  },
+
+  "B_http": {
+    "_why": [
+      "Cloud-side agents (智谱 BigModel, 阿里云百炼, any web console) cannot spawn",
+      "a process on your workstation, so they register an MCP server by URL.",
+      "Start the endpoint first and leave it running:",
+      "  %LOCALAPPDATA%\\3dsmax-mcp\\start-http.bat",
+      "  or:  python -m maxmcp --transport http --http-port 8770"
+    ],
+
+    "_streamable_http": {
+      "note": "POST /mcp - the current spec. Cursor, Cline, Claude Code all accept this shape.",
+      "body": {
+        "mcpServers": {
+          "3dsmax-mcp": {
+            "type": "http",
+            "url": "http://127.0.0.1:8770/mcp"
+          }
+        }
+      }
+    },
+
+    "_with_token": {
+      "note": "When you start with --http-token. Also required if you bind beyond localhost.",
+      "body": {
+        "mcpServers": {
+          "3dsmax-mcp": {
+            "type": "http",
+            "url": "http://127.0.0.1:8770/mcp",
+            "headers": { "Authorization": "Bearer YOUR_TOKEN" }
+          }
+        }
+      }
+    },
+
+    "_legacy_sse": {
+      "note": "GET /sse + POST /messages - the 2024-11-05 transport. Older Cline builds and several Chinese platforms still speak this.",
+      "body": {
+        "mcpServers": {
+          "3dsmax-mcp": {
+            "type": "sse",
+            "url": "http://127.0.0.1:8770/sse"
+          }
+        }
+      }
+    },
+
+    "_reachability": [
+      "A cloud platform still has to reach your machine. 127.0.0.1 is only visible",
+      "locally, so you need port forwarding (frp / ngrok / a reverse proxy) to",
+      "publish the endpoint. That exposes control of your 3ds Max scene to whoever",
+      "can reach the URL - always combine it with --http-token."
+    ]
+  },
+
+  "_notes": [
+    "Every path must be absolute and backslashed. MCP clients do not expand ~ and",
+    "do not inherit your shell PATH, which is why PYTHONPATH is set explicitly.",
+    "",
+    "language=auto follows the 3ds Max UI language (ENU -> English, CHS/CHT ->",
+    "Chinese). Pin it with \"zh\" or \"en\" to stop following.",
+    "",
+    "Smaller --profile values save context: core=119, pipeline=170, animation=178,",
+    "lookdev=188, modeling=196, full=375.",
+    "",
+    "Point at the source tree instead of the install dir while developing:",
+    "  \"env\": { \"PYTHONPATH\": \"D:\\\\Workspace\\\\Code\\\\3dsmax-ai-mcp\\\\src\" }",
+    "",
+    "If a client cannot spawn python.exe directly, wrap it:",
+    "  \"command\": \"cmd\", \"args\": [\"/c\", \"python\", \"-m\", \"maxmcp\", ...]"
+  ]
+}
+

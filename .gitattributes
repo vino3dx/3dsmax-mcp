@@ -1,0 +1,10 @@
+# MAXScript and ini files are deployed byte-for-byte into 3ds Max; git must
+# never rewrite their line endings (the tree is deliberately mixed CRLF/LF
+# and both shapes are proven in the field).  These -text rules must come
+# AFTER the catch-all below: last matching pattern wins.
+* text=auto
+
+*.ms -text
+*.mcr -text
+*.ini -text
+*.bat -text
