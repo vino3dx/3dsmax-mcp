@@ -31,6 +31,7 @@ def _prim_props() -> Dict[str, object]:
                     "Length (Box/Plane/Rectangle/Cone etc). Segments drive poly count - keep 12-16 for game assets."),
         "width": n("宽度。", "Width."),
         "height": n("高度。", "Height."),
+        "depth": n("深度（Pyramid）。", "Depth (Pyramid)."),
         "radius": n("半径（Sphere/Torus/Cylinder 等）。", "Radius (Sphere/Torus/Cylinder etc)."),
         "radius1": n("第一半径（Donut/Tube/Helix/Cone 顶）。", "First radius (Donut/Tube/Helix/Cone top)."),
         "radius2": n("第二半径（Donut/Tube/Helix/Cone 底）。", "Second radius (Donut/Tube/Helix/Cone bottom)."),
@@ -166,6 +167,7 @@ TOOLS.append(tool(
         "width": n("宽度。", "Width."),
         "cornerRadius": n("圆角半径。", "Corner radius."),
     }),
+    preset={"class": "Rectangle"},
 ))
 
 TOOLS.append(tool(
@@ -173,6 +175,7 @@ TOOLS.append(tool(
     "创建一个圆样条。radius 控制大小；常用于轮胎/孔洞轮廓。",
     "Create a circle spline. radius sizes it; common for tyres/hole outlines.",
     props=dict(_spline_props(), **{"radius": n("半径。", "Radius.")}),
+    preset={"class": "Circle"},
 ))
 
 TOOLS.append(tool(
@@ -183,6 +186,7 @@ TOOLS.append(tool(
         "length": n("长轴长度。", "Major axis length."),
         "width": n("短轴长度。", "Minor axis length."),
     }),
+    preset={"class": "Ellipse"},
 ))
 
 TOOLS.append(tool(
@@ -193,6 +197,7 @@ TOOLS.append(tool(
         "radius": n("外接圆半径。", "Circumradius."),
         "sides": i("边数，至少 3。", "Edge count, >=3."),
     }),
+    preset={"class": "NGon"},
 ))
 
 TOOLS.append(tool(
@@ -203,6 +208,7 @@ TOOLS.append(tool(
         "radius1": n("外圆半径。", "Outer radius."),
         "radius2": n("内圆半径。", "Inner radius."),
     }),
+    preset={"class": "Donut"},
 ))
 
 TOOLS.append(tool(
@@ -214,6 +220,7 @@ TOOLS.append(tool(
         "from": n("起始角（度）。", "Start angle (degrees)."),
         "to": n("结束角（度）。", "End angle (degrees)."),
     }),
+    preset={"class": "Arc"},
 ))
 
 TOOLS.append(tool(
@@ -226,6 +233,7 @@ TOOLS.append(tool(
         "height": n("高度。", "Height."),
         "turns": n("圈数。", "Turns."),
     }),
+    preset={"class": "Helix"},
 ))
 
 TOOLS.append(tool(
@@ -237,6 +245,7 @@ TOOLS.append(tool(
         "size": n("字号。", "Font size."),
         "thickness": n("描边粗细。", "Stroke thickness."),
     }),
+    preset={"class": "Text"},
     required=["text"],
 ))
 

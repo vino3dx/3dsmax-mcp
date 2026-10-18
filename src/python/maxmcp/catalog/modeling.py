@@ -54,14 +54,25 @@ TOOLS.append(tool(
 TOOLS.append(tool(
     "collapse_stack", "modeling",
     "塌陷（应用并删除）对象上的整个修改器堆栈，把结果烘焙进基础对象。"
-    "**此操作会永久丢失所有修改器的参数可调性**，仅在对结果满意时使用。",
+    "**此操作不可逆：所有修改器参数将永久丢失，子对象编辑数据也会被烘焙。** "
+    "兼容入口：等价于 mod_collapse（bridge 指向同一受保护路径），"
+    "必须显式传入 confirm=true 才会执行；新代码请直接用 mod_collapse。",
     "Collapse (apply and delete) the entire modifier stack of an object, baking the result "
-    "into the base object. **This permanently destroys the editability of every modifier**; "
-    "only do it when you are happy with the result.",
+    "into the base object. **Irreversible: every modifier parameter is lost for good and "
+    "sub-object edits get baked in.** Compatibility entry: equivalent to mod_collapse "
+    "(bridged to the same guarded path); only runs when confirm=true is passed explicitly. "
+    "Prefer mod_collapse in new code.",
     props={
         "objects": arr("对象名列表；省略则使用当前选择。",
                        "Object names; omit to use the current selection.", items="string"),
+        "modifier": s("可选：堆栈中必须存在的修改器名/类名/索引，作为批量操作的安全过滤条件。",
+                      "Optional: a modifier (name/class/index) that must exist on the stack, "
+                      "used as a safety filter for batch calls."),
+        "confirm": b("必须为 true 才会执行塌陷。默认 false（拒绝执行）。",
+                     "Must be true for the collapse to run. Default false (refused)."),
     },
+    required=["confirm"],
+    bridge="mod_collapse",
 ))
 
 

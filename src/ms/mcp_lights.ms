@@ -72,10 +72,10 @@ fn mcpH_light_create params =
   (
     "omni": ( mcpEnsureClass "Omnilight"; l = Omnilight() )
     "free_spot": ( mcpEnsureClass "Spotlight"; l = Spotlight() )
-    "spot": ( mcpEnsureClass "Target_Spot"; l = Target_Spot() )
+    "spot": ( mcpEnsureClass "Targetspot"; l = Targetspot() )
     "free_directional": ( mcpEnsureClass "Directionallight"; l = Directionallight() )
-    "directional": ( mcpEnsureClass "Target_Directional"; l = Target_Directional() )
-    "target_directional": ( mcpEnsureClass "Target_Directional"; l = Target_Directional() )
+    "directional": ( mcpEnsureClass "Targetdirectionallight"; l = Targetdirectionallight() )
+    "target_directional": ( mcpEnsureClass "Targetdirectionallight"; l = Targetdirectionallight() )
     "mr_area_omni": ( mcpEnsureClass "mr_Area_Omni"; l = mr_Area_Omni() )
     "mr_area_spot": ( mcpEnsureClass "mr_Area_Spot"; l = mr_Area_Spot() )
     "fstorm": ( mcpEnsureClass "FStormLight"; l = FStormLight() )
@@ -97,7 +97,16 @@ fn mcpH_light_create params =
   try ( l.decayType = dt ) catch()
   if multiplier >= 0 do ( try ( l.multiplier = multiplier ) catch ( try ( l.intensity = multiplier ) catch() ) )
   if coneAngle >= 0 do ( try ( l.hotspot = coneAngle ) catch() )
-  if penumbra >= 0 do ( try ( l.falloff = (coneAngle + penumbra) ) catch ( try ( l.spread = penumbra ) catch() ) )
+  if penumbra >= 0 do
+  (
+    -- penumbra is the angle *beyond* the hotspot: the base is the cone angle
+    -- when one was supplied, otherwise the hotspot the light already has.
+    -- Adding the raw -1.0 "not supplied" sentinel used to yield
+    -- falloff = penumbra - 1, which can end up below the hotspot.
+    local base = coneAngle
+    if base < 0 do ( try ( base = l.hotspot ) catch ( base = 0.0 ) )
+    try ( l.falloff = (base + penumbra) ) catch ( try ( l.spread = penumbra ) catch() )
+  )
   if typeStr == "sun" do
   (
     if azimuth > -999.0 do ( try ( l.azimuth = azimuth ) catch ( try ( l.sun.azimuth = azimuth ) catch() ) )
@@ -161,7 +170,18 @@ fn mcpH_light_set params =
   if (mcpGet params "castShadows") != undefined do ( try ( l.castShadows = mcpBool params "castShadows" ) catch() )
   if (mcpGet params "enabled") != undefined do ( try ( l.enabled = mcpBool params "enabled" ) catch() )
   if (mcpGet params "coneAngle") != undefined do ( try ( l.hotspot = mcpNum params "coneAngle" ) catch() )
-  if (mcpGet params "penumbra") != undefined do ( try ( l.falloff = ((mcpNum params "coneAngle" default:0.0) + (mcpNum params "penumbra")) ) catch ( try ( l.spread = mcpNum params "penumbra" ) catch() ) )
+  if (mcpGet params "penumbra") != undefined do
+  (
+    -- Same rule as light_create: penumbra sits on top of the hotspot, so the
+    -- base is the supplied cone angle or the hotspot already on the light
+    -- (the old 0.0 default ignored the current hotspot entirely).
+    local base = 0.0
+    if (mcpGet params "coneAngle") != undefined then
+      ( base = (mcpNum params "coneAngle") )
+    else
+      ( try ( base = l.hotspot ) catch ( base = 0.0 ) )
+    try ( l.falloff = (base + (mcpNum params "penumbra")) ) catch ( try ( l.spread = (mcpNum params "penumbra") ) catch() )
+  )
   if (mcpGet params "decay") != undefined do
   (
     local d = toLower (mcpStr params "decay" default:"none")

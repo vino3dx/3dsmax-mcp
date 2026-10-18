@@ -57,14 +57,26 @@ fn mcpH_create_primitive params =
     local pos = mcpGet params "position"
     if pos != undefined do ( try ( obj.position = (mcpPoint3From pos) ) catch() )
 
-    local dimProps = #("length","width","height","radius","radius1","radius2","segments",
+    local dimProps = #("length","width","height","depth","radius","radius1","radius2","segments",
                        "sides","chamfer","fillet","turns","heightSegs","widthSegs","lengthSegs",
-                       "capSegs","cornerRadius","from","to","smooth","genSmooth","axis")
+                       "capSegs","cornerRadius","from","to","genSmooth","axis")
     for pn in dimProps do
     (
         if (mcpGet params pn) != undefined do
         (
             try ( setProperty obj pn (mcpNum params pn) ) catch()
+        )
+    )
+
+    -- Boolean dimension props must go through mcpBool: mcpNum maps a JSON
+    -- true to its default 0.0 (a Boolean is not a Number in MAXScript), which
+    -- silently turned smooth=true into smooth=false on the Teapot.
+    local boolProps = #("smooth")
+    for pn in boolProps do
+    (
+        if (mcpGet params pn) != undefined do
+        (
+            try ( setProperty obj pn (mcpBool params pn) ) catch()
         )
     )
 

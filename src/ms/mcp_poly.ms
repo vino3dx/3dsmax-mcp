@@ -10,7 +10,6 @@
 -----------------------------------------------------------------------------*/
 
 global mcpH_convert_to_editable_poly, mcpH_convert_to_editable_mesh, mcpH_convert_to_nurbs
-global mcpH_collapse_stack
 global mcpH_poly_info, mcpH_poly_get_verts, mcpH_poly_get_faces, mcpH_poly_get_edges, mcpH_poly_get_stats
 global mcpH_poly_set_vertex, mcpH_poly_move_vertices, mcpH_poly_weld_vertices
 global mcpH_poly_target_weld, mcpH_poly_chamfer_vertices, mcpH_poly_remove_vertices
@@ -168,23 +167,11 @@ fn mcpH_convert_to_nurbs params =
     mcpObj p
 )
 
-fn mcpH_collapse_stack params =
-(
-    local nodes = mcpResolveNodes (mcpArr params "objects") fallbackToSelection:true
-    local applied = #()
-    local failures = #()
-    for n in nodes do
-    (
-        local ok = true
-        try ( collapseStack n; append applied n.name )
-        catch ( ok = false; append failures (n.name + ": " + (getCurrentException())) )
-    )
-    local p = #()
-    mcpPair p "applied" applied
-    mcpPair p "failures" failures
-    mcpPair p "message" (mcpMsg "msg.ok")
-    mcpObj p
-)
+/*------------------------------------------------------ collapse_stack note -*/
+-- collapse_stack no longer has its own handler here: the catalog entry is a
+-- controlled alias that bridges to mod_collapse (mcp_modeling_ext.ms), which
+-- refuses to run without an explicit confirm=true.  The old unguarded handler
+-- was removed so exactly one collapse path exists (D4 unification, 2026-10-18).
 
 
 /*-------------------------------------------------------------- poly query ---*/
@@ -1272,7 +1259,6 @@ fn mcpRegisterPoly =
     mcpRegister "convert_to_editable_poly" mcpH_convert_to_editable_poly label:"Convert to Editable Poly"
     mcpRegister "convert_to_editable_mesh" mcpH_convert_to_editable_mesh label:"Convert to Editable Mesh"
     mcpRegister "convert_to_nurbs" mcpH_convert_to_nurbs label:"Convert to NURBS"
-    mcpRegister "collapse_stack" mcpH_collapse_stack label:"Collapse Modifier Stack"
     mcpRegister "poly_info" mcpH_poly_info undoable:false label:"Poly Info"
     mcpRegister "poly_get_verts" mcpH_poly_get_verts undoable:false label:"Get Poly Vertices"
     mcpRegister "poly_get_faces" mcpH_poly_get_faces undoable:false label:"Get Poly Faces"

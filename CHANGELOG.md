@@ -4,6 +4,45 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- **One guarded collapse path (D4).** `collapse_stack` is now a controlled
+  alias of `mod_collapse`: the catalog entry bridges to `mod_collapse` and
+  requires `confirm=true`, so the previously unguarded collapse path is gone.
+  The duplicate `mcpH_collapse_stack` handler and its `mcpRegister` were
+  removed from `mcp_poly.ms` (MAXScript registered commands 354 → 353).
+  `mod_collapse` stays the main entry; its behaviour is unchanged.
+
+### Fixed
+
+- **Spline creation tools were dead on arrival (D3).** `create_rectangle`,
+  `create_circle`, `create_ellipse`, `create_ngon`, `create_donut`,
+  `create_arc`, `create_helix` and `create_text` never sent the `class` the
+  shared `mcpH_create_spline` handler requires (no `preset={"class": ...}`,
+  unlike the primitive wrappers), so every call failed with
+  `err.missing_param: class`. Each tool now carries its class preset.
+- **`smooth=true` could not enable smoothing (D3).** The generic primitive
+  creator coerced every dimension param with `mcpNum`; a JSON `true` is not a
+  Number in MAXScript, so it degraded to `0.0` (false). Boolean props now go
+  through `mcpBool`.
+- **`create_pyramid` ignored its documented `depth` parameter (D3).** `depth`
+  was missing from `_prim_props` and from the handler's dimension list; added
+  to both.
+- **Penumbra arithmetic leaked sentinel defaults (D2).** `light_create` /
+  `light_set` computed `falloff` from the `-1.0` / `0.0` "not supplied"
+  defaults when only `penumbra` was given, producing `penumbra - 1` /
+  `penumbra` instead of `hotspot + penumbra`. The base now falls back to the
+  light's current hotspot.
+- **`Target_Spot` / `Target_Directional` are not 3ds Max class names (D2).**
+  `light_create` with `type=spot|directional|target_directional` failed with
+  `class_missing` on every call (live-tested 2026-10-17 before the local Max
+  environment broke). The real MAXScript classes are `Targetspot` and
+  `Targetdirectionallight` (MAXScript class names are case-insensitive but
+  never contain underscores); both constructors and their `mcpEnsureClass`
+  guards now use them.
+
 ## [1.2.0] - 2026-10-18
 
 Vision feedback, a modeling/poly extension round, automatic UI language, and a
