@@ -25,6 +25,7 @@ An MCP (Model Context Protocol) plugin that gives AI agents full control of Auto
 - [开发](#开发)
 - [许可](#许可)
 
+
 ---
 
 ## 这是什么

@@ -9,7 +9,7 @@
      * Frame values are converted with `frame * ticksPerFrame` so nothing assumes
        30 fps - the scene frame rate is always respected.
      * Undo is handled centrally by the dispatcher; we never call theHold here.
-     * Every user visible string goes through mcpMsg or a bilingual catalog.
+     * Every user visible string goes through mcpMsg or a bilingual
 -----------------------------------------------------------------------------*/
 
 global mcpAnimValueFor, mcpAnimSetKeyAt, mcpGetAnimController, mcpControllerClass
