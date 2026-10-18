@@ -142,6 +142,7 @@ python scripts/verify.py                            # static integrity — run a
 PYTHONPATH=src/python python -m maxmcp --selftest-python   # catalog + wire codec, no Max needed
 PYTHONPATH=src/python python scripts/test_e2e.py           # full MCP round trip via MockBridge
 python test/catalog_contract_test.py                # 6th gate: Python-layer contract, no Max needed
+python test/offline_lint_helper.py                  # 7th gate: source lint + catalog audit, no Max needed
 python test/ms_check.py src/ms                      # encoding / brackets / method-chain / symbols
 python test/registration_sync_test.py               # catalog <-> registry <-> deployed trees
 python scripts/doctor.py                            # end-to-end install + live handshake
@@ -149,9 +150,10 @@ python scripts/install.py --list                    # detection only, installs n
 ```
 
 `doctor.py` is the only check that needs a real 3ds Max. Everything else is green
-without one, which is why the static harnesses exist. The six no-Max gates are
-`verify.py`, `--selftest-python`, `test_e2e.py`, `catalog_contract_test.py`,
-`ms_check.py` and `registration_sync_test.py`.
+without one, which is why the static harnesses exist. The seven no-Max gates are
+`verify.py` (which runs the doc-alignment audit and the offline lint
+in-process), `--selftest-python`, `test_e2e.py`, `catalog_contract_test.py`,
+`offline_lint_helper.py`, `ms_check.py` and `registration_sync_test.py`.
 
 Inside Max, `mcpSelfTest()` (or the `bridge_selftest` tool) runs 13 live checks
 including a Chinese round trip and a UI-language probe (`mcpMaxLanguageCode()` +

@@ -247,5 +247,11 @@ mcpRegister "mod_add" mcpH_mod_add label:"Add Modifier"
    and type coercion for every tool, via MockBridge -- no Max needed.  New
    naming or mutating-flag exceptions go into the whitelists in that file with
    a written reason.
-5. No forbidden constructs, no trailing backslash continuations.
-6. Every user visible string goes through `mcpMsg` or the bilingual catalog.
+5. `python test/offline_lint_helper.py` (seventh static gate) reports *offline
+   lint: clean*: Python syntax / encoding / undefined names / hardcoded paths,
+   MAXScript encoding and bracket balance, and the catalog tool definitions
+   (bilingual descriptions, parameter types, default and enum value types).
+   `scripts/verify.py` runs it in-process and prints the per-module
+   distribution table.  Rules and rationale: `docs/OFFLINE_LINT_GUIDE.md`.
+6. No forbidden constructs, no trailing backslash continuations.
+7. Every user visible string goes through `mcpMsg` or the bilingual catalog.

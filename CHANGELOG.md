@@ -8,6 +8,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Seventh static gate: `test/offline_lint_helper.py`.** No gate owned the
+  Python source outside the catalog's import graph (`scripts/` and `test/`
+  are never imported by the server), so a syntax error, a stray encoding or
+  a name typo there only surfaced when someone happened to run that exact
+  file. The new helper closes that gap offline -- no 3ds Max, no port, no
+  registry: it parses every `.py` in the repo (syntax, strict UTF-8, no BOM,
+  undefined names via AST with scope-insensitive bindings, unused imports as
+  warnings), flags author-machine paths and `%ENV%` literals in code
+  (comments and docstrings are masked with `tokenize` first, so documented
+  example paths stay legal; standard install locations such as
+  `C:\Program Files` are the platform contract and stay allowed), applies the
+  Autodesk `.ms` encoding rule plus bracket/string balance to every
+  MAXScript file (reusing the `ms_check.py` lexer, never reimplemented), and
+  audits every catalog tool definition: bilingual descriptions present and
+  not placeholders, parameter `type` spelled as one of the six JSON schema
+  types, `default`/`enum` values matching the declared type (bool is not an
+  integer), numeric-only `minimum`/`maximum`, known categories, no
+  cross-module duplicate names. The first run caught one real pre-existing
+  violation: `examples/maxscript/listener_cheatsheet.ms` carried Chinese
+  examples as UTF-8 **without** BOM, which `fileIn` would mis-decode; it now
+  ships with a BOM like the eight Chinese-bearing bridge modules.
+  `scripts/verify.py` prints a new per-module distribution table (tools /
+  mutating / read-only / dangerous per catalog module: 384 tools, 298
+  mutating, 19 dangerous -- the same token set as the contract test's gate
+  table) and runs the helper in-process, folding its violations and warnings
+  into the global integrity result. The mandatory-check list is now seven
+  no-Max gates (README, CHANGELOG, docs/BRIDGE_CONVENTIONS.md, dev skill,
+  repo memory); the rules and rationale live in
+  `docs/OFFLINE_LINT_GUIDE.md`.
+
 - **Sixth static gate: `test/catalog_contract_test.py`.** The live regression
   script talks straight to the bridge, so the Python MCP layer (required
   validation, preset merging, type coercion, the `collapse_stack` alias) had no

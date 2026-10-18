@@ -12,6 +12,10 @@ Runs without 3ds Max:
   * every statistic the docs publish matches the code (tool totals,
     category/profile tables, command and module counts) -- delegated to
     test/doc_alignment_audit.py
+  * offline lint of every Python and MAXScript source (syntax, encoding,
+    undefined names, hardcoded paths) plus the catalog tool definitions
+    (descriptions, parameter types, default values) -- delegated to
+    test/offline_lint_helper.py
 
 Usage:  python scripts/verify.py
 """
@@ -26,11 +30,12 @@ from typing import Dict, List, Set, Tuple
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SRC = os.path.join(ROOT, "src", "python")
 MAX = os.path.join(ROOT, "src", "ms")
+TEST = os.path.join(ROOT, "test")
 
 if SRC not in sys.path:
     sys.path.insert(0, SRC)
 
-from maxmcp.catalog import build_catalog  # noqa: E402
+from maxmcp.catalog import Tool, build_catalog  # noqa: E402
 
 REGISTER_RE = re.compile(r'mcpRegister\s+"([^"]+)"')
 MODULE_RE = re.compile(r'"([a-z0-9_]+\.ms)"')
@@ -219,6 +224,59 @@ def check_balance(path: str, raw: str) -> List[str]:
     return problems
 
 
+def print_distribution(tools: List[Tool]) -> None:
+    """Per-module distribution of the catalog, for the developer's overview.
+
+    Answers the questions the bare category counts cannot: which module
+    owns how many tools, how the read-only / mutating split falls per
+    module, and where the dangerous (delete/remove/clear/collapse/reset/
+    cleanup/optimize) tools live.  The dangerous-token rule is shared with
+    test/offline_lint_helper.py (which mirrors catalog_contract_test.py,
+    the authority for the gate table) so the three never drift.
+    """
+    import importlib
+
+    from maxmcp.catalog import MODULE_NAMES
+
+    if TEST not in sys.path:
+        sys.path.insert(0, TEST)
+    import offline_lint_helper
+
+    rows: List[Tuple[str, List[Tool]]] = []
+    for name in MODULE_NAMES:
+        try:
+            module = importlib.import_module("maxmcp.catalog." + name)
+        except ImportError:
+            continue
+        rows.append((name, list(getattr(module, "TOOLS", []))))
+    if not rows:
+        return
+
+    total = len(tools)
+    print("\ncatalog distribution: {0} tools / {1} modules / {2} categories".format(
+        total, len(rows), len({entry.category for entry in tools})))
+    print("  {0:<10} {1:>5} {2:>9} {3:>10} {4:>10}  {5}".format(
+        "module", "tools", "mutating", "read-only", "dangerous", "categories"))
+    sum_mutating = sum_readonly = sum_dangerous = 0
+    for name, entries in rows:
+        mutating = sum(1 for entry in entries if entry.mutating)
+        readonly = len(entries) - mutating
+        dangerous = sum(1 for entry in entries if offline_lint_helper.is_dangerous(entry))
+        sum_mutating += mutating
+        sum_readonly += readonly
+        sum_dangerous += dangerous
+        per_category: Dict[str, int] = {}
+        for entry in entries:
+            per_category[entry.category] = per_category.get(entry.category, 0) + 1
+        print("  {0:<10} {1:>5} {2:>9} {3:>10} {4:>10}  {5}".format(
+            name, len(entries), mutating, readonly, dangerous,
+            " ".join("{0}={1}".format(cat, num)
+                     for cat, num in sorted(per_category.items()))))
+    print("  {0:<10} {1:>5} {2:>9} {3:>10} {4:>10}  {5}".format(
+        "total", total, sum_mutating, sum_readonly, sum_dangerous,
+        "mutating share {0:.1f}%".format(100.0 * sum_mutating / max(total, 1))))
+
+
 def main() -> int:
     failures: List[str] = []
     warnings: List[str] = []
@@ -229,6 +287,7 @@ def main() -> int:
     print("catalog: {0} tools in {1} categories".format(len(tools), len(catalog.categories())))
     for category, count in sorted(catalog.categories().items()):
         print("   {0:<14} {1}".format(category, count))
+    print_distribution(tools)
 
     if len(tools) < 160:
         failures.append("expected at least 160 tools, found {0}".format(len(tools)))
@@ -361,6 +420,26 @@ def main() -> int:
         for line in audit_report:
             print(line)
         failures.extend(audit_problems)
+
+    # --------------------------------------------------- offline lint (gate 7)
+    # Python syntax / encoding / undefined names / hardcoded paths, MAXScript
+    # encoding + structure and the catalog tool-definition audit.  Pure text
+    # analysis: in-process, no Max, no network.  Violations and warnings are
+    # folded into the global result so "verify is green" covers them.
+    try:
+        import offline_lint_helper
+        lint_report = offline_lint_helper.run_checks(quiet=True)
+    except Exception as exc:
+        failures.append("offline lint could not run: {0}".format(exc))
+    else:
+        failures.extend(lint_report.failures)
+        warnings.extend(lint_report.warnings)
+        print("offline lint: {0} python file(s), {1} maxscript file(s), "
+              "{2} tool(s) -- {3} violation(s), {4} warning(s)".format(
+                  lint_report.stats.get("python_files", 0),
+                  lint_report.stats.get("maxscript_files", 0),
+                  lint_report.stats.get("catalog_tools", 0),
+                  len(lint_report.failures), len(lint_report.warnings)))
 
     # ----------------------------------------------------------------- output
     if warnings:

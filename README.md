@@ -600,6 +600,7 @@ mcpSelfTest()
 │   ├── registration_sync_test.py #  Python catalog ↔ MAXScript 注册 ↔ 部署树漂移
 │   ├── catalog_contract_test.py #  Python 层契约测试（第六关：schema/preset/强转/门禁）
 │   ├── doc_alignment_audit.py #  文档统计 ↔ 代码真相对齐审计（由 verify.py 调用）
+│   ├── offline_lint_helper.py #  源码离线 lint + 工具定义审计（第七关，由 verify.py 调用）
 │   ├── modeling_ext_test.py   #   建模扩展实机测试（需要 Max 桥接监听）
 │   ├── bridge_*_test.py       #   桥接契约 / 管道 / 重启测试
 │   └── mock_bridge.py         #   无 Max 的 TCP 模拟桥接
@@ -642,7 +643,8 @@ python -m maxmcp --list-tools        # 当前档位暴露的工具
 python -m maxmcp --list-profiles     # 各档位规模
 
 # 静态校验：括号平衡、禁用构造、工具↔handler 一一对应、模块加载列表、
-#           Listener 速查表引用的桥接符号是否仍存在、README/docs 统计与代码对齐
+#           Listener 速查表引用的桥接符号是否仍存在、README/docs 统计与代码对齐、
+#           Python/MAXScript 源码与 catalog 工具定义的离线 lint（第七关）
 python scripts/verify.py
 
 # 服务端自检：catalog 完整性 + 双语描述 + 线编解码往返（含中文）
@@ -659,6 +661,11 @@ python test/registration_sync_test.py
 python test/catalog_contract_test.py            # 人读输出
 python test/catalog_contract_test.py --list     # 只列用例清单，不启任何服务
 python test/catalog_contract_test.py --json     # 机器可读报告
+
+# 离线源码 lint（第七关）：Python 语法/编码/未定义名/硬编码路径 + MAXScript 编码/括号
+#         + catalog 工具定义审计（双语描述/参数类型/默认值类型），纯文本分析无需 Max
+python test/offline_lint_helper.py              # 人读输出
+python test/offline_lint_helper.py --json       # 机器可读报告
 
 # 端到端：用 MockBridge 顶替 Max，验证 initialize / tools/list / tools/call /
 #         中文往返 / 错误透传 / 语言切换 / 配置持久化
