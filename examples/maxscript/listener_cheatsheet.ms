@@ -14,7 +14,7 @@ mcpPort                           -- the port the bridge bound, e.g. 8765
 mcpHost                           -- "127.0.0.1"
 mcpLang                           -- "zh" or "en"
 mcpGetLanguage()                  -- same thing, as a function
-mcpRegistry.count                 -- how many commands are registered (346)
+mcpRegistry.count                 -- how many commands are registered (353)
 
 -- detailed snapshot: running / host / port / clients / timerActive /
 -- language / handlerCount / maxYear

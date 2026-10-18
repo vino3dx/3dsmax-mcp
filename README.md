@@ -154,7 +154,7 @@ python scripts/install.py --uninstall         # 卸载
   Status      : listening
   Address     : 127.0.0.1:8765
   3ds Max     : 2020 (major 22)
-  Commands    : 346
+  Commands    : 353
   Language    : zh
   Pump timer  : true
   ----------------------------------------------------
@@ -186,7 +186,7 @@ python scripts/doctor.py
 -- connectivity
   [ok]   Bridge listening on port 8765
   [ok]   Live handshake succeeded
-         handlers=346  language=zh  3ds Max year=2020
+         handlers=353  language=zh  3ds Max year=2020
   [ok]   Language: zh from Max UI 'CHS' (auto)
          The server follows this while its own language is 'auto'.
 -- MCP clients
@@ -593,12 +593,13 @@ mcpSelfTest()
 ├── scripts/
 │   ├── install.py             # 安装 / 卸载 / 客户端注册（7 种客户端），字节级部署
 │   ├── doctor.py              # 逐环诊断
-│   ├── verify.py              # 静态完整性校验（括号、禁用构造、工具↔handler、速查表符号）
+│   ├── verify.py              # 静态完整性校验（括号、禁用构造、工具↔handler、速查表符号、文档统计对齐）
 │   └── test_e2e.py            # 端到端 MCP 测试（stdio + HTTP + SSE + 自动语言）
 ├── test/                      # 静态与诊断测试（无需 Max 即可跑大部分）
 │   ├── ms_check.py            #   编码 / 括号 / 方法链取成员 / 符号检查
 │   ├── registration_sync_test.py #  Python catalog ↔ MAXScript 注册 ↔ 部署树漂移
 │   ├── catalog_contract_test.py #  Python 层契约测试（第六关：schema/preset/强转/门禁）
+│   ├── doc_alignment_audit.py #  文档统计 ↔ 代码真相对齐审计（由 verify.py 调用）
 │   ├── modeling_ext_test.py   #   建模扩展实机测试（需要 Max 桥接监听）
 │   ├── bridge_*_test.py       #   桥接契约 / 管道 / 重启测试
 │   └── mock_bridge.py         #   无 Max 的 TCP 模拟桥接
@@ -641,7 +642,7 @@ python -m maxmcp --list-tools        # 当前档位暴露的工具
 python -m maxmcp --list-profiles     # 各档位规模
 
 # 静态校验：括号平衡、禁用构造、工具↔handler 一一对应、模块加载列表、
-#           Listener 速查表引用的桥接符号是否仍存在
+#           Listener 速查表引用的桥接符号是否仍存在、README/docs 统计与代码对齐
 python scripts/verify.py
 
 # 服务端自检：catalog 完整性 + 双语描述 + 线编解码往返（含中文）

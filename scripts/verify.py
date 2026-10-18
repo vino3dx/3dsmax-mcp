@@ -9,6 +9,9 @@ Runs without 3ds Max:
   * balanced (), [] and "..." per file
   * every module listed in mcp_bridge.ms actually exists on disk
   * every bridge symbol in the Listener cheatsheet still exists
+  * every statistic the docs publish matches the code (tool totals,
+    category/profile tables, command and module counts) -- delegated to
+    test/doc_alignment_audit.py
 
 Usage:  python scripts/verify.py
 """
@@ -340,6 +343,24 @@ def main() -> int:
             )
         else:
             print("Listener cheatsheet: {0} bridge symbols resolve".format(len(referenced)))
+
+    # ---------------------------------------------------- doc alignment audit
+    # README statistics, docs/tools.txt and the cheatsheet are maintained by
+    # hand, so they drift silently.  The audit recomputes every published
+    # number from the code; it runs in-process, no Max, no network.
+    test_dir = os.path.join(ROOT, "test")
+    if test_dir not in sys.path:
+        sys.path.insert(0, test_dir)
+    try:
+        import doc_alignment_audit
+        audit_problems, audit_report = doc_alignment_audit.audit()
+    except Exception as exc:
+        failures.append("doc alignment audit could not run: {0}".format(exc))
+    else:
+        print()
+        for line in audit_report:
+            print(line)
+        failures.extend(audit_problems)
 
     # ----------------------------------------------------------------- output
     if warnings:
