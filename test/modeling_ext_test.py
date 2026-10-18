@@ -9,15 +9,34 @@ Covers (per the task requirements):
   5. error paths: invalid object, invalid modifier, missing modifier,
      unsupported modifier class, collapse without confirm, bad sub-object level
   6. CHS / ENU script tree consistency
+  7. regression: light_create type=spot / type=directional create the classes
+     Targetspot / Targetdirectionallight (the Target_Spot/Target_Directional
+     class-name fix)
+  8. regression: all 8 spline creators (rectangle/circle/ellipse/ngon/donut/
+     arc/helix/text) succeed (the missing preset={"class":...} fix; before it
+     every one of them failed with err.missing_param: class)
+  9. regression: create_teapot smooth=true reads back smooth=true (the
+     mcpNum-swallowed-boolean fix)
+ 10. regression: create_pyramid depth=50 reads back depth=50 (the depth param
+     that the docs promised but the schema did not accept)
+ 11. regression: the collapse confirm gate on the shared mod_collapse path
+     (what the collapse_stack alias bridges to) + a static check of the alias
+     wiring itself
+ 12. regression: mod_collapse behaviour unchanged (plain collapse with confirm,
+     modifier filter rejects objects without that modifier and leaves them be)
 
-The test scene is independent: it starts from scene_new and only creates
-__mcp_ext_* objects, so a daily Max instance is never touched beyond a new
-empty scene.  Results (pass/fail counts and every error) are written to
-diag/logs/modeling_ext_test_<timestamp>.{txt,json}.
+The regression groups (7-12) never touch anything they did not create: each
+case builds its own __mcp_reg_* objects and deletes them again, and the whole
+run first requires an empty scene (scene_info.objectCount == 0) and aborts
+with exit code 3 otherwise.  Results (pass/fail counts and every error) are
+written to diag/logs/modeling_ext_test_<timestamp>.{txt,json}.
 
 Usage:
-    python modeling_ext_test.py [--port 8765] [--host 127.0.0.1]
-Exit code 0 when every check passed, 1 otherwise, 2 when Max is unreachable.
+    python modeling_ext_test.py [--port 8765] [--host 127.0.0.1] [--list]
+    --list prints the regression case list only and never connects to Max,
+    so it doubles as a CI / static self-check.
+Exit code 0 when every check passed, 1 otherwise, 2 when Max is unreachable,
+3 when the scene is not empty.
 """
 from __future__ import annotations
 
@@ -133,6 +152,25 @@ class Suite:
         self.records.append({"check": name, "ok": False, "detail": "no error raised: %r" % (result,)[:300]})
         print("  [FAIL] %s  -- no error raised" % name)
         return False
+
+    def case(self, name, expect, actual, ok=None):
+        """Regression-style check: prints 用例名 / 期望 / 实际 / PASS|FAIL.
+
+        ok defaults to expect == actual; pass it explicitly when the condition
+        is not a plain equality (e.g. "must be rejected").
+        """
+        if ok is None:
+            ok = (actual == expect)
+        if ok:
+            self.passed += 1
+        else:
+            self.failed += 1
+        self.records.append({"check": name, "ok": ok,
+                             "expect": str(expect)[:300], "actual": str(actual)[:300]})
+        print("  [%s] %s" % ("PASS" if ok else "FAIL", name))
+        print("         expect: %s" % str(expect)[:200])
+        print("         actual: %s" % str(actual)[:200])
+        return ok
 
 
 # ------------------------------------------------------------------ test cases
@@ -310,11 +348,289 @@ def t_script_sync(s, _b):
     s.check("byte-identical trees", not diffs, "differs: %s" % diffs)
 
 
+# ---------------------------------------------------- regression groups (7-12)
+# Declarative case tables: --list prints exactly what the live run executes,
+# so the printed list can never drift from the checks themselves.
+REG_PREFIX = "__mcp_reg_"
+
+LIGHT_CASES = [
+    # (light_create type, expected classof result)
+    ("spot", "Targetspot"),
+    ("directional", "Targetdirectionallight"),
+]
+
+SPLINE_CASES = [
+    # (tool, minimal params, expected classof result)
+    ("create_rectangle", {"length": 30, "width": 20, "cornerRadius": 2}, "Rectangle"),
+    ("create_circle", {"radius": 10}, "Circle"),
+    ("create_ellipse", {"length": 24, "width": 12}, "Ellipse"),
+    ("create_ngon", {"radius": 10, "sides": 6}, "NGon"),
+    ("create_donut", {"radius1": 12, "radius2": 5}, "Donut"),
+    ("create_arc", {"radius": 10, "from": 0, "to": 270}, "Arc"),
+    ("create_helix", {"radius1": 5, "radius2": 5, "height": 20, "turns": 3}, "Helix"),
+    ("create_text", {"text": "MCP", "size": 20}, "Text"),
+]
+
+CASE_INDEX = [
+    ("7. light_create spot / directional class names (D2 fix)", [
+        ("light_create type=%s" % t, "created and classof == %s" % cls) for t, cls in LIGHT_CASES
+    ]),
+    ("8. all 8 spline creators succeed (D3 class-preset fix)", [
+        ("%s" % tool, "created, name kept, classof == %s" % cls) for tool, _p, cls in SPLINE_CASES
+    ]),
+    ("9. create_teapot smooth=true (D3 boolean coercion fix)", [
+        ("create_teapot smooth=true", "object smooth property reads back true"),
+    ]),
+    ("10. create_pyramid depth=50 (D3 depth parameter fix)", [
+        ("create_pyramid depth=50", "object depth property reads back 50"),
+    ]),
+    ("11. collapse confirm gate on the shared mod_collapse path (D4)", [
+        ("mod_collapse without confirm", "rejected (err.confirm_required)"),
+        ("mod_collapse with confirm=true", "the modifier stack collapses"),
+        ("catalog alias wiring (static, no Max)", "collapse_stack bridges to mod_collapse and requires confirm"),
+    ]),
+    ("12. mod_collapse behaviour unchanged (D4)", [
+        ("mod_collapse with confirm=true", "collapses the whole stack"),
+        ("mod_collapse modifier filter", "object without that modifier is rejected and untouched"),
+    ]),
+]
+
+
+def _cleanup(s, b, names):
+    """Delete only the objects this group created."""
+    if not names:
+        return
+    try:
+        b.call("delete_objects", {"objects": list(names)})
+    except Exception as exc:  # noqa: BLE001
+        s.check("cleanup: delete %s" % ", ".join(names), False, exc)
+
+
+def _created_name(result, fallback):
+    """Primitive/spline creators answer {"object": {...node info...}}."""
+    if isinstance(result, dict):
+        obj = result.get("object")
+        if isinstance(obj, dict) and obj.get("name"):
+            return obj["name"]
+        if result.get("name"):
+            return result["name"]
+        created = result.get("created")
+        if isinstance(created, list) and created:
+            return created[0]
+    return fallback
+
+
+def _catalog_collapse_alias():
+    """Static (no Max) check of the D4 alias wiring.
+
+    The Python layer is what rejects collapse_stack without confirm
+    ("missing required parameter"), and the bridge never knew the name, so
+    this import-based check is the only way to cover that half of the gate.
+    Returns (ok, detail); ok is None when the package cannot be imported.
+    """
+    root = os.path.abspath(os.path.join(HERE, "..", "src", "python"))
+    if os.path.isdir(root) and root not in sys.path:
+        sys.path.insert(0, root)
+    try:
+        from maxmcp.catalog import build_catalog
+    except Exception as exc:  # noqa: BLE001
+        return None, "cannot import maxmcp.catalog (%s); run from the repo" % exc
+    try:
+        cat = build_catalog()
+        entry = cat.get("collapse_stack")
+        main = cat.get("mod_collapse")
+    except Exception as exc:  # noqa: BLE001
+        return False, "catalog build/lookup failed: %s" % exc
+    problems = []
+    if entry is None:
+        problems.append("collapse_stack missing from catalog")
+    else:
+        bridge = getattr(entry, "bridge_method", None)
+        if bridge != "mod_collapse":
+            problems.append("bridge_method=%r (want 'mod_collapse')" % (bridge,))
+        required = (getattr(entry, "schema", None) or {}).get("required") or []
+        if "confirm" not in required:
+            problems.append("required=%r (want 'confirm')" % (required,))
+    if main is None:
+        problems.append("mod_collapse missing from catalog")
+    elif "confirm" not in ((getattr(main, "schema", None) or {}).get("required") or []):
+        problems.append("mod_collapse no longer requires confirm")
+    return (not problems), "; ".join(problems) or "collapse_stack -> mod_collapse, required=[confirm]"
+
+
+def t_lights_reg(s, b):
+    print("\n== 7. regression: light_create spot / directional class names ==")
+    created = []
+    try:
+        for typ, want in LIGHT_CASES:
+            nm = REG_PREFIX + "light_" + typ
+            try:
+                r = b.call("light_create", {"type": typ, "name": nm})
+            except BridgeCommandError as exc:
+                s.case("light_create type=%s" % typ, "created, classof == %s" % want,
+                       "error: %s" % exc, ok=False)
+                continue
+            got_name = r.get("name") or nm
+            got_cls = str(r.get("class") or "")
+            created.append(got_name)
+            # classof casing is not contractual in MAXScript; compare folded.
+            s.case("light_create type=%s -> class %s" % (typ, want),
+                   want, got_cls, ok=(got_cls.lower() == want.lower()))
+    finally:
+        _cleanup(s, b, created)
+
+
+def t_splines_reg(s, b):
+    print("\n== 8. regression: all 8 spline creators succeed ==")
+    created = []
+    try:
+        for tool, params, want in SPLINE_CASES:
+            nm = REG_PREFIX + tool
+            call = dict(params)
+            call["name"] = nm
+            try:
+                r = b.call(tool, call)
+            except BridgeCommandError as exc:
+                s.case("%s creates a %s" % (tool, want),
+                       "created (old failure: err.missing_param: class)",
+                       "error: %s" % exc, ok=False)
+                continue
+            got = _created_name(r, nm)
+            created.append(got)
+            info = r.get("object") or {}
+            got_cls = str(info.get("class") or "")
+            s.case("%s creates a %s" % (tool, want),
+                   "name=%s, class=%s" % (nm, want),
+                   "name=%s, class=%s" % (got, got_cls),
+                   ok=(got == nm and got_cls.lower() == want.lower()))
+    finally:
+        _cleanup(s, b, created)
+
+
+def t_teapot_smooth_reg(s, b):
+    print("\n== 9. regression: create_teapot smooth=true ==")
+    nm = REG_PREFIX + "teapot"
+    try:
+        r = b.call("create_teapot", {"name": nm, "smooth": True})
+        got = _created_name(r, nm)
+        s.case("create_teapot smooth=true creates the teapot",
+               "created: %s" % nm, "created: %s" % got, ok=(got == nm))
+        pv = b.call("get_property_value", {"object": got, "property": "smooth"})
+        val = pv.get("value") if pv.get("ok") else None
+        s.case("teapot smooth reads back true", True, val,
+               ok=(pv.get("ok") is True and val is True))
+    except BridgeCommandError as exc:
+        s.case("create_teapot smooth=true", "created", "error: %s" % exc, ok=False)
+    finally:
+        _cleanup(s, b, [nm])
+
+
+def t_pyramid_reg(s, b):
+    print("\n== 10. regression: create_pyramid depth=50 ==")
+    nm = REG_PREFIX + "pyramid"
+    try:
+        r = b.call("create_pyramid", {"name": nm, "width": 20, "depth": 50, "height": 30})
+        got = _created_name(r, nm)
+        s.case("create_pyramid depth=50 creates the pyramid",
+               "created: %s" % nm, "created: %s" % got, ok=(got == nm))
+        pv = b.call("get_property_value", {"object": got, "property": "depth"})
+        val = pv.get("value") if pv.get("ok") else None
+        s.case("pyramid depth reads back 50", 50, val,
+               ok=(pv.get("ok") is True and val is not None and float(val) == 50.0))
+    except BridgeCommandError as exc:
+        s.case("create_pyramid depth=50", "created", "error: %s" % exc, ok=False)
+    finally:
+        _cleanup(s, b, [nm])
+
+
+def t_collapse_gate_reg(s, b):
+    print("\n== 11. regression: confirm gate on the shared collapse path ==")
+    nm = REG_PREFIX + "gatebox"
+    try:
+        b.call("create_box", {"name": nm, "length": 10, "width": 10, "height": 10})
+        b.call("mod_add", {"objects": [nm], "modifier": "Bend", "name": "bend"})
+        stack = b.call("mod_list", {"objects": [nm]})
+        s.case("gate object carries one modifier", 1, len(stack.get("modifiers", [])),
+               ok=len(stack.get("modifiers", [])) == 1)
+        # The confirm gate lives on the shared protected path that the
+        # collapse_stack alias bridges to; a bridge-direct call reaches the
+        # Max-side err.confirm_required.
+        try:
+            b.call("mod_collapse", {"objects": [nm]})
+            s.case("mod_collapse without confirm", "rejected (err.confirm_required)",
+                   "no error raised", ok=False)
+        except BridgeCommandError as exc:
+            s.case("mod_collapse without confirm", "rejected (err.confirm_required)",
+                   "rejected: %s" % str(exc)[:120], ok=("confirm" in str(exc)))
+        res = b.call("mod_collapse", {"objects": [nm], "confirm": True})
+        rec = (res.get("results") or [{}])[0]
+        s.case("mod_collapse with confirm=true collapses", True, rec.get("collapsed"),
+               ok=(rec.get("collapsed") is True and rec.get("modifiersAfter") == 0))
+    except BridgeCommandError as exc:
+        s.case("collapse gate sequence", "completed without bridge errors",
+               "error: %s" % exc, ok=False)
+    finally:
+        _cleanup(s, b, [nm])
+    ok, detail = _catalog_collapse_alias()
+    if ok is None:
+        s.skip("catalog alias wiring (static)", detail)
+    else:
+        s.case("catalog alias wiring (static)",
+               "collapse_stack -> mod_collapse, required=[confirm]", detail, ok=ok)
+
+
+def t_mod_collapse_reg(s, b):
+    print("\n== 12. regression: mod_collapse behaviour unchanged ==")
+    nm = REG_PREFIX + "mcollbox"
+    nm2 = REG_PREFIX + "mcollbox2"
+    try:
+        b.call("create_box", {"name": nm, "length": 10, "width": 10, "height": 10})
+        b.call("mod_add", {"objects": [nm], "modifier": "TurboSmooth", "name": "ts"})
+        res = b.call("mod_collapse", {"objects": [nm], "confirm": True})
+        rec = (res.get("results") or [{}])[0]
+        s.case("mod_collapse with confirm=true collapses", True, rec.get("collapsed"),
+               ok=(rec.get("collapsed") is True and rec.get("modifiersAfter") == 0))
+        # filter: an object without the named modifier must be rejected and
+        # must keep its stack.
+        b.call("create_box", {"name": nm2})
+        b.call("mod_add", {"objects": [nm2], "modifier": "Bend", "name": "bend"})
+        try:
+            b.call("mod_collapse", {"objects": [nm2], "modifier": "TurboSmooth", "confirm": True})
+            s.case("mod_collapse filter rejects missing modifier", "rejected",
+                   "no error raised", ok=False)
+        except BridgeCommandError as exc:
+            s.case("mod_collapse filter rejects missing modifier", "rejected",
+                   "rejected: %s" % str(exc)[:120], ok=True)
+        stack = b.call("mod_list", {"objects": [nm2]})
+        s.case("filtered object untouched", 1, len(stack.get("modifiers", [])),
+               ok=len(stack.get("modifiers", [])) == 1)
+    except BridgeCommandError as exc:
+        s.case("mod_collapse sequence", "completed without bridge errors",
+               "error: %s" % exc, ok=False)
+    finally:
+        _cleanup(s, b, [nm, nm2])
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--port", type=int, default=8765)
+    ap.add_argument("--list", action="store_true", dest="list_cases",
+                    help="only print the regression case list; never connects to Max "
+                         "(CI / static self-check)")
     args = ap.parse_args()
+
+    if args.list_cases:
+        print("=== modeling extension regression case list (no Max connection) ===")
+        total = 0
+        for group, cases in CASE_INDEX:
+            print(group)
+            for name, expect in cases:
+                total += 1
+                print("  - %s" % name)
+                print("      expect: %s" % expect)
+        print("=== %d regression cases in %d groups ===" % (total, len(CASE_INDEX)))
+        return 0
 
     os.makedirs(LOGDIR, exist_ok=True)
     stamp = time.strftime("%Y%m%d_%H%M%S")
@@ -328,6 +644,23 @@ def main():
         print("Start 3ds Max and run mcpBridgeStart() (or let the startup loader do it), then retry.")
         return 2
 
+    # The regression groups create and delete only their own __mcp_reg_*
+    # objects, so the scene must be empty before the run starts; anything else
+    # means this test could touch content it does not own.
+    try:
+        scene = bridge.call("scene_info")
+    except BridgeCommandError as exc:
+        print("CANNOT READ SCENE: %s" % exc)
+        bridge.close()
+        return 2
+    obj_count = int(scene.get("objectCount", 0) or 0)
+    if obj_count != 0:
+        print("SCENE NOT EMPTY: scene_info.objectCount=%d." % obj_count)
+        print("This test only creates/deletes its own __mcp_reg_* objects and must not")
+        print("touch existing content. Save your work, empty the scene, then retry.")
+        bridge.close()
+        return 3
+
     suite = Suite()
     try:
         t_bridge(suite, bridge)
@@ -335,6 +668,12 @@ def main():
         t_poly(suite, bridge)
         t_errors(suite, bridge)
         t_script_sync(suite, bridge)
+        t_lights_reg(suite, bridge)
+        t_splines_reg(suite, bridge)
+        t_teapot_smooth_reg(suite, bridge)
+        t_pyramid_reg(suite, bridge)
+        t_collapse_gate_reg(suite, bridge)
+        t_mod_collapse_reg(suite, bridge)
     finally:
         bridge.close()
 
@@ -354,8 +693,11 @@ def main():
     with open(txt, "w", encoding="utf-8") as fh:
         fh.write("modeling extension live test %s\n" % stamp)
         for r in suite.records:
+            extra = r.get("detail") or ""
+            if not extra and "expect" in r:
+                extra = "expect=%s | actual=%s" % (r.get("expect"), r.get("actual"))
             fh.write("%-4s %s%s\n" % ("PASS" if r["ok"] else ("SKIP" if r["ok"] is None else "FAIL"),
-                                      r["check"], "" if r["ok"] else "  -- " + r["detail"]))
+                                      r["check"], "" if r["ok"] else "  -- " + extra))
         fh.write("\n%d passed, %d failed, %d skipped\n" % (suite.passed, suite.failed, suite.skipped))
     with open(js, "w", encoding="utf-8") as fh:
         json.dump(report, fh, ensure_ascii=False, indent=2)

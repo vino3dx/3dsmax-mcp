@@ -823,9 +823,13 @@ TOOLS.append(tool(
 
 TOOLS.append(tool(
     "cam_get", "shading",
-    "读取一个相机的详情：位置、视场角、焦距、是否为当前活动相机。",
+    "读取一个相机的详情：位置、视场角、焦距、是否为当前活动相机。"
+    "焦距（focalLength）仅 Physical 相机可读：其他相机类返回 "
+    "focalLengthSupported=false 且 focalLength=null（附 note 说明），不会用 0.0 冒充真实值。",
     "Read a camera's details: position, field of view, focal length and whether it is the "
-    "active viewport camera.",
+    "active viewport camera. Focal length is only readable on Physical cameras: any other "
+    "camera class returns focalLengthSupported=false with focalLength=null (plus a note) "
+    "instead of a fake 0.0.",
     props={"camera": s("相机名称。", "Camera name.")},
     required=["camera"],
     mutating=False,

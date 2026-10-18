@@ -67,7 +67,9 @@ mcpMessages = #(
     #("msg.loaded",               #("已打开：%",                                "Opened: %")),
     #("msg.anim_baked",           #("动画已烘焙：%",                            "Animation baked: %")),
     #("msg.skin_added",           #("已添加蒙皮：%",                            "Skin added: %")),
-    #("msg.feature_unsupported",  #("当前 3ds Max 版本（%）不支持该功能。",        "This feature is not supported on 3ds Max %."))
+    #("msg.feature_unsupported",  #("当前 3ds Max 版本（%）不支持该功能。",        "This feature is not supported on 3ds Max %.")),
+    #("msg.focal_physical_only",  #("焦距仅 Physical（物理）相机可读，其他相机类 focalLength 为 null。",
+                                   "Focal length is only readable on Physical cameras; for other camera classes focalLength is null."))
 )
 
 fn mcpFormat template args =

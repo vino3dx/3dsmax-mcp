@@ -8,12 +8,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`render_batch` no longer lies about missing cameras.** A job whose `camera`
+  name does not resolve used to fall back to rendering the active viewport and
+  report `written:true`. It now returns `written:false` with
+  `reason:"camera not found"`, is counted in the new top-level `failures` array,
+  and the rest of the batch keeps running. A render that throws or produces no
+  file likewise carries a `reason` instead of a silent `written:false`. An
+  omitted `camera` still renders the active viewport. Catalog description
+  updated.
+- **`cam_get` reports focal length honestly.** `focal_length` only exists on
+  Physical cameras; every other camera class used to get the catch default
+  `0.0`, pretending the read had succeeded. Non-Physical cameras now return
+  `focalLengthSupported:false`, `focalLength:null` and an explanatory `note`
+  (new `msg.focal_physical_only`). Catalog description updated.
 - **One guarded collapse path (D4).** `collapse_stack` is now a controlled
   alias of `mod_collapse`: the catalog entry bridges to `mod_collapse` and
   requires `confirm=true`, so the previously unguarded collapse path is gone.
   The duplicate `mcpH_collapse_stack` handler and its `mcpRegister` were
   removed from `mcp_poly.ms` (MAXScript registered commands 354 → 353).
   `mod_collapse` stays the main entry; its behaviour is unchanged.
+
+### Fixed
+
+- **Crash timeline wording in docs (D8 follow-up).** "18 crashes since
+  2026-10-15" corrected to "18 within the event-log window (first
+  2026-10-17 10:54:44; 14 on 2026-10-18 00:00–01:29)": the retrieval window
+  started 10-15 but every crash is from 10-17 onward. Added the qualifier that
+  the 10:54 first crash happened while the user's previous instance was still
+  running (suspected single-instance duplicate launch) and that crash-free-
+  instance-free continuous failures began 10-17 23:42 (D5 root cause open).
+
+### Added
+
+- **Live regression suite for the recent fixes** — `test/modeling_ext_test.py`
+  gained six groups (17 cases) covering the light class-name fix, all 8 spline
+  creators, `create_teapot smooth=true`, `create_pyramid depth=50`, the collapse
+  confirm gate on the shared `mod_collapse` path plus a static check of the
+  `collapse_stack` alias wiring, and unchanged `mod_collapse` behaviour. Every
+  case builds and deletes only its own `__mcp_reg_*` objects, the run aborts
+  with exit code 3 when the scene is not empty, and `--list` prints the case
+  list without connecting to Max (CI / static self-check).
 
 ### Fixed
 

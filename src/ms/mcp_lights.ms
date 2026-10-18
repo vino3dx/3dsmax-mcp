@@ -315,7 +315,16 @@ fn mcpH_cam_get params =
   mcpPair p "class" (try ((classof c) as string) catch (""))
   mcpPair p "position" (try (c.position) catch ([0,0,0]))
   mcpPair p "fov" (try (c.fov) catch (0.0))
-  mcpPair p "focalLength" (try (c.focal_length) catch (0.0))
+  -- focal_length only exists on Physical cameras.  Returning the catch
+  -- default 0.0 pretended the read had succeeded for every other camera
+  -- class; now the flag says so, the value serialises as null, and a note
+  -- explains why.
+  local focal = undefined
+  local focalOk = false
+  try ( focal = c.focal_length; focalOk = true ) catch ( focalOk = false )
+  mcpPair p "focalLengthSupported" focalOk
+  mcpPair p "focalLength" (if focalOk then focal else undefined)
+  if not focalOk do mcpPair p "note" (mcpMsg "msg.focal_physical_only")
   mcpPair p "isActive" (try (viewport.getCamera() == c) catch (false))
   mcpObj p
 )

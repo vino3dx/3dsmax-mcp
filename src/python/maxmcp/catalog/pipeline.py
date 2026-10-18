@@ -206,10 +206,15 @@ TOOLS.append(tool(
 TOOLS.append(tool(
     "render_batch", "pipeline",
     "一次调用里排队渲染多个「相机 + 路径 + 帧」组合。jobs 是对象数组，每项含 camera、path、frame。"
-    "返回每项的写入结果。整批会较慢，调用阻塞直到完成。",
+    "返回每项的写入结果（written/reason）。camera 给了名字但场景中不存在时，该项返回 "
+    "written:false + reason:\"camera not found\" 并计入 failures，其余任务继续执行不中断；"
+    "camera 省略时渲染活动视口。整批会较慢，调用阻塞直到完成。",
     "Queue several camera/path/frame combinations in one call. jobs is an array of objects, "
-    "each with camera, path and frame. Returns the write result per job. The whole batch "
-    "is slow and the call blocks until done.",
+    "each with camera, path and frame. Returns the write result per job (written/reason). "
+    "When a camera name does not resolve, that job returns written:false with "
+    "reason:\"camera not found\" and is counted in failures; the remaining jobs still run. "
+    "An omitted camera renders the active viewport. The whole batch is slow and the call "
+    "blocks until done.",
     props={
         "jobs": arr("渲染任务数组，每项 {camera, path, frame}。",
                     "Array of render jobs, each {camera, path, frame}.", items="object"),

@@ -434,6 +434,7 @@ fn mcpH_render_batch params =
     local jobs = mcpArr params "jobs"
     if jobs.count == 0 do mcpFail "err.missing_param" a1:"jobs"
     local results = #()
+    local failures = #()
     for j in jobs do
     (
         local camName = mcpStr j "camera" default:""
@@ -441,30 +442,44 @@ fn mcpH_render_batch params =
         local frame = mcpInt j "frame" default:-1
         if frame < 0 do frame = (try ( currentTime.frame as integer ) catch ( 0 ))
         if path == "" do path = mcpRenderFramePath "" frame
+        -- A camera name that does not resolve is a failed job, NOT a silent
+        -- fallback to rendering the active viewport: the job reports
+        -- written:false with reason "camera not found", is counted in
+        -- failures, and the rest of the batch keeps going.  An omitted
+        -- camera still means "render the active viewport".
         local camNode = undefined
         if camName != "" do camNode = mcpResolveNode camName
-        local dir = getFilenamePath path
-        if dir != "" and not (doesDirectoryExist dir) do ( try ( makeDir dir all:true ) catch() )
+        local reason = ""
+        if camName != "" and camNode == undefined do reason = "camera not found"
         local written = false
-        try
+        if reason == "" do
         (
-            if camNode != undefined then
-                ( render camera:camNode outputFile:path framenumber:frame vfb:false )
-            else
-                ( render outputFile:path framenumber:frame vfb:false )
-            written = doesFileExist path
+            local dir = getFilenamePath path
+            if dir != "" and not (doesDirectoryExist dir) do ( try ( makeDir dir all:true ) catch() )
+            try
+            (
+                if camNode != undefined then
+                    ( render camera:camNode outputFile:path framenumber:frame vfb:false )
+                else
+                    ( render outputFile:path framenumber:frame vfb:false )
+                written = doesFileExist path
+                if not written do reason = "render produced no output file"
+            )
+            catch ( written = false; reason = (try ( (getCurrentException() as string) ) catch ( "render failed" )) )
         )
-        catch ( written = false )
+        if reason != "" do append failures (camName + ": " + reason)
         local jp = #()
         mcpPair jp "camera" camName
         mcpPair jp "path" path
         mcpPair jp "frame" frame
         mcpPair jp "written" written
+        if reason != "" do mcpPair jp "reason" reason
         append results (mcpObj jp)
     )
     local p = #()
     mcpPair p "jobs" results
     mcpPair p "count" results.count
+    mcpPair p "failures" failures
     mcpPair p "message" (mcpMsg "msg.render_done" a1:(results.count as string))
     mcpObj p
 )
