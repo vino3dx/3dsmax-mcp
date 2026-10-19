@@ -77,7 +77,7 @@ def copy_tree(src: Path, dst: Path, pattern: str = "*") -> int:
     tree is deliberately mixed, and both shapes are proven in the field), so
     the installer must not rewrite anything on the way in.  Any normalisation
     here would silently break the "repo == deployed" invariant that
-    ``test/registration_sync_test.py`` checks.
+    ``test/static/registration_sync_test.py`` checks.
     """
     if not src.is_dir():
         return 0

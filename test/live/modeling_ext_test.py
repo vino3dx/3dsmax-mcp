@@ -49,7 +49,7 @@ import sys
 import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-LOGDIR = os.path.join(HERE, "logs")
+LOGDIR = os.path.join(os.path.dirname(HERE), "logs")
 
 ENU_DIR = os.path.join(
     os.environ.get("LOCALAPPDATA", ""),
@@ -428,7 +428,7 @@ def _catalog_collapse_alias():
     this import-based check is the only way to cover that half of the gate.
     Returns (ok, detail); ok is None when the package cannot be imported.
     """
-    root = os.path.abspath(os.path.join(HERE, "..", "src", "python"))
+    root = os.path.abspath(os.path.join(HERE, "..", "..", "src", "python"))
     if os.path.isdir(root) and root not in sys.path:
         sys.path.insert(0, root)
     try:

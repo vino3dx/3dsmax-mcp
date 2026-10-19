@@ -144,7 +144,7 @@ EPoly.dlo+0xe0930 做 .pdata 完整 unwind，坐实或排除抛出点。
 3dsmax.exe，启动后监测；PASS = 存活 ≥120s 且桥接 ping 成功。每次尝试间隔
 20 分钟（空闲假设），最多 12 次；崩溃后自动复制新转储到 `test/logs/dumps/`
 并用 `max_health.py dump-analyze` 核对签名是否仍是 ucrtbase+0xa527e。
-并发运行 `test/dismiss_modal.py`（90s 窗口，白名单标题）清理启动阻塞弹窗。
+并发运行 `test/diagnostics/dismiss_modal.py`（90s 窗口，白名单标题）清理启动阻塞弹窗。
 
 **实验条件说明【实测】**：第 1 次尝试距上次 Max 退出（10-18 21:18 崩溃）
 空闲约 3.2 小时；第 2-12 次按设计间隔 20 分钟。实验期间可用物理内存

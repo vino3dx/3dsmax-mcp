@@ -78,7 +78,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-REPO = os.path.dirname(HERE)
+REPO = os.path.dirname(os.path.dirname(HERE))
 
 for _extra in (os.path.join(REPO, "src", "python"), HERE):
     if _extra not in sys.path:

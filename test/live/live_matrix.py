@@ -16,7 +16,7 @@ answer.  A bare ``ok: true`` is never accepted as proof.  The scene is reset
 (scene_new -> resetMaxFile #noPrompt) before and after every case, and an
 empty-scene gate aborts the run when the scene cannot be verified empty.
 
-Case files live in test/live_cases/*.json (list of case objects).  Payloads
+Case files live in test/live/live_cases/*.json (list of case objects).  Payloads
 are merged over the catalog preset exactly like the MCP server does
 (server.py _build_payload): declared keys override the preset, unknown keys
 are ignored, required keys must be present.
@@ -43,7 +43,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 HERE = Path(__file__).resolve().parent
-REPO = HERE.parent
+REPO = HERE.parent.parent
 for _extra in (str(REPO / "src" / "python"), str(HERE)):
     if _extra not in sys.path:
         sys.path.insert(0, _extra)

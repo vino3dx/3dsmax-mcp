@@ -242,12 +242,12 @@ mcpRegister "mod_add" mcpH_mod_add label:"Add Modifier"
 1. Every catalog tool has a matching `mcpRegister "<name>"`.
 2. `PYTHONPATH=src/python python -m maxmcp --selftest-python` prints *all checks passed*.
 3. `PYTHONPATH=src/python python -m maxmcp --list-tools` shows the new names.
-4. `python test/catalog_contract_test.py` (sixth static gate) reports *catalog
+4. `python test/static/catalog_contract_test.py` (sixth static gate) reports *catalog
    contract holds*: schema legality, preset keys, required-parameter rejection
    and type coercion for every tool, via MockBridge -- no Max needed.  New
    naming or mutating-flag exceptions go into the whitelists in that file with
    a written reason.
-5. `python test/offline_lint_helper.py` (seventh static gate) reports *offline
+5. `python test/static/offline_lint_helper.py` (seventh static gate) reports *offline
    lint: clean*: Python syntax / encoding / undefined names / hardcoded paths,
    MAXScript encoding and bracket balance, and the catalog tool definitions
    (bilingual descriptions, parameter types, default and enum value types).

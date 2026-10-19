@@ -23,7 +23,7 @@ import re
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-REPO = os.path.dirname(HERE)
+REPO = os.path.dirname(os.path.dirname(HERE))
 sys.path.insert(0, os.path.join(REPO, "src", "python"))
 
 MS_DIR = os.path.join(REPO, "src", "ms")

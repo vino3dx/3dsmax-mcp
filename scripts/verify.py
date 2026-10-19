@@ -11,11 +11,11 @@ Runs without 3ds Max:
   * every bridge symbol in the Listener cheatsheet still exists
   * every statistic the docs publish matches the code (tool totals,
     category/profile tables, command and module counts) -- delegated to
-    test/doc_alignment_audit.py
+    test/static/doc_alignment_audit.py
   * offline lint of every Python and MAXScript source (syntax, encoding,
     undefined names, hardcoded paths) plus the catalog tool definitions
     (descriptions, parameter types, default values) -- delegated to
-    test/offline_lint_helper.py
+    test/static/offline_lint_helper.py
 
 Usage:  python scripts/verify.py
 """
@@ -30,7 +30,7 @@ from typing import Dict, List, Set, Tuple
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SRC = os.path.join(ROOT, "src", "python")
 MAX = os.path.join(ROOT, "src", "ms")
-TEST = os.path.join(ROOT, "test")
+TEST = os.path.join(ROOT, "test", "static")
 
 if SRC not in sys.path:
     sys.path.insert(0, SRC)
@@ -231,7 +231,7 @@ def print_distribution(tools: List[Tool]) -> None:
     owns how many tools, how the read-only / mutating split falls per
     module, and where the dangerous (delete/remove/clear/collapse/reset/
     cleanup/optimize) tools live.  The dangerous-token rule is shared with
-    test/offline_lint_helper.py (which mirrors catalog_contract_test.py,
+    test/static/offline_lint_helper.py (which mirrors catalog_contract_test.py,
     the authority for the gate table) so the three never drift.
     """
     import importlib
@@ -407,7 +407,7 @@ def main() -> int:
     # README statistics, docs/tools.txt and the cheatsheet are maintained by
     # hand, so they drift silently.  The audit recomputes every published
     # number from the code; it runs in-process, no Max, no network.
-    test_dir = os.path.join(ROOT, "test")
+    test_dir = TEST
     if test_dir not in sys.path:
         sys.path.insert(0, test_dir)
     try:
