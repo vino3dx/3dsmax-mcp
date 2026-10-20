@@ -1,4 +1,5 @@
 # 3dsmax-mcp
+![3dsmax-mcp](https://raw.githubusercontent.com/vino3dx/3dsmax-mcp/old/3dsmax-mcp.jpg)
 
 **让 AI 智能体直接驱动 Autodesk 3ds Max —— 建模、材质、绑定、动画、渲染、烘焙、导出。**
 
