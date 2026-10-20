@@ -572,7 +572,9 @@ fn mcpH_poly_select_faces params =
                     if take do sel[f] = true
                 )
             )
-            n.subobjectLevel = 4
+            -- the level assignment can fail outside the modify-panel context;
+            -- polyop selection works without it, so never let it abort
+            try ( n.subobjectLevel = 4 ) catch()
             polyop.setFaceSelection n sel
         )
         catch ( ok = false; append outAll ("ERROR " + n.name + ": " + (getCurrentException())) )
@@ -1042,7 +1044,7 @@ fn mcpH_poly_triangulate params =
         try
         (
             if not (mcpEnsurePoly n) do mcpFail "err.poly_required" a1:n.name
-            n.subobjectLevel = 4
+            try ( n.subobjectLevel = 4 ) catch()
             polyop.setFaceSelection n (mcpPolyFaceBA n faces)
             n.triangulate()
             append applied n.name
