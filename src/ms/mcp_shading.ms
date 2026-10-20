@@ -106,6 +106,18 @@ fn mcpAssignCreatedMat m params =
 (
   local nodes = mcpResolveNodes (mcpArr params "objects") fallbackToSelection:false silent:true
   for n in nodes do ( try ( n.material = m ) catch() )
+  -- register the created material so mat_get / mat_assign / mat_list can
+  -- find it by name afterwards (mcpResolveMaterial searches sceneMaterials
+  -- and the medit slots); skip if it is already registered
+  try (
+    if (try ( m.name ) catch ("")) != "" do
+    (
+      local nm = try ( m.name ) catch ("")
+      local known = false
+      for m2 in sceneMaterials do ( if (try ( m2.name ) catch ("?")) == nm do known = true )
+      if not known do append sceneMaterials m
+    )
+  ) catch()
   local p = #()
   mcpPair p "class" (try ((classof m) as string) catch (""))
   mcpPair p "name" (try (m.name) catch (""))
