@@ -2,192 +2,575 @@
   {
     "tool": "convert_to_editable_poly",
     "title": "box converts to an 8-vertex / 6-face poly",
-    "payload": {"objects": ["Box001"]},
+    "payload": {
+      "objects": [
+        "Box001"
+      ]
+    },
     "steps": [
-      {"method": "create_box", "payload": {}}
+      {
+        "method": "create_box",
+        "payload": {
+          "class": "Box"
+        }
+      }
     ],
     "readback": [
-      {"method": "poly_get_stats", "expect": {"objects.0.verts": 8, "objects.0.faces": 6}}
+      {
+        "method": "poly_get_stats",
+        "expect": {
+          "objects.0.verts": 8,
+          "objects.0.faces": 6
+        },
+        "payload": {
+          "objects": [
+            "Box001"
+          ]
+        }
+      }
     ]
   },
   {
     "tool": "poly_get_verts",
     "title": "vertex dump lists all 8 vertices",
-    "payload": {"objects": ["Box001"]},
+    "payload": {
+      "objects": [
+        "Box001"
+      ]
+    },
     "steps": [
-      {"method": "create_box", "payload": {}},
-      {"method": "convert_to_editable_poly", "payload": {"objects": ["Box001"]}}
+      {
+        "method": "create_box",
+        "payload": {
+          "class": "Box"
+        }
+      },
+      {
+        "method": "convert_to_editable_poly",
+        "payload": {
+          "objects": [
+            "Box001"
+          ]
+        }
+      }
     ],
     "readback": [
-      {"method": "poly_get_verts", "payload": {"objects": ["Box001"]},
-       "expect": {"count": 8}}
+      {
+        "method": "poly_get_verts",
+        "payload": {
+          "objects": [
+            "Box001"
+          ]
+        },
+        "expect": {
+          "count": 8
+        }
+      }
     ]
   },
   {
     "tool": "poly_get_faces",
     "title": "face dump lists all 6 faces",
-    "payload": {"objects": ["Box001"]},
+    "payload": {
+      "objects": [
+        "Box001"
+      ]
+    },
     "steps": [
-      {"method": "create_box", "payload": {}},
-      {"method": "convert_to_editable_poly", "payload": {"objects": ["Box001"]}}
+      {
+        "method": "create_box",
+        "payload": {
+          "class": "Box"
+        }
+      },
+      {
+        "method": "convert_to_editable_poly",
+        "payload": {
+          "objects": [
+            "Box001"
+          ]
+        }
+      }
     ],
     "readback": [
-      {"method": "poly_get_faces", "payload": {"objects": ["Box001"]},
-       "expect": {"count": 6}}
+      {
+        "method": "poly_get_faces",
+        "payload": {
+          "objects": [
+            "Box001"
+          ]
+        },
+        "expect": {
+          "count": 6
+        }
+      }
     ]
   },
   {
     "tool": "poly_select_faces",
     "title": "selecting face 1 shows in the poly selection",
-    "payload": {"objects": ["Box001"], "faces": [1]},
+    "payload": {
+      "objects": [
+        "Box001"
+      ],
+      "faces": [
+        1
+      ]
+    },
     "steps": [
-      {"method": "create_box", "payload": {}},
-      {"method": "convert_to_editable_poly", "payload": {"objects": ["Box001"]}}
+      {
+        "method": "create_box",
+        "payload": {
+          "class": "Box"
+        }
+      },
+      {
+        "method": "convert_to_editable_poly",
+        "payload": {
+          "objects": [
+            "Box001"
+          ]
+        }
+      }
     ],
     "readback": [
-      {"method": "poly_get_selection", "payload": {"objects": ["Box001"]},
-       "expect": {"objects.0.faces.count": 1}}
+      {
+        "method": "poly_get_selection",
+        "payload": {
+          "objects": [
+            "Box001"
+          ]
+        },
+        "expect": {
+          "objects.0.faces.count": 1
+        }
+      }
     ]
   },
   {
     "tool": "poly_extrude_faces",
     "title": "extruding one face adds geometry",
-    "payload": {"objects": ["Box001"], "faces": [1], "amount": 5},
+    "payload": {
+      "objects": [
+        "Box001"
+      ],
+      "faces": [
+        1
+      ],
+      "amount": 5
+    },
     "steps": [
-      {"method": "create_box", "payload": {}},
-      {"method": "convert_to_editable_poly", "payload": {"objects": ["Box001"]}}
+      {
+        "method": "create_box",
+        "payload": {
+          "class": "Box"
+        }
+      },
+      {
+        "method": "convert_to_editable_poly",
+        "payload": {
+          "objects": [
+            "Box001"
+          ]
+        }
+      }
     ],
     "readback": [
-      {"method": "poly_get_stats", "payload": {"objects": ["Box001"]},
-       "expect_gte": {"objects.0.faces": 7}}
+      {
+        "method": "poly_get_stats",
+        "payload": {
+          "objects": [
+            "Box001"
+          ]
+        },
+        "expect_gte": {
+          "objects.0.faces": 7
+        }
+      }
     ]
   },
   {
     "tool": "poly_bevel_faces",
     "title": "beveling one face adds geometry",
-    "payload": {"objects": ["Box001"], "faces": [1], "height": 2, "outline": -1},
+    "payload": {
+      "objects": [
+        "Box001"
+      ],
+      "faces": [
+        1
+      ],
+      "height": 2,
+      "outline": -1
+    },
     "steps": [
-      {"method": "create_box", "payload": {}},
-      {"method": "convert_to_editable_poly", "payload": {"objects": ["Box001"]}}
+      {
+        "method": "create_box",
+        "payload": {
+          "class": "Box"
+        }
+      },
+      {
+        "method": "convert_to_editable_poly",
+        "payload": {
+          "objects": [
+            "Box001"
+          ]
+        }
+      }
     ],
     "readback": [
-      {"method": "poly_get_stats", "payload": {"objects": ["Box001"]},
-       "expect_gte": {"objects.0.faces": 7}}
+      {
+        "method": "poly_get_stats",
+        "payload": {
+          "objects": [
+            "Box001"
+          ]
+        },
+        "expect_gte": {
+          "objects.0.faces": 7
+        }
+      }
     ]
   },
   {
     "tool": "poly_triangulate",
     "title": "triangulate turns 6 quads into 12 triangles",
-    "payload": {"objects": ["Box001"]},
+    "payload": {
+      "objects": [
+        "Box001"
+      ]
+    },
     "steps": [
-      {"method": "create_box", "payload": {}},
-      {"method": "convert_to_editable_poly", "payload": {"objects": ["Box001"]}}
+      {
+        "method": "create_box",
+        "payload": {
+          "class": "Box"
+        }
+      },
+      {
+        "method": "convert_to_editable_poly",
+        "payload": {
+          "objects": [
+            "Box001"
+          ]
+        }
+      }
     ],
     "readback": [
-      {"method": "poly_get_stats", "payload": {"objects": ["Box001"]},
-       "expect": {"objects.0.faces": 12}}
+      {
+        "method": "poly_get_stats",
+        "payload": {
+          "objects": [
+            "Box001"
+          ]
+        },
+        "expect": {
+          "objects.0.faces": 12
+        }
+      }
     ]
   },
   {
     "tool": "poly_subdivide",
-    "title": "subdivide raises the face count",
-    "payload": {"objects": ["Box001"]},
+    "title": "subdivide adds a MeshSmooth modifier",
+    "payload": {
+      "objects": [
+        "Box001"
+      ]
+    },
     "steps": [
-      {"method": "create_box", "payload": {}},
-      {"method": "convert_to_editable_poly", "payload": {"objects": ["Box001"]}}
+      {
+        "method": "create_box",
+        "payload": {
+          "class": "Box"
+        }
+      },
+      {
+        "method": "convert_to_editable_poly",
+        "payload": {
+          "objects": [
+            "Box001"
+          ]
+        }
+      }
     ],
     "readback": [
-      {"method": "poly_get_stats", "payload": {"objects": ["Box001"]},
-       "expect_gt": {"objects.0.faces": 6}}
+      {
+        "method": "mod_list",
+        "payload": {
+          "objects": [
+            "Box001"
+          ]
+        },
+        "expect": {
+          "modifiers.0.class": "meshsmooth"
+        }
+      }
     ]
   },
   {
     "tool": "poly_flip_faces",
     "title": "flip keeps the topology intact",
-    "payload": {"objects": ["Box001"], "faces": [1]},
+    "payload": {
+      "objects": [
+        "Box001"
+      ],
+      "faces": [
+        1
+      ]
+    },
     "steps": [
-      {"method": "create_box", "payload": {}},
-      {"method": "convert_to_editable_poly", "payload": {"objects": ["Box001"]}}
+      {
+        "method": "create_box",
+        "payload": {
+          "class": "Box"
+        }
+      },
+      {
+        "method": "convert_to_editable_poly",
+        "payload": {
+          "objects": [
+            "Box001"
+          ]
+        }
+      }
     ],
     "readback": [
-      {"method": "poly_get_stats", "payload": {"objects": ["Box001"]},
-       "expect": {"objects.0.faces": 6}}
+      {
+        "method": "poly_get_stats",
+        "payload": {
+          "objects": [
+            "Box001"
+          ]
+        },
+        "expect": {
+          "objects.0.faces": 6
+        }
+      }
     ]
   },
   {
     "tool": "poly_make_planar",
     "title": "make planar keeps 8 vertices",
-    "payload": {"objects": ["Box001"]},
+    "payload": {
+      "objects": [
+        "Box001"
+      ]
+    },
     "steps": [
-      {"method": "create_box", "payload": {}},
-      {"method": "convert_to_editable_poly", "payload": {"objects": ["Box001"]}}
+      {
+        "method": "create_box",
+        "payload": {
+          "class": "Box"
+        }
+      },
+      {
+        "method": "convert_to_editable_poly",
+        "payload": {
+          "objects": [
+            "Box001"
+          ]
+        }
+      }
     ],
     "readback": [
-      {"method": "poly_get_stats", "payload": {"objects": ["Box001"]},
-       "expect": {"objects.0.verts": 8}}
+      {
+        "method": "poly_get_stats",
+        "payload": {
+          "objects": [
+            "Box001"
+          ]
+        },
+        "expect": {
+          "objects.0.verts": 8
+        }
+      }
     ]
   },
   {
     "tool": "mod_add",
     "title": "TurboSmooth lands on the stack",
-    "payload": {"objects": ["Box001"], "modifier": "TurboSmooth"},
+    "payload": {
+      "objects": [
+        "Box001"
+      ],
+      "modifier": "TurboSmooth"
+    },
     "steps": [
-      {"method": "create_box", "payload": {}}
+      {
+        "method": "create_box",
+        "payload": {
+          "class": "Box"
+        }
+      }
     ],
     "readback": [
-      {"method": "mod_list", "expect": {"count": 1, "modifiers.0.class": "TurboSmooth"}}
+      {
+        "method": "mod_list",
+        "expect": {
+          "count": 1,
+          "modifiers.0.class": "TurboSmooth"
+        },
+        "payload": {
+          "objects": [
+            "Box001"
+          ]
+        }
+      }
     ]
   },
   {
     "tool": "mod_bend",
     "title": "mod_bend wrapper adds a Bend modifier",
-    "payload": {"objects": ["Box001"]},
+    "payload": {
+      "objects": [
+        "Box001"
+      ]
+    },
     "steps": [
-      {"method": "create_box", "payload": {}}
+      {
+        "method": "create_box",
+        "payload": {
+          "class": "Box"
+        }
+      }
     ],
     "readback": [
-      {"method": "mod_list", "expect": {"modifiers.0.class": "Bend"}}
+      {
+        "method": "mod_list",
+        "expect": {
+          "modifiers.0.class": "Bend"
+        },
+        "payload": {
+          "objects": [
+            "Box001"
+          ]
+        }
+      }
     ]
   },
   {
     "tool": "mod_set_param",
     "title": "setting a modifier param is readable back",
-    "payload": {"objects": ["Box001"], "modifier": "TurboSmooth",
-                "param": "iters", "value": 2},
+    "payload": {
+      "objects": [
+        "Box001"
+      ],
+      "modifier": "TurboSmooth",
+      "param": "iters",
+      "value": 2
+    },
     "steps": [
-      {"method": "create_box", "payload": {}},
-      {"method": "mod_add", "payload": {"objects": ["Box001"], "modifier": "TurboSmooth"}}
+      {
+        "method": "create_box",
+        "payload": {
+          "class": "Box"
+        }
+      },
+      {
+        "method": "mod_add",
+        "payload": {
+          "objects": [
+            "Box001"
+          ],
+          "modifier": "TurboSmooth"
+        }
+      }
     ],
     "readback": [
-      {"method": "mod_get_params", "payload": {"objects": ["Box001"],
-                                              "modifier": "TurboSmooth"},
-       "expect_gte": {"count": 1}}
+      {
+        "method": "mod_get_params",
+        "payload": {
+          "objects": [
+            "Box001"
+          ],
+          "modifier": "TurboSmooth"
+        },
+        "expect_gte": {
+          "count": 1
+        }
+      }
     ]
   },
   {
     "tool": "mod_disable",
     "title": "disabled modifier reports enabled false",
-    "payload": {"objects": ["Box001"], "modifier": "TurboSmooth"},
+    "payload": {
+      "objects": [
+        "Box001"
+      ],
+      "modifier": "TurboSmooth"
+    },
     "steps": [
-      {"method": "create_box", "payload": {}},
-      {"method": "mod_add", "payload": {"objects": ["Box001"], "modifier": "TurboSmooth"}}
+      {
+        "method": "create_box",
+        "payload": {
+          "class": "Box"
+        }
+      },
+      {
+        "method": "mod_add",
+        "payload": {
+          "objects": [
+            "Box001"
+          ],
+          "modifier": "TurboSmooth"
+        }
+      }
     ],
     "readback": [
-      {"method": "mod_list", "payload": {"objects": ["Box001"]},
-       "expect": {"modifiers.0.enabled": false}}
+      {
+        "method": "mod_list",
+        "payload": {
+          "objects": [
+            "Box001"
+          ]
+        },
+        "expect": {
+          "modifiers.0.enabled": false
+        }
+      }
     ]
   },
   {
     "tool": "mod_rename",
     "title": "renamed modifier shows the new name",
-    "payload": {"objects": ["Box001"], "modifier": "TurboSmooth", "name": "Smooth1"},
+    "payload": {
+      "objects": [
+        "Box001"
+      ],
+      "modifier": "TurboSmooth",
+      "name": "Smooth1"
+    },
     "steps": [
-      {"method": "create_box", "payload": {}},
-      {"method": "mod_add", "payload": {"objects": ["Box001"], "modifier": "TurboSmooth"}}
+      {
+        "method": "create_box",
+        "payload": {
+          "class": "Box"
+        }
+      },
+      {
+        "method": "mod_add",
+        "payload": {
+          "objects": [
+            "Box001"
+          ],
+          "modifier": "TurboSmooth"
+        }
+      }
     ],
     "readback": [
-      {"method": "mod_list", "payload": {"objects": ["Box001"]},
-       "expect": {"modifiers.0.name": "Smooth1"}}
+      {
+        "method": "mod_list",
+        "payload": {
+          "objects": [
+            "Box001"
+          ]
+        },
+        "expect": {
+          "modifiers.0.name": "Smooth1"
+        }
+      }
     ]
   }
 ]
