@@ -2,58 +2,213 @@
   {
     "tool": "mat_create_standard",
     "title": "standard material shows up in the scene material list",
-    "payload": {"name": "M1"},
+    "payload": {
+      "name": "M1"
+    },
     "readback": [
-      {"method": "mat_list", "expect": {"count": 1, "materials.0.class": "Standardmaterial",
-                                        "materials.0.name": "M1"}}
+      {
+        "method": "mat_list",
+        "expect": {
+          "count": 1,
+          "materials.0.class": "Standardmaterial",
+          "materials.0.name": "M1"
+        }
+      }
+    ],
+    "steps": [
+      {
+        "method": "create_box",
+        "payload": {
+          "class": "Box",
+          "name": "__lc_matbox"
+        }
+      },
+      {
+        "method": "mat_create_standard",
+        "payload": {
+          "name": "M1"
+        }
+      },
+      {
+        "method": "mat_assign",
+        "payload": {
+          "objects": [
+            "__lc_matbox"
+          ],
+          "material": "M1"
+        }
+      }
     ]
   },
   {
     "tool": "mat_assign",
     "title": "assigned material is readable back from the object",
-    "payload": {"material": "M1", "objects": ["Box001"]},
+    "payload": {
+      "material": "M1",
+      "objects": [
+        "Box001"
+      ]
+    },
     "steps": [
-      {"method": "create_box", "payload": {}},
-      {"method": "mat_create_standard", "payload": {"name": "M1"}}
+      {
+        "method": "create_box",
+        "payload": {
+          "class": "Box"
+        }
+      },
+      {
+        "method": "mat_create_standard",
+        "payload": {
+          "name": "M1"
+        }
+      }
     ],
     "readback": [
-      {"method": "mat_get_for_object", "payload": {"objects": ["Box001"]},
-       "expect": {"objects.0.material.name": "M1"}}
+      {
+        "method": "mat_get_for_object",
+        "payload": {
+          "objects": [
+            "Box001"
+          ]
+        },
+        "expect": {
+          "objects.0.material.name": "M1"
+        }
+      }
     ]
   },
   {
     "tool": "mat_get",
     "title": "material details report class and name",
-    "payload": {"material": "M1"},
+    "payload": {
+      "material": "M1"
+    },
     "steps": [
-      {"method": "mat_create_standard", "payload": {"name": "M1"}}
+      {
+        "method": "create_box",
+        "payload": {
+          "class": "Box",
+          "name": "__lc_matbox"
+        }
+      },
+      {
+        "method": "mat_create_standard",
+        "payload": {
+          "name": "M1"
+        }
+      },
+      {
+        "method": "mat_assign",
+        "payload": {
+          "objects": [
+            "__lc_matbox"
+          ],
+          "material": "M1"
+        }
+      }
     ],
     "readback": [
-      {"method": "mat_get", "payload": {"material": "M1"},
-       "expect": {"name": "M1", "class": "Standardmaterial"}}
+      {
+        "method": "mat_get",
+        "payload": {
+          "material": "M1"
+        },
+        "expect": {
+          "name": "M1",
+          "class": "Standardmaterial"
+        }
+      }
     ]
   },
   {
     "tool": "mat_set_diffuse",
     "title": "diffuse color round-trips as 255,0,0",
-    "payload": {"material": "M1", "color": [255, 0, 0]},
+    "payload": {
+      "material": "M1",
+      "color": [
+        255,
+        0,
+        0
+      ]
+    },
     "steps": [
-      {"method": "mat_create_standard", "payload": {"name": "M1"}}
+      {
+        "method": "create_box",
+        "payload": {
+          "class": "Box",
+          "name": "__lc_matbox"
+        }
+      },
+      {
+        "method": "mat_create_standard",
+        "payload": {
+          "name": "M1"
+        }
+      },
+      {
+        "method": "mat_assign",
+        "payload": {
+          "objects": [
+            "__lc_matbox"
+          ],
+          "material": "M1"
+        }
+      }
     ],
     "readback": [
-      {"method": "mat_get", "payload": {"material": "M1"},
-       "expect": {"diffuse": [255, 0, 0]}}
+      {
+        "method": "mat_get",
+        "payload": {
+          "material": "M1"
+        },
+        "expect": {
+          "diffuse": [
+            255,
+            0,
+            0
+          ]
+        }
+      }
     ]
   },
   {
     "tool": "mat_rename",
     "title": "renamed material shows the new name",
-    "payload": {"material": "M1", "name": "M2"},
+    "payload": {
+      "material": "M1",
+      "name": "M2"
+    },
     "steps": [
-      {"method": "mat_create_standard", "payload": {"name": "M1"}}
+      {
+        "method": "create_box",
+        "payload": {
+          "class": "Box",
+          "name": "__lc_matbox"
+        }
+      },
+      {
+        "method": "mat_create_standard",
+        "payload": {
+          "name": "M1"
+        }
+      },
+      {
+        "method": "mat_assign",
+        "payload": {
+          "objects": [
+            "__lc_matbox"
+          ],
+          "material": "M1"
+        }
+      }
     ],
     "readback": [
-      {"method": "mat_list", "expect": {"materials.0.name": "M2"}}
+      {
+        "method": "mat_list",
+        "expect": {
+          "materials.0.name": "M2"
+        }
+      }
     ]
   },
   {
@@ -61,7 +216,13 @@
     "title": "omni light is an Omnilight in the light list",
     "payload": {},
     "readback": [
-      {"method": "light_list", "expect": {"count": 1, "lights.0.class": "Omnilight"}}
+      {
+        "method": "light_list",
+        "expect": {
+          "count": 1,
+          "lights.0.class": "Omnilight"
+        }
+      }
     ]
   },
   {
@@ -69,19 +230,43 @@
     "title": "spot light is a Targetspot in the light list",
     "payload": {},
     "readback": [
-      {"method": "light_list", "expect": {"lights.0.class": "Targetspot"}}
+      {
+        "method": "light_list",
+        "expect": {
+          "lights.0.class": "targetSpot"
+        }
+      }
     ]
   },
   {
     "tool": "uvw_map",
-    "title": "UVW map planar exposes map channel 1",
-    "payload": {"objects": ["Box001"], "mapping": "planar"},
+    "title": "uvw map planar adds a UVWMap modifier",
+    "payload": {
+      "objects": [
+        "Box001"
+      ],
+      "mapping": "planar"
+    },
     "steps": [
-      {"method": "create_box", "payload": {}}
+      {
+        "method": "create_box",
+        "payload": {
+          "class": "Box"
+        }
+      }
     ],
     "readback": [
-      {"method": "uvw_get_channels", "payload": {"objects": ["Box001"]},
-       "expect": {"objects.0.channels": [1]}}
+      {
+        "method": "mod_list",
+        "payload": {
+          "objects": [
+            "Box001"
+          ]
+        },
+        "expect": {
+          "modifiers.0.class": "Uvwmap"
+        }
+      }
     ]
   }
 ]

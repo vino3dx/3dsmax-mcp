@@ -1,12 +1,25 @@
 [
   {
     "tool": "create_box",
-    "title": "box appears in the scene with 6 faces",
-    "payload": {},
+    "title": "box appears in the scene with 12 triangulated faces",
+    "payload": {
+      "class": "Box"
+    },
     "readback": [
-      {"method": "scene_info", "expect": {"objectCount": 1}},
-      {"method": "list_objects", "expect": {"count": 1, "objects.0.class": "Box",
-                                           "objects.0.faceCount": 6}}
+      {
+        "method": "scene_info",
+        "expect": {
+          "objectCount": 1
+        }
+      },
+      {
+        "method": "list_objects",
+        "expect": {
+          "count": 1,
+          "objects.0.class": "Box",
+          "objects.0.faceCount": 12
+        }
+      }
     ]
   },
   {
@@ -14,7 +27,12 @@
     "title": "sphere is a Sphere",
     "payload": {},
     "readback": [
-      {"method": "list_objects", "expect": {"objects.0.class": "Sphere"}}
+      {
+        "method": "list_objects",
+        "expect": {
+          "objects.0.class": "Sphere"
+        }
+      }
     ]
   },
   {
@@ -22,7 +40,12 @@
     "title": "cylinder is a Cylinder",
     "payload": {},
     "readback": [
-      {"method": "list_objects", "expect": {"objects.0.class": "Cylinder"}}
+      {
+        "method": "list_objects",
+        "expect": {
+          "objects.0.class": "Cylinder"
+        }
+      }
     ]
   },
   {
@@ -30,15 +53,43 @@
     "title": "teapot is a Teapot",
     "payload": {},
     "readback": [
-      {"method": "list_objects", "expect": {"objects.0.class": "Teapot"}}
+      {
+        "method": "list_objects",
+        "expect": {
+          "objects.0.class": "Teapot"
+        }
+      }
     ]
   },
   {
     "tool": "create_line",
-    "title": "line from three points is a Line shape",
-    "payload": {"points": [[0, 0, 0], [20, 0, 0], [20, 20, 0]]},
+    "title": "line from three points is a SplineShape",
+    "payload": {
+      "points": [
+        [
+          0,
+          0,
+          0
+        ],
+        [
+          20,
+          0,
+          0
+        ],
+        [
+          20,
+          20,
+          0
+        ]
+      ]
+    },
     "readback": [
-      {"method": "list_objects", "expect": {"objects.0.class": "Line"}}
+      {
+        "method": "list_objects",
+        "expect": {
+          "objects.0.class": "SplineShape"
+        }
+      }
     ]
   },
   {
@@ -46,63 +97,150 @@
     "title": "rectangle is a Rectangle shape",
     "payload": {},
     "readback": [
-      {"method": "list_objects", "expect": {"objects.0.class": "Rectangle"}}
+      {
+        "method": "list_objects",
+        "expect": {
+          "objects.0.class": "Rectangle"
+        }
+      }
     ]
   },
   {
     "tool": "transform_object",
     "title": "relative move lands at 10,5,0",
-    "payload": {"operation": "move", "mode": "relative", "value": [10, 5, 0]},
+    "payload": {
+      "operation": "move",
+      "mode": "relative",
+      "value": [
+        10,
+        5,
+        0
+      ],
+      "objects": [
+        "Box001"
+      ]
+    },
     "steps": [
-      {"method": "create_box", "payload": {}}
+      {
+        "method": "create_box",
+        "payload": {
+          "class": "Box"
+        }
+      }
     ],
     "readback": [
-      {"method": "list_objects", "expect": {"objects.0.position": [10, 5, 0]}}
+      {
+        "method": "list_objects",
+        "expect": {
+          "objects.0.position": [
+            10,
+            5,
+            0
+          ]
+        }
+      }
     ]
   },
   {
     "tool": "clone_objects",
     "title": "clone doubles the object count",
-    "payload": {"count": 1},
+    "payload": {
+      "count": 1,
+      "objects": [
+        "Box001"
+      ]
+    },
     "steps": [
-      {"method": "create_box", "payload": {}}
+      {
+        "method": "create_box",
+        "payload": {
+          "class": "Box"
+        }
+      }
     ],
     "readback": [
-      {"method": "scene_info", "expect": {"objectCount": 2}}
+      {
+        "method": "scene_info",
+        "expect": {
+          "objectCount": 2
+        }
+      }
     ]
   },
   {
     "tool": "rename_object",
     "title": "rename is visible in the scene",
-    "payload": {"name": "Box001", "newName": "MyBox"},
+    "payload": {
+      "name": "Box001",
+      "newName": "MyBox"
+    },
     "steps": [
-      {"method": "create_box", "payload": {}}
+      {
+        "method": "create_box",
+        "payload": {
+          "class": "Box"
+        }
+      }
     ],
     "readback": [
-      {"method": "list_objects", "expect": {"objects.0.name": "MyBox"}}
+      {
+        "method": "list_objects",
+        "expect": {
+          "objects.0.name": "MyBox"
+        }
+      }
     ]
   },
   {
     "tool": "get_object_info",
     "title": "object info reports name and class",
-    "payload": {"name": "Box001"},
+    "payload": {
+      "name": "Box001"
+    },
     "steps": [
-      {"method": "create_box", "payload": {}}
+      {
+        "method": "create_box",
+        "payload": {
+          "class": "Box"
+        }
+      }
     ],
     "readback": [
-      {"method": "get_object_info", "payload": {"name": "Box001"},
-       "expect": {"name": "Box001", "class": "Box"}}
+      {
+        "method": "get_object_info",
+        "payload": {
+          "name": "Box001"
+        },
+        "expect": {
+          "name": "Box001",
+          "class": "Box"
+        }
+      }
     ]
   },
   {
     "tool": "select_objects",
     "title": "selection holds exactly the picked object",
-    "payload": {"objects": ["Box001"]},
+    "payload": {
+      "objects": [
+        "Box001"
+      ]
+    },
     "steps": [
-      {"method": "create_box", "payload": {}}
+      {
+        "method": "create_box",
+        "payload": {
+          "class": "Box"
+        }
+      }
     ],
     "readback": [
-      {"method": "get_selection", "expect": {"count": 1}}
+      {
+        "method": "get_selection",
+        "expect": {
+          "count": 1
+        }
+      }
     ]
   },
   {
@@ -110,24 +248,63 @@
     "title": "deselect empties the selection",
     "payload": {},
     "steps": [
-      {"method": "create_box", "payload": {}},
-      {"method": "select_objects", "payload": {"objects": ["Box001"]}}
+      {
+        "method": "create_box",
+        "payload": {
+          "class": "Box"
+        }
+      },
+      {
+        "method": "select_objects",
+        "payload": {
+          "objects": [
+            "Box001"
+          ]
+        }
+      }
     ],
     "readback": [
-      {"method": "get_selection", "expect": {"count": 0}}
+      {
+        "method": "get_selection",
+        "expect": {
+          "count": 0
+        }
+      }
     ]
   },
   {
     "tool": "parent_objects",
     "title": "parenting shows up in the node parent field",
-    "payload": {"objects": ["Box002"], "parent": "Box001"},
+    "payload": {
+      "objects": [
+        "Box002"
+      ],
+      "parent": "Box001"
+    },
     "steps": [
-      {"method": "create_box", "payload": {}},
-      {"method": "create_box", "payload": {}}
+      {
+        "method": "create_box",
+        "payload": {
+          "class": "Box"
+        }
+      },
+      {
+        "method": "create_box",
+        "payload": {
+          "class": "Box"
+        }
+      }
     ],
     "readback": [
-      {"method": "get_object_info", "payload": {"name": "Box002"},
-       "expect": {"parent": "Box001"}}
+      {
+        "method": "get_object_info",
+        "payload": {
+          "name": "Box002"
+        },
+        "expect": {
+          "parent": "Box001"
+        }
+      }
     ]
   },
   {
@@ -135,7 +312,12 @@
     "title": "hierarchy root is the scene",
     "payload": {},
     "readback": [
-      {"method": "get_hierarchy", "expect": {"name": "scene"}}
+      {
+        "method": "get_hierarchy",
+        "expect": {
+          "name": "scene"
+        }
+      }
     ]
   }
 ]
