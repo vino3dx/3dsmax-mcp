@@ -44,7 +44,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parent.parent
-for _extra in (str(REPO / "src" / "python"), str(HERE)):
+for _extra in (str(REPO / "src" / "python"), str(REPO / "test" / "static"), str(HERE)):
     if _extra not in sys.path:
         sys.path.insert(0, _extra)
 
