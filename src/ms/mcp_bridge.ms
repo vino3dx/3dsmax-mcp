@@ -236,6 +236,9 @@ fn mcpBridgeReadPort =
                 ( try ( if (auto as integer) == 0 do MCP_BRIDGE_AUTOSTART = false ) catch() )
         )
     )
+    -- A non-numeric env/ini value coerces to undefined (not an exception),
+    -- so fall back to the default instead of returning undefined.
+    if port == undefined do port = MCP_BRIDGE_PORT
     port
 )
 
