@@ -6,11 +6,16 @@ One toolbox for the questions the crash investigation keeps asking, with no
 
     check           Environment snapshot: residual 3dsmax.exe processes, the
                     bridge port, a live bridge ping, free physical memory and
-                    3dsmax.exe crash dumps written in the last hour.
+                    3dsmax.exe crash evidence written in the last hour --
+                    CrashDumps minidumps, WER ReportArchive/ReportQueue
+                    reports and Windows Application event-log entries.
     launch-watch    Start 3ds Max and watch it.  PASS means the process stayed
                     alive for --survive-seconds AND the bridge answered a ping.
                     On PASS 3ds Max is deliberately left running for the next
-                    step; on crash the new dumps are reported.
+                    step.  Crash evidence is baselined before the launch and
+                    diffed afterwards, so only artifacts of THIS attempt are
+                    reported; AppHangTransient entries are warnings, never
+                    crashes.  No process is ever closed by this tool.
     dump-analyze    Parse a Windows minidump (.mdmp) with struct alone:
                     exception code / address (resolved to module + offset),
                     the crashing thread's registers, a stack scan of the top
@@ -34,6 +39,7 @@ import ctypes
 import json
 import mmap
 import os
+import re
 import socket
 import struct
 import subprocess
@@ -46,6 +52,13 @@ MAX_EXE = os.path.join("C:" + os.sep, "Program Files", "Autodesk",
                        "3ds Max 2020", "3dsmax.exe")
 BRIDGE_PORT = 8765
 SYSTEM32 = os.path.join("C:" + os.sep, "Windows", "System32")
+
+# Evidence windows and the known P0 crash signature (docs/P0_ENV.md).
+RECENT_WINDOW_S = 3600.0        # "last hour" display window used by check
+BASELINE_WINDOW_S = 86400.0     # baseline window for launch-watch attribution
+KNOWN_SIG_CODE = 0xC0000409     # STATUS_STACK_BUFFER_OVERRUN / fail-fast
+KNOWN_SIG_OFFSET = 0xA527E      # ucrtbase.dll + 0xa527e
+KNOWN_SIG_FAIL_FAST = 7         # FAST_FAIL_FATAL_APP_EXIT (abort)
 
 EXIT_OK = 0
 EXIT_FAIL = 1
@@ -167,7 +180,7 @@ def list_crash_dumps() -> List[Path]:
     return sorted(folder.glob("3dsmax.exe.*.dmp"), key=lambda p: p.stat().st_mtime)
 
 
-def recent_crash_dumps(within_s: float = 3600.0) -> List[Dict[str, Any]]:
+def recent_crash_dumps(within_s: float = RECENT_WINDOW_S) -> List[Dict[str, Any]]:
     now = time.time()
     out: List[Dict[str, Any]] = []
     for path in list_crash_dumps():
@@ -181,12 +194,234 @@ def recent_crash_dumps(within_s: float = 3600.0) -> List[Dict[str, Any]]:
     return out
 
 
+# --------------------------------------------- read-only crash evidence (WER)
+def wer_roots() -> List[Tuple[str, Path]]:
+    """(label, path) of every WER folder that can hold 3dsmax reports."""
+    roots: List[Tuple[str, Path]] = []
+    local = os.environ.get("LOCALAPPDATA", "")
+    machine = os.environ.get("ProgramData", "")
+    if local:
+        wer = Path(local) / "Microsoft" / "Windows" / "WER"
+        roots.append(("WER user ReportArchive", wer / "ReportArchive"))
+        roots.append(("WER user ReportQueue", wer / "ReportQueue"))
+    if machine:
+        wer = Path(machine) / "Microsoft" / "Windows" / "WER"
+        roots.append(("WER machine ReportArchive", wer / "ReportArchive"))
+        roots.append(("WER machine ReportQueue", wer / "ReportQueue"))
+    return roots
+
+
+def list_wer_reports(within_s: Optional[float] = RECENT_WINDOW_S
+                     ) -> List[Dict[str, Any]]:
+    """3dsmax-related WER report entries, read-only (nothing is written).
+
+    Covers the machine-wide and per-user ReportArchive/ReportQueue trees.
+    ``within_s=None`` lists every entry regardless of age (the launch-watch
+    baseline); a number keeps only entries modified within that window
+    (the ``check`` display).
+    """
+    now = time.time()
+    out: List[Dict[str, Any]] = []
+    for label, root in wer_roots():
+        if not root.is_dir():
+            continue
+        try:
+            names = os.listdir(root)
+        except OSError:
+            continue
+        for name in names:
+            if "3dsmax" not in name.lower():
+                continue
+            path = root / name
+            try:
+                st = path.stat()
+            except OSError:
+                continue
+            if within_s is not None and now - st.st_mtime > within_s:
+                continue
+            out.append({"source": label, "name": name, "path": str(path),
+                        "mtime": _iso(st.st_mtime)})
+    out.sort(key=lambda item: (item["mtime"], item["source"], item["name"]))
+    return out
+
+
+# ------------------------------- read-only crash evidence (event log, WER 1001)
+def _ps_time(value: Any) -> str:
+    """/Date(ms)/ or ISO text from ConvertTo-Json -> local ISO string."""
+    text = str(value or "")
+    match = re.match(r"^/Date\((-?\d+)([+-]\d+)?\)/$", text)
+    if not match:
+        return text
+    ticks = int(match.group(1))
+    if ticks > 10 ** 14:  # .NET ticks (100ns units since 0001-01-01)
+        epoch_s = (ticks - 621355968000000000) / 10.0 ** 7
+    else:                # JavaScript-style UTC milliseconds
+        epoch_s = ticks / 1000.0
+    try:
+        return _iso(epoch_s)
+    except (OSError, OverflowError, ValueError):
+        return text
+
+
+def _event_kind(provider: str, event_id: int, event_name: str) -> str:
+    """crash / hang / info -- a hang is a warning, never crash evidence."""
+    name = (event_name or "").lower()
+    if "hang" in name:
+        return "hang"
+    if "crash" in name:
+        return "crash"
+    if provider == "Application Error" and event_id == 1000:
+        return "crash"
+    if provider == "Application Hang" and event_id == 1002:
+        return "hang"
+    return "info"
+
+
+def list_max_events(within_s: float = RECENT_WINDOW_S) -> Dict[str, Any]:
+    """3dsmax-related Application event-log entries, read-only.
+
+    Queries Get-WinEvent through PowerShell (the rest of this tool stays
+    stdlib-only).  Returns {"available", "events", "error"}; a PowerShell
+    or policy failure degrades to available=False instead of raising, so a
+    locked-down machine still gets every other evidence source.
+    """
+    result: Dict[str, Any] = {"available": False, "events": [], "error": None}
+    if os.name != "nt":
+        result["error"] = "event log is Windows-only"
+        return result
+    window = max(1.0, float(within_s))
+    # %-formatting (not str.format): the PowerShell hashtable braces stay
+    # literal without escaping.  -ErrorAction Stop + try/catch: when the
+    # filter matches nothing, Get-WinEvent raises a non-terminating "no
+    # events were found" error that would otherwise make powershell.exe
+    # exit 1; catching it keeps the empty result a success (exit 0).
+    # EventName is extracted inside PowerShell and the message body is
+    # deliberately NOT carried over: on a localized Windows the redirected
+    # console stream is OEM-codepage bytes, so keeping raw message text
+    # would force encoding guesswork on the Python side.  The projected
+    # fields are pure ASCII.
+    script = (
+        "[Console]::OutputEncoding=[System.Text.Encoding]::UTF8; "
+        "$events = try { Get-WinEvent -FilterHashtable @{LogName='Application';"
+        "StartTime=(Get-Date).AddSeconds(-%s);"
+        "ProviderName=@('Windows Error Reporting','Application Error',"
+        "'Application Hang')} -ErrorAction Stop | "
+        "Where-Object { $_.Message -like '*3dsmax*' } } catch { @() }; "
+        "$events | Select-Object RecordId,TimeCreated,Id,ProviderName,"
+        "@{n='EventName';e={ if ($_.Message -match "
+        "'(?:Event\\s*Name|EventName|\u4e8b\u4ef6\u540d\u79f0)\\s*[:\uff1a]?\\s*"
+        "([A-Za-z][A-Za-z0-9_]*)') { $Matches[1] } else { '' } }} | "
+        "ConvertTo-Json -Compress"
+    ) % (window,)
+    try:
+        proc = subprocess.run(
+            ["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
+            capture_output=True, timeout=60,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        result["error"] = "powershell failed: {0}".format(exc)
+        return result
+    if proc.returncode != 0:
+        result["error"] = "Get-WinEvent exit {0}: {1}".format(
+            proc.returncode,
+            (proc.stderr or b"").decode("utf-8", "replace")[:200])
+        return result
+    raw = (proc.stdout or b"").decode("utf-8", "replace").strip()
+    if not raw:
+        result["available"] = True
+        return result
+    try:
+        data = json.loads(raw)
+    except ValueError as exc:
+        result["error"] = "cannot parse Get-WinEvent output: {0}".format(exc)
+        return result
+    if isinstance(data, dict):
+        data = [data]
+    events: List[Dict[str, Any]] = []
+    for item in data:
+        if not isinstance(item, dict):
+            continue
+        event_name = str(item.get("EventName") or "")
+        provider = str(item.get("ProviderName") or "")
+        try:
+            event_id = int(item.get("Id"))
+        except (TypeError, ValueError):
+            event_id = -1
+        events.append({
+            "record_id": item.get("RecordId"),
+            "time": _ps_time(item.get("TimeCreated")),
+            "id": event_id,
+            "provider": provider,
+            "event_name": event_name,
+            "kind": _event_kind(provider, event_id, event_name),
+        })
+    events.sort(key=lambda e: str(e.get("time")))
+    result["available"] = True
+    result["events"] = events
+    return result
+
+
+def evidence_snapshot(within_s: Optional[float] = BASELINE_WINDOW_S
+                      ) -> Dict[str, Any]:
+    """Every 3dsmax crash artifact currently on record, keyed for diffing.
+
+    Dumps are listed regardless of age (the file name carries the PID, so a
+    pre-existing dump can never be mistaken for a new one); WER reports and
+    events use ``within_s`` so a baseline stays bounded while still covering
+    any single attempt.
+    """
+    dumps = {p.name: _iso(p.stat().st_mtime) for p in list_crash_dumps()}
+    wer = {e["path"]: e["mtime"] for e in list_wer_reports(within_s=within_s)}
+    events_result = list_max_events(within_s=within_s)
+    events = {str(e["record_id"]): e for e in events_result["events"]}
+    return {"dumps": dumps, "wer": wer, "events": events,
+            "events_available": events_result["available"],
+            "events_error": events_result.get("error")}
+
+
+def evidence_diff(before: Dict[str, Any],
+                  after: Dict[str, Any]) -> Dict[str, Any]:
+    """Artifacts that appeared between two snapshots (this attempt's own)."""
+    new_dumps = [{"name": name, "mtime": mtime}
+                 for name, mtime in after.get("dumps", {}).items()
+                 if name not in before.get("dumps", {})]
+    new_wer = [entry for key, entry in after.get("wer", {}).items()
+               if key not in before.get("wer", {})]
+    new_events = [event for key, event in after.get("events", {}).items()
+                  if key not in before.get("events", {})]
+    return {"new_dumps": new_dumps, "new_wer_reports": new_wer,
+            "new_events": new_events}
+
+
+def dump_signature(path: str) -> Dict[str, Any]:
+    """Parse one minidump and compare it with the known P0 signature."""
+    try:
+        report = analyze_dump(path)
+    except (OSError, ValueError) as exc:
+        return {"analyzed": False, "error": str(exc)}
+    exc = report.get("exception") or {}
+    offset = exc.get("offset")
+    code = str(exc.get("exception_code") or "")
+    fail_fast = exc.get("fail_fast_code")
+    same = (offset == KNOWN_SIG_OFFSET
+            and code.lower() == "0x{0:08x}".format(KNOWN_SIG_CODE)
+            and fail_fast == KNOWN_SIG_FAIL_FAST)
+    return {"analyzed": True, "exception_code": code,
+            "fault_module": exc.get("module"),
+            "offset_hex": exc.get("offset_hex"),
+            "fail_fast_code": fail_fast,
+            "fail_fast_name": exc.get("fail_fast_name"),
+            "same_as_known_signature": same}
+
+
 # ------------------------------------------------------------------- subcommands
 def cmd_check(args: argparse.Namespace) -> int:
     procs = max_processes()
     ping = bridge_ping(port=args.port)
     mem = free_memory()
     recent = recent_crash_dumps()
+    wer = list_wer_reports()
+    events = list_max_events()
     snapshot = {
         "time": _iso(time.time()),
         "residual_processes": procs,
@@ -194,6 +429,10 @@ def cmd_check(args: argparse.Namespace) -> int:
         "bridge": ping,
         "memory": mem,
         "recent_crash_dumps": recent,
+        "recent_wer_reports": wer,
+        "recent_events": events["events"],
+        "events_available": events["available"],
+        "events_error": events.get("error"),
     }
     if args.json:
         print(json.dumps(snapshot, ensure_ascii=False, indent=2))
@@ -216,6 +455,20 @@ def cmd_check(args: argparse.Namespace) -> int:
             print("   {0}  {1}  {2:.1f} MB".format(
                 item["mtime"], os.path.basename(item["path"]),
                 item["size_bytes"] / 1048576.0))
+        print("WER reports <1h     : {0}".format(len(wer)))
+        for item in wer:
+            print("   {0}  [{1}]  {2}".format(
+                item["mtime"], item["source"], item["name"]))
+        if events["available"]:
+            print("events <1h          : {0}".format(len(events["events"])))
+            for item in events["events"]:
+                label = item["event_name"] or item["provider"]
+                print("   {0}  [{1}]  {2} (id {3}, record {4})".format(
+                    item["time"], item["kind"], label,
+                    item["id"], item["record_id"]))
+        else:
+            print("events <1h          : unavailable ({0})".format(
+                events.get("error")))
     healthy = (not procs) or ping.get("connected")
     return EXIT_OK if healthy else EXIT_FAIL
 
@@ -228,7 +481,11 @@ def cmd_launch_watch(args: argparse.Namespace) -> int:
         print(json.dumps(report, ensure_ascii=False) if args.json else str(report))
         return EXIT_FAIL
 
-    before = {p.name for p in list_crash_dumps()}
+    # Baseline every 3dsmax crash artifact BEFORE the launch so that only
+    # evidence produced by THIS attempt is attributed to it -- historical
+    # crashes from earlier sessions must never be counted here.
+    before = evidence_snapshot()
+
     started = time.time()
     try:
         proc = subprocess.Popen([args.exe])
@@ -256,18 +513,57 @@ def cmd_launch_watch(args: argparse.Namespace) -> int:
             break
 
     elapsed = round(time.time() - started, 1)
-    after = [p for p in list_crash_dumps() if p.name not in before]
+
+    # WER writes its dump/report up to tens of seconds AFTER the process is
+    # gone.  On a non-PASS outcome, wait a bounded grace period for the
+    # artifacts to land before diffing.  This happens after the result is
+    # final: it does not change the watch parameters or the PASS criteria.
+    if result != "PASS" and args.evidence_grace_seconds > 0:
+        deadline = time.time() + args.evidence_grace_seconds
+        while time.time() < deadline:
+            probe = evidence_snapshot()
+            if any(name not in before["dumps"] for name in probe["dumps"]):
+                break
+            time.sleep(2.0)
+
+    after = evidence_snapshot()
+    diff = evidence_diff(before, after)
+    new_dumps = [item["name"] for item in diff["new_dumps"]]
+    signature = None
+    if new_dumps:
+        signature = dump_signature(str(crash_dump_dir() / max(new_dumps)))
+
+    crash_events = [e for e in diff["new_events"] if e.get("kind") == "crash"]
+    hang_events = [e for e in diff["new_events"] if e.get("kind") == "hang"]
+    warnings: List[str] = []
+    for event in hang_events:
+        # AppHangTransient / AppHang: the process kept running after a
+        # transient stall.  Recorded as a WARNING -- never a crash.
+        warnings.append(
+            "hang event {0} at {1} (id {2}) -- warning only, not a crash".format(
+                event.get("event_name") or event.get("provider"),
+                event.get("time"), event.get("id")))
+    if not after.get("events_available", True):
+        warnings.append("event log unavailable: {0}".format(
+            after.get("events_error")))
+
     report: Dict[str, Any] = {
         "result": result,
         "pid": proc.pid,
         "exe": args.exe,
+        "started": _iso(started),
+        "finished": _iso(time.time()),
         "alive_seconds": elapsed,
         "survive_seconds": args.survive_seconds,
         "exit_code": proc.poll() if result == "process_exited" else None,
         "bridge": ping,
-        "new_crash_dumps": [str(p) for p in after],
+        "new_crash_dumps": [str(crash_dump_dir() / name) for name in new_dumps],
+        "signature": signature,
+        "new_wer_reports": diff["new_wer_reports"],
+        "new_events": diff["new_events"],
+        "crash_evidence": bool(new_dumps) or bool(crash_events),
+        "warnings": warnings,
         "max_left_running": result == "PASS",
-        "started": _iso(started),
     }
     if args.json:
         print(json.dumps(report, ensure_ascii=False, indent=2))
@@ -275,6 +571,23 @@ def cmd_launch_watch(args: argparse.Namespace) -> int:
         print("launch-watch: {0} after {1}s (pid {2})".format(result, elapsed, proc.pid))
         for key in ("exit_code", "bridge", "new_crash_dumps"):
             print("  {0}: {1}".format(key, report[key]))
+        if signature and signature.get("analyzed"):
+            verdict = ("MATCHES known P0 signature"
+                       if signature.get("same_as_known_signature")
+                       else "differs from known P0 signature")
+            print("  signature: {0} ({1} {2}+{3} failfast={4})".format(
+                verdict, signature.get("exception_code"),
+                signature.get("fault_module"), signature.get("offset_hex"),
+                signature.get("fail_fast_code")))
+        for item in diff["new_wer_reports"]:
+            print("  new WER report: {0}".format(item["name"]))
+        for event in diff["new_events"]:
+            print("  new event: [{0}] {1} at {2} (id {3})".format(
+                event.get("kind"),
+                event.get("event_name") or event.get("provider"),
+                event.get("time"), event.get("id")))
+        for text in warnings:
+            print("  warning: {0}".format(text))
     return EXIT_OK if result == "PASS" else EXIT_FAIL
 
 
@@ -751,6 +1064,11 @@ def main(argv: Optional[List[str]] = None) -> int:
     p_watch.add_argument("--watch-seconds", type=float, default=300.0)
     p_watch.add_argument("--poll-seconds", type=float, default=1.0)
     p_watch.add_argument("--ping-every", type=float, default=5.0)
+    p_watch.add_argument("--evidence-grace-seconds", type=float, default=30.0,
+                        help="bounded wait after a non-PASS watch for WER "
+                             "dumps/reports to land (default 30; runs after "
+                             "the result is final and never affects the "
+                             "PASS criteria)")
     p_watch.set_defaults(func=cmd_launch_watch)
 
     p_dump = sub.add_parser("dump-analyze", help="parse a .mdmp file")
