@@ -34,8 +34,8 @@ Claims audited:
     same category, with no extras and no omissions
 
 Deliberately NOT audited:
-  * CHANGELOG.md and docs/DELIVERY_* / docs/PLAN_* -- point-in-time records;
-    their numbers were true when written
+  * docs/CHANGELOG.md and docs/reports/* -- point-in-time records; their
+    numbers were true when written
   * the self-test "13 项自检" claim -- mcp_selftest.ms emits one result line
     per mcpStPush call (14) but groups them into 13 numbered checks, so
     neither count is wrong and any automatic rule would be arbitrary
@@ -55,7 +55,7 @@ import sys
 from typing import Dict, List, Tuple
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-REPO = os.path.dirname(HERE)
+REPO = os.path.dirname(os.path.dirname(HERE))
 sys.path.insert(0, os.path.join(REPO, "src", "python"))
 sys.path.insert(0, HERE)  # registration_sync_test lives next to this file
 

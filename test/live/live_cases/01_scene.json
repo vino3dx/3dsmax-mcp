@@ -1,0 +1,26 @@
+[
+  {
+    "tool": "scene_info",
+    "title": "empty scene reports objectCount 0",
+    "payload": {},
+    "readback": [
+      {"method": "scene_info", "expect": {"objectCount": 0}}
+    ]
+  },
+  {
+    "tool": "scene_new",
+    "title": "scene_new resets to an empty scene",
+    "payload": {},
+    "readback": [
+      {"method": "scene_info", "expect": {"objectCount": 0}}
+    ]
+  },
+  {
+    "tool": "list_objects",
+    "title": "empty scene lists zero objects",
+    "payload": {},
+    "readback": [
+      {"method": "list_objects", "expect": {"count": 0}}
+    ]
+  }
+]

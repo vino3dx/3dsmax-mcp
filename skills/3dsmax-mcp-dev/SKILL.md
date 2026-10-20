@@ -141,10 +141,10 @@ bridge (`HOLD_ALLOWED` in `verify.py`).
 python scripts/verify.py                            # static integrity — run always
 PYTHONPATH=src/python python -m maxmcp --selftest-python   # catalog + wire codec, no Max needed
 PYTHONPATH=src/python python scripts/test_e2e.py           # full MCP round trip via MockBridge
-python test/catalog_contract_test.py                # 6th gate: Python-layer contract, no Max needed
-python test/offline_lint_helper.py                  # 7th gate: source lint + catalog audit, no Max needed
-python test/ms_check.py src/ms                      # encoding / brackets / method-chain / symbols
-python test/registration_sync_test.py               # catalog <-> registry <-> deployed trees
+python test/static/catalog_contract_test.py                # 6th gate: Python-layer contract, no Max needed
+python test/static/offline_lint_helper.py                  # 7th gate: source lint + catalog audit, no Max needed
+python test/static/ms_check.py src/ms                      # encoding / brackets / method-chain / symbols
+python test/static/registration_sync_test.py               # catalog <-> registry <-> deployed trees
 python scripts/doctor.py                            # end-to-end install + live handshake
 python scripts/install.py --list                    # detection only, installs nothing
 ```
@@ -167,7 +167,7 @@ change to `mcp_json.ms`, `wire.py` or the language helpers.
   other locale) user-config trees are installed to.
 - `src/python/maxmcp/` ships to `%LOCALAPPDATA%\3dsmax-mcp\maxmcp`.
 - Deployment is **byte-exact**: `install.py` copies files verbatim, so the
-  deployed trees must equal the repo trees. `test/registration_sync_test.py`
+  deployed trees must equal the repo trees. `test/static/registration_sync_test.py`
   fails when they drift. Never hand-edit an installed `.ms` — edit `src/ms/`
   and re-run the installer.
 - Client configs are **merged**, never overwritten — see `merge_json_config`. The

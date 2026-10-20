@@ -25,6 +25,7 @@ An MCP (Model Context Protocol) plugin that gives AI agents full control of Auto
 - [开发](#开发)
 - [许可](#许可)
 
+
 ---
 
 ## 这是什么
@@ -593,22 +594,33 @@ mcpSelfTest()
 ├── scripts/
 │   ├── install.py             # 安装 / 卸载 / 客户端注册（7 种客户端），字节级部署
 │   ├── doctor.py              # 逐环诊断
+│   ├── max_health.py          # 启动崩溃体检 / launch-watch 监视
 │   ├── verify.py              # 静态完整性校验（括号、禁用构造、工具↔handler、速查表符号、文档统计对齐）
 │   └── test_e2e.py            # 端到端 MCP 测试（stdio + HTTP + SSE + 自动语言）
-├── test/                      # 静态与诊断测试（无需 Max 即可跑大部分）
-│   ├── ms_check.py            #   编码 / 括号 / 方法链取成员 / 符号检查
-│   ├── registration_sync_test.py #  Python catalog ↔ MAXScript 注册 ↔ 部署树漂移
-│   ├── catalog_contract_test.py #  Python 层契约测试（第六关：schema/preset/强转/门禁）
-│   ├── doc_alignment_audit.py #  文档统计 ↔ 代码真相对齐审计（由 verify.py 调用）
-│   ├── offline_lint_helper.py #  源码离线 lint + 工具定义审计（第七关，由 verify.py 调用）
-│   ├── modeling_ext_test.py   #   建模扩展实机测试（需要 Max 桥接监听）
-│   ├── bridge_*_test.py       #   桥接契约 / 管道 / 重启测试
-│   └── mock_bridge.py         #   无 Max 的 TCP 模拟桥接
+├── test/
+│   ├── static/                # 无 Max 静态门禁（全部可在 CI 跑）
+│   │   ├── ms_check.py        #   MAXScript 编码 / 括号 / 方法链 / 未定义符号
+│   │   ├── registration_sync_test.py # Python catalog ↔ MAXScript 注册 ↔ 部署树漂移
+│   │   ├── catalog_contract_test.py  # Python 层契约（第六关：schema/preset/强转/门禁）
+│   │   ├── doc_alignment_audit.py    # 文档统计 ↔ 代码真相对齐审计（verify.py 调用）
+│   │   ├── offline_lint_helper.py    # 源码离线 lint + 工具定义审计（第七关）
+│   │   └── mock_bridge.py     #   无 Max 的 TCP 模拟桥接
+│   ├── live/                  # 需要真实 Max 桥接监听（127.0.0.1:8765）
+│   │   ├── bridge_contract_test.py / bridge_pipeline_test.py / bridge_restart_test.py
+│   │   ├── modeling_ext_test.py      # 建模扩展实机回归（6+6 组）
+│   │   ├── live_matrix.py            # catalog 驱动的活体验证矩阵 runner
+│   │   └── live_cases/        #   矩阵用例（5 个 JSON，43 例）
+│   ├── diagnostics/           # 一次性探针（dump / TCP / batch / 窗口等）
+│   └── logs/                  # 证据与日志，按日期归档（gitignored）
 ├── docs/
 │   ├── BRIDGE_CONVENTIONS.md  # 桥接契约与编码规范
-│   ├── PLAN_modeling_ext_20261018.md
-│   ├── DELIVERY_20261018.md
+│   ├── LIVE_MATRIX.md         # 384 工具 × 实机状态矩阵（生成物）
+│   ├── OFFLINE_LINT_GUIDE.md  # 离线门禁使用指南
+│   ├── P0_ENV.md              # Max 启动崩溃调查环境记录
+│   ├── TOOL_PROFILES_PROPOSAL.md
+│   ├── CHANGELOG.md           # 变更日志
 │   ├── graphite-capability-matrix.md
+│   ├── reports/               # 时间点报告（DELIVERY / PLAN / OVERNIGHT）
 │   └── tools.txt              # 全部工具名一览（生成物）
 ├── skills/3dsmax-mcp-dev/     # 给 AI 智能体用的开发 skill
 │   └── SKILL.md
@@ -619,13 +631,12 @@ mcpSelfTest()
 │   └── maxscript/listener_cheatsheet.ms
 ├── backup/                    # 历次改动前的快照（约定：改动前先备份到这里）
 ├── pyproject.toml
-├── CHANGELOG.md
 └── LICENSE
 ```
 
 > **仓库即唯一真相**：`src/ms` 与 `src/python/maxmcp` 保存的就是在现场运行的字节
 > （行结尾混合且都经过实战验证），`install.py` 字节级部署，
-> `test/registration_sync_test.py` 会检查部署树是否与仓库漂移。改了已安装目录里的
+> `test/static/registration_sync_test.py` 会检查部署树是否与仓库漂移。改了已安装目录里的
 > `.ms` 而不改仓库，等于没改。
 
 ---
@@ -651,21 +662,24 @@ python scripts/verify.py
 PYTHONPATH=src/python python -m maxmcp --selftest-python
 
 # MAXScript 静态检查：编码（BOM/ANSI）、括号、方法链取成员、未定义符号
-python test/ms_check.py src/ms
+python test/static/ms_check.py src/ms
 
 # 注册一致性：catalog ↔ mcpRegister ↔ 部署树（ENU/CHS）是否漂移
-python test/registration_sync_test.py
+python test/static/registration_sync_test.py
 
 # Python 层契约（第六关）：全部工具的 schema / preset / 必填校验 / 类型强转 /
 #         危险工具门禁，MockBridge 顶替 Max，不连 8765
-python test/catalog_contract_test.py            # 人读输出
-python test/catalog_contract_test.py --list     # 只列用例清单，不启任何服务
-python test/catalog_contract_test.py --json     # 机器可读报告
+python test/static/catalog_contract_test.py            # 人读输出
+python test/static/catalog_contract_test.py --list     # 只列用例清单，不启任何服务
+python test/static/catalog_contract_test.py --json     # 机器可读报告
 
 # 离线源码 lint（第七关）：Python 语法/编码/未定义名/硬编码路径 + MAXScript 编码/括号
 #         + catalog 工具定义审计（双语描述/参数类型/默认值类型），纯文本分析无需 Max
-python test/offline_lint_helper.py              # 人读输出
-python test/offline_lint_helper.py --json       # 机器可读报告
+python test/static/offline_lint_helper.py              # 人读输出
+python test/static/offline_lint_helper.py --json       # 机器可读报告
+
+# 实机验证矩阵（需要 Max 桥接在听）：--list 可无 Max 只看清单
+python test/live/live_matrix.py --list
 
 # 端到端：用 MockBridge 顶替 Max，验证 initialize / tools/list / tools/call /
 #         中文往返 / 错误透传 / 语言切换 / 配置持久化

@@ -34,7 +34,7 @@ dev = ["pytest>=7", "ruff>=0.5"]
 
 [project.urls]
 Homepage = "https://github.com/vino3dx/3dsmax-ai-mcp"
-Changelog = "https://github.com/vino3dx/3dsmax-ai-mcp/blob/main/CHANGELOG.md"
+Changelog = "https://github.com/vino3dx/3dsmax-ai-mcp/blob/main/docs/CHANGELOG.md"
 
 [tool.setuptools]
 package-dir = { "" = "src/python" }

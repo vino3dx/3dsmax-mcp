@@ -1,0 +1,27 @@
+[
+  {
+    "tool": "bridge_status",
+    "title": "bridge reports running with handlers registered",
+    "payload": {},
+    "readback": [
+      {"method": "bridge_status", "expect": {"running": true},
+       "expect_gt": {"handlerCount": 0}}
+    ]
+  },
+  {
+    "tool": "get_max_version",
+    "title": "Max version reports year 2020",
+    "payload": {},
+    "readback": [
+      {"method": "get_max_version", "expect": {"year": 2020}}
+    ]
+  },
+  {
+    "tool": "bridge_selftest",
+    "title": "in-Max self test reports zero failures",
+    "payload": {},
+    "readback": [
+      {"method": "bridge_selftest", "expect": {"failures": 0}}
+    ]
+  }
+]

@@ -20,10 +20,10 @@
 | 1 | `python scripts/verify.py` | 全局完整性 umbrella：catalog ↔ MAXScript 注册一一对应、禁用构造、括号平衡、模块加载列表、速查表符号、**工具分布统计**、**文档数字对齐**、**第七关离线 lint**（见下） | 0/1 |
 | 2 | `PYTHONPATH=src/python python -m maxmcp --selftest-python` | catalog 自洽 + 线编解码往返（含中文） | 0/1 |
 | 3 | `PYTHONPATH=src/python python scripts/test_e2e.py` | MockBridge 顶替 Max 的端到端：stdio / HTTP / SSE / 鉴权 / 语言 auto | 0/1 |
-| 4 | `python test/catalog_contract_test.py` | Python 层契约（第六关）：384 工具的 schema 合法性、preset 键、必填拒绝、类型强转、危险工具门禁表 | 0/1/2 |
-| 5 | `python test/ms_check.py src/ms` | MAXScript 逐文件深报：编码、括号、方法链取成员、未定义 `mcp*` 符号 | 0/1 |
-| 6 | `python test/registration_sync_test.py` | catalog ↔ `mcpRegister` ↔ 部署树（ENU/CHS）零漂移 | 0/1 |
-| 7 | `python test/offline_lint_helper.py` | **本轮新增**：Python / MAXScript 源码 lint + catalog 工具定义审计（规则见第 3 节） | 0/1/2 |
+| 4 | `python test/static/catalog_contract_test.py` | Python 层契约（第六关）：384 工具的 schema 合法性、preset 键、必填拒绝、类型强转、危险工具门禁表 | 0/1/2 |
+| 5 | `python test/static/ms_check.py src/ms` | MAXScript 逐文件深报：编码、括号、方法链取成员、未定义 `mcp*` 符号 | 0/1 |
+| 6 | `python test/static/registration_sync_test.py` | catalog ↔ `mcpRegister` ↔ 部署树（ENU/CHS）零漂移 | 0/1 |
+| 7 | `python test/static/offline_lint_helper.py` | **本轮新增**：Python / MAXScript 源码 lint + catalog 工具定义审计（规则见第 3 节） | 0/1/2 |
 
 第 1 关是 umbrella：它以进程内方式运行第 7 关（以及文档对齐审计），
 把违例并入全局结果——**"verify 绿" 现在包含离线 lint**。想单独看 lint 的
@@ -34,8 +34,8 @@
 ## 2. 运行方式
 
 ```bash
-python test/offline_lint_helper.py           # 人读报告，按检查组分节汇总
-python test/offline_lint_helper.py --json    # 机器可读报告（violations/warnings/stats）
+python test/static/offline_lint_helper.py           # 人读报告，按检查组分节汇总
+python test/static/offline_lint_helper.py --json    # 机器可读报告（violations/warnings/stats）
 ```
 
 退出码：**0** = 干净（允许 warning）；**1** = 有违例；**2** =  harness 自身
@@ -123,10 +123,10 @@ mutating 占比异常，往往意味着 undo 标注漏了。
 改完任何代码（Python、MAXScript、catalog、文档），按序：
 
 ```bash
-python test/offline_lint_helper.py            # 7. 聚焦 lint，最快
+python test/static/offline_lint_helper.py            # 7. 聚焦 lint，最快
 python scripts/verify.py                      # 1. 全局（含 7 + 文档对齐 + 分布表）
-python test/ms_check.py src/ms                # 5. MAXScript 深报（改了 .ms 才需要）
-python test/registration_sync_test.py         # 6. 改了工具/注册/部署才需要
+python test/static/ms_check.py src/ms                # 5. MAXScript 深报（改了 .ms 才需要）
+python test/static/registration_sync_test.py         # 6. 改了工具/注册/部署才需要
 PYTHONPATH=src/python python -m maxmcp --selftest-python   # 2. 改了线编解码/文案才需要
 ```
 

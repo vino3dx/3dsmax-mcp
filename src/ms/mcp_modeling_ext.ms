@@ -55,22 +55,26 @@ fn mcpExtLevelName level =
     else "object"
 )
 
--- Count the set bits of a bit array up to max (never relies on optional
+-- Count the set bits of a bit array up to n (never relies on optional
 -- bitarray properties; MAXScript bit arrays do not document a count).
-fn mcpExtBACount ba max =
+-- NOTE: the parameter must not be named "max" -- that is a MAXScript
+-- built-in function, and using it as a parameter name makes fileIn fail
+-- with "Syntax error: at max, expected =" (the whole module then fails
+-- to load; see docs/P0_ENV.md part 3).
+fn mcpExtBACount ba n =
 (
     local c = 0
     if ba == undefined do return 0
-    for i = 1 to max do ( if ba[i] do c += 1 )
+    for i = 1 to n do ( if ba[i] do c += 1 )
     c
 )
 
--- Materialise the set bits of a bit array up to max (optionally capped).
-fn mcpExtBAIndices ba max limit:0 =
+-- Materialise the set bits of a bit array up to n (optionally capped).
+fn mcpExtBAIndices ba n limit:0 =
 (
     local idxs = #()
     if ba == undefined do return idxs
-    for i = 1 to max do
+    for i = 1 to n do
     (
         if ba[i] do
         (
@@ -292,7 +296,7 @@ fn mcpH_mod_collapse params =
         try
         (
             local before = n.modifiers.count
-            if before == 0 do
+            if before == 0 then
             (
                 mcpPair rec "object" n.name
                 mcpPair rec "collapsed" false
@@ -444,10 +448,10 @@ fn mcpH_poly_select params =
     -- no explicit level: infer it from the indices that were passed
     if levelArg == undefined do
     (
-        if verts.count > 0 do level = 1
-        else if edges.count > 0 do level = 2
-        else if borders.count > 0 do level = 3
-        else if faces.count > 0 or elements.count > 0 do level = 4
+        if verts.count > 0 then level = 1
+        else if edges.count > 0 then level = 2
+        else if borders.count > 0 then level = 3
+        else if faces.count > 0 or elements.count > 0 then level = 4
         else level = 0
     )
     local results = #()
@@ -567,7 +571,7 @@ fn mcpRegisterModelingExt =
     mcpRegister "mod_toggle" mcpH_mod_toggle label:"Toggle Modifier"
     mcpRegister "mod_collapse" mcpH_mod_collapse label:"Collapse Modifier Stack"
     mcpRegister "poly_get_selection" mcpH_poly_get_selection undoable:false label:"Get Sub-Object Selection"
-    mcpRegister "poly_select" mcpH_poly_select label:"Select Sub-Objects"
+    mcpRegister "poly_select" mcpH_poly_select undoable:false label:"Select Sub-Objects"
     mcpRegister "poly_get_elements" mcpH_poly_get_elements undoable:false label:"Get Poly Elements"
     ok
 )

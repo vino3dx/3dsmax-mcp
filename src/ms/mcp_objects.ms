@@ -132,11 +132,14 @@ fn mcpH_create_line params =
     if pts.count == 0 do mcpFail "err.missing_param" a1:"points"
     local closed = mcpBool params "closed" default:false
 
-    local obj = line()
-    setNumSplines obj 1
+    -- NOTE: SplineShape + addNewSpline + addKnot is the working spline API
+    -- (verified live on 2020); setNumSplines / addPoint do not exist and made
+    -- this handler fail with "Call needs function or class, got: undefined".
+    local obj = SplineShape()
+    addNewSpline obj
     for i = 1 to pts.count do
     (
-        try ( addPoint obj (mcpPoint3From pts[i]) ) catch()
+        try ( addKnot obj 1 #corner #line (mcpPoint3From pts[i]) ) catch()
     )
     if closed do ( try ( close obj 1 ) catch() )
 

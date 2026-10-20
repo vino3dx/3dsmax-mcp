@@ -510,27 +510,32 @@ fn mcpH_uvw_map params =
   local sy = mcpNum params "sizeY" default:-1.0
   local sz = mcpNum params "sizeZ" default:-1.0
   local applied = #()
+  local failures = #()
   for n in nodes do
   (
     try
     (
       mcpEnsureClass "Uvwmap"
       local mod = Uvwmap()
-      mod.mapping = mt
-      mod.u_Tiling = u
-      mod.v_Tiling = v
-      mod.w_Tiling = w
+      -- verified live on 2020: the type property is "maptype" and the tiling
+      -- properties are "utile"/"vtile"/"wtile" (mapping / u_Tiling / v_Tiling
+      -- / w_Tiling do not exist and used to fail silently under catch())
+      mod.maptype = mt
+      mod.utile = u
+      mod.vtile = v
+      mod.wtile = w
       if sx > 0 do mod.length = sx
       if sy > 0 do mod.width = sy
       if sz > 0 do mod.height = sz
       addModifier n mod
       append applied n.name
     )
-    catch()
+    catch ( append failures (n.name + ": " + (getCurrentException())) )
   )
   local p = #()
   mcpPair p "mapping" mapping
   mcpPair p "applied" applied
+  mcpPair p "failures" failures
   mcpPair p "message" (mcpMsg "msg.ok")
   mcpObj p
 )

@@ -1051,6 +1051,9 @@ fn mcpGetPropByPath root path =
         local key = parts[i]
         local idx = -1
         try ( idx = key as integer ) catch ( idx = -1 )
+        -- "as integer" on a non-numeric key yields undefined without throwing
+        -- (see mcp_core.ms mcpResolveNode); guard before comparing.
+        if idx == undefined do idx = -1
         if idx > 0 then
         (
             local nxt = undefined
@@ -1081,6 +1084,7 @@ fn mcpSetPropByPath root path rawValue =
         local key = parts[i]
         local idx = -1
         try ( idx = key as integer ) catch ( idx = -1 )
+        if idx == undefined do idx = -1
         local nxt = undefined
         if idx > 0 then ( try ( nxt = cur[idx] ) catch ( nxt = undefined ) )
         else ( try ( nxt = getProperty cur key ) catch ( nxt = undefined ) )
