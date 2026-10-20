@@ -333,10 +333,40 @@ fn mcpH_mod_reorder params =
         (
             local m = mcpFindModifier n spec
             if m == undefined do mcpFail "msg.no_modifier" a1:n.name a2:spec
-            local cur = getModifierIndex n m
+            -- MAXScript (verified live on 2020) exposes no reorder primitive:
+            -- moveModifierTo / moveModifier / setModifierIndex /
+            -- setModifierOrder are all undefined.  Repositioning is done by
+            -- rebuilding the stack: copy every modifier (copy keeps its
+            -- parameter values but resets the name, so names are restored
+            -- explicitly), delete the originals, then re-add the copies in
+            -- the desired order -- addModifier always inserts at the top, so
+            -- the desired order is walked bottom-up.  mod_reorder is
+            -- registered undoable, so the whole rebuild is one undo step.
+            local count = n.modifiers.count
             if target < 1 do target = 1
-            if target > n.modifiers.count do target = n.modifiers.count
-            moveModifierTo n cur target
+            local without = #()
+            for i = 1 to count do ( if n.modifiers[i] != m do append without n.modifiers[i] )
+            -- desired = without[1..target-1] + [m] + without[target..]; the
+            -- final append covers target > without.count (move to bottom)
+            local desired = #()
+            for i = 1 to without.count do
+            (
+                if i == target do append desired m
+                append desired without[i]
+            )
+            if without.count < target do append desired m
+            local copies = #()
+            for i = 1 to desired.count do
+            (
+                local c = copy desired[i]
+                try ( c.name = desired[i].name ) catch ()
+                append copies c
+            )
+            for i = count to 1 by -1 do deleteModifier n n.modifiers[i]
+            for i = desired.count to 1 by -1 do
+            (
+                if copies[i] != undefined do addModifier n copies[i]
+            )
             append applied n.name
         )
         catch ( ok = false; append failures (n.name + ": " + (getCurrentException())) )
