@@ -378,6 +378,10 @@ fn mcpResolveNode spec =
 
         local h = 0
         try ( h = t as integer ) catch ( h = 0 )
+        -- MAXScript's "as integer" on a non-numeric string yields undefined
+        -- WITHOUT throwing, so the catch above never fires; guard before any
+        -- ordering comparison (undefined > 0 is a runtime error).
+        if h == undefined do h = 0
         if h > 0 do
         (
             try ( n = getNodeByHandle h ) catch ( n = undefined )
