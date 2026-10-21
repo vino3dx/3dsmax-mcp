@@ -287,7 +287,7 @@ python -m maxmcp --list-tools
 
 | 档位 | 工具数 | 包含分类 |
 | --- | ---: | --- |
-| `core` | 119 | system + scene + objects + files |
+| `core` | 56 | field-tested modeling loop and session essentials |
 | `modeling` | 202 | core + modeling |
 | `lookdev` | 188 | core + shading |
 | `animation` | 178 | core + animation |

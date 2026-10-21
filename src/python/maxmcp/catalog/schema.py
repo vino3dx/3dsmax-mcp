@@ -117,10 +117,31 @@ def tool(
 #: handling, file IO and introspection.
 BASE_CATEGORIES = ("system", "scene", "objects", "files")
 
+# The default core surface is intentionally explicit.  Category-only profiles
+# still exist for backwards compatibility, while this set keeps the default
+# agent context focused on the field-tested modeling loop.
+CORE_TOOLS = frozenset({
+    "bridge_status", "bridge_ping", "bridge_capabilities", "bridge_selftest",
+    "get_max_version", "execute_maxscript",
+    "scene_info", "scene_new", "scene_save", "scene_save_as", "scene_open",
+    "create_box", "create_sphere", "create_cylinder", "create_cone",
+    "create_torus", "create_teapot", "create_plane", "create_tube",
+    "create_pyramid", "create_geosphere", "create_line", "create_rectangle",
+    "create_circle", "transform_object", "clone_objects", "rename_object",
+    "delete_objects", "select_objects", "get_selection", "list_objects",
+    "convert_to_editable_poly", "poly_get_stats", "poly_get_verts",
+    "poly_get_faces", "poly_get_selection", "poly_select_faces",
+    "poly_extrude_faces", "poly_bevel_faces", "poly_inset_faces",
+    "poly_chamfer_edges", "poly_connect_edges", "poly_weld_vertices",
+    "poly_subdivide", "mod_add", "mod_bend", "mod_turbosmooth",
+    "mod_symmetry", "mat_create_standard", "mat_assign", "mat_set_diffuse",
+    "mat_get", "mat_list", "light_create_omni", "light_create_spot", "uvw_map",
+})
+
 #: Named subsets, so a client does not have to carry all 375 tool descriptions.
 PROFILES: Dict[str, Optional[set]] = {
     "full": None,
-    "core": set(BASE_CATEGORIES),
+    "core": CORE_TOOLS,
     "modeling": set(BASE_CATEGORIES) | {"modeling"},
     "lookdev": set(BASE_CATEGORIES) | {"shading"},
     "animation": set(BASE_CATEGORIES) | {"animation"},
@@ -170,7 +191,7 @@ class Catalog:
         blocked = set(disabled_categories)
         out: List[Dict[str, Any]] = []
         for entry in self:
-            if allowed is not None and entry.category not in allowed:
+            if allowed is not None and entry.category not in allowed and entry.name not in allowed:
                 continue
             if entry.category in blocked:
                 continue
@@ -187,7 +208,7 @@ class Catalog:
         allowed = PROFILES.get(profile, None) if profile != "full" else None
         stats: Dict[str, int] = {}
         for entry in self:
-            if allowed is not None and entry.category not in allowed:
+            if allowed is not None and entry.category not in allowed and entry.name not in allowed:
                 continue
             stats[entry.category] = stats.get(entry.category, 0) + 1
         return stats
