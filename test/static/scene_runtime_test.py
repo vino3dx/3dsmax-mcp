@@ -43,6 +43,20 @@ def main() -> None:
     assert verification_failure.success is False
     assert verification_failure.failures[0]["kind"] == "verification_failed"
 
+    delete_state = [{"objectCount": 2}, {"objectCount": 1}]
+    deleted = SceneRuntime(lambda method, params: (
+        delete_state.pop(0) if method == "scene_info" else {"success": True}
+    )).execute("delete_objects", "delete_objects")
+    assert deleted.success is True
+    assert deleted.verification.detail["expected"] == "decrease"
+
+    reset_state = [{"objectCount": 3}, {"objectCount": 0}]
+    reset = SceneRuntime(lambda method, params: (
+        reset_state.pop(0) if method == "scene_info" else {"success": True}
+    )).execute("scene_reset", "scene_reset")
+    assert reset.success is True
+    assert reset.verification.detail["expected"] == "zero"
+
     material = SceneRuntime(lambda method, params: {"objectCount": 1}).execute(
         "create_material", "create_material"
     )
