@@ -3,13 +3,23 @@
 日期：2026-10-31  
 阶段：Stage 0，只读审计  
 仓库：`D:\Workspace\MCP\3dsmax-mcp`  
-HEAD：`b43815fde56d1ceccf9c4e90794f91a466220b71`
+HEAD：以当前仓库 `git rev-parse HEAD` 为准；本次文档更新不改变运行代码。
 
 ## 结论摘要
 
-项目已经具备可用的三段式雏形：Python MCP Server 负责协议和 catalog，TCP MAXScript bridge 负责在 Max 主线程执行场景操作，19 个 MAXScript 模块承载领域实现。当前主要问题不是缺少工具数量，而是 Scene Runtime 还没有成为独立的、统一的验证与恢复层；大量工具仍直接把 MAXScript 操作结果暴露给 Agent。
+项目已经具备可用的三段式雏形：Python MCP Server 负责协议和 catalog，TCP MAXScript bridge 负责在 Max 主线程执行场景操作，19 个 MAXScript 模块承载领域实现。Scene Runtime 第一阶段已落地：核心 profile 的变更工具默认执行前后 `scene_info` 快照，返回操作 ID、changed、verification 和 failures；仍有大量工具尚未配置可判定的专用读回规则。
 
 静态盘点得到 384 个工具、8 个分类、19 个 MAXScript 模块。已有 `core` profile 为 56 个工具，视觉结果已经有 `_images` 到 MCP image content 的转换路径。真实 Max 证据仍集中在已有 43 条 live case（42 通过、1 失败）；其余工具不能仅凭静态注册视为可用。
+
+## 当前阶段状态
+
+| 能力 | 当前状态 | 证据边界 |
+| --- | --- | --- |
+| Runtime 操作封装 | 已实现 | Python 静态测试 |
+| 核心对象数读回 | 已实现（创建/删除/重置的保守规则） | Mock bridge + 集成测试，未在真实 Max 证明 |
+| 原始桥接失败归一化 | 已实现 | Runtime/Server 集成测试 |
+| 图片结果与 operation ID 关联 | 已实现 | 图片结果静态测试，未验证真实截图生成 |
+| 真实 Max 验证 | 未完成 | 当前没有新的实机证据 |
 
 ## 1. 调用链
 
@@ -60,7 +70,7 @@ Agent
 
 ### 不足
 
-1. **Scene Runtime 缺位**：状态查询、操作前后快照、验证、事务和恢复主要分散在 handler 中，没有统一运行时对象。
+1. **Scene Runtime 覆盖仍不完整**：核心 profile 已有统一运行时对象，但对象属性、材质、修改器、拓扑等专用读回规则尚未覆盖。
 2. **返回结构不统一**：不同工具使用 `object`、`objects`、`applied`、`assignedTo`、`message` 等不同键，Agent 需要记忆每个工具的特例。
 3. **身份依赖名称**：大量工具以对象名定位，没有稳定对象 ID 或操作前后的身份映射层。
 4. **错误语义不统一**：Python 已有 `BridgeCommandError`，但 MAXScript handler 仍存在裸异常和静默 `catch()`；稳定错误码、失败参数、恢复建议尚未贯穿全链路。
@@ -90,9 +100,9 @@ Agent
 
 ## 6. 建议实施顺序
 
-### Stage 1：Scene Runtime
+### Stage 1：Scene Runtime（基础层已完成，实机验收待执行）
 
-新增 Python 侧统一结果模型和目标解析约定，不先重写所有 MAXScript。优先让核心工具返回：`success`、`operation`、`changed`、`objects`、`warnings`、`failures`、`verification`。验证信息必须来自桥接读回，而不是 Python 缓存。
+Python 侧统一结果模型和前后快照已实现。当前核心结果包含：`success`、`operation`、`operation_id`、`changed`、`warnings`、`failures`、`verification`，并保留原始 `result` 与快照。验证信息来自桥接 `scene_info` 读回，不使用 Python 缓存；下一步必须在真实 Max 中验证这些字段和对象数变化。
 
 ### Stage 2：Error & Recovery
 
@@ -112,5 +122,5 @@ Agent
 
 ## 7. 本阶段边界
 
-本审计未修改运行代码，未启动或操作 Max，未读取用户场景文件。工作区原有改动未归属本审计，已保留不动。下一阶段开始前应先划分这些改动的归属，再对 Scene Runtime 选择独立文件实施，避免覆盖并行工作。
+本次仅更新审计文档，未启动或操作 Max，未读取用户场景文件。Runtime 相关代码变更已由独立提交完成；当前证据仍以静态测试和 Mock bridge 为主，不能替代真实 Max 读回与截图验证。工作区其他改动未归属本次更新，已保留不动。
 
