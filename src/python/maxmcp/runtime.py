@@ -152,7 +152,7 @@ class SceneRuntime:
             operation=operation,
             success=success,
             operation_id=operation_id,
-            changed=bool(mutating),
+            changed=bool(mutating and before != after),
             result=result,
             before=before,
             after=after,

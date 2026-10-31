@@ -30,6 +30,11 @@ def main() -> None:
     assert record.verification.passed is True
     assert [item[0] for item in calls] == ["scene_info", "create_box", "scene_info"]
 
+    unchanged = SceneRuntime(lambda method, params: {"objects": 1})
+    same = unchanged.execute("noop", "noop")
+    assert same.success is True
+    assert same.changed is False
+
     failed = SceneRuntime(lambda method, params: (_ for _ in ()).throw(RuntimeError("offline")))
     error = failed.execute("create_box", "create_box")
     assert error.success is False
