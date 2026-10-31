@@ -10,11 +10,13 @@ without duplicating it in every catalog handler.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import itertools
 from typing import Any, Callable, Dict, List, Optional
 
 
 BridgeCall = Callable[[str, Dict[str, Any]], Any]
 Verify = Callable[[Any, Any, Any], Any]
+_OPERATION_IDS = itertools.count(1)
 
 
 @dataclass
@@ -37,6 +39,7 @@ class OperationResult:
 
     operation: str
     success: bool
+    operation_id: str = ""
     changed: bool = False
     result: Any = None
     before: Any = None
@@ -49,6 +52,7 @@ class OperationResult:
         payload: Dict[str, Any] = {
             "success": self.success,
             "operation": self.operation,
+            "operation_id": self.operation_id,
             "changed": self.changed,
             "warnings": list(self.warnings),
             "failures": list(self.failures),
@@ -94,6 +98,7 @@ class SceneRuntime:
         half-shaped success response.  The exception text remains diagnostic
         data and is not treated as a successful Max result.
         """
+        operation_id = "op-{0:08d}".format(next(_OPERATION_IDS))
         before = None
         if mutating:
             try:
@@ -102,6 +107,7 @@ class SceneRuntime:
                 return OperationResult(
                     operation=operation,
                     success=False,
+                    operation_id=operation_id,
                     failures=[{"kind": "bridge_error", "stage": "before", "message": str(exc)}],
                 )
         try:
@@ -110,6 +116,7 @@ class SceneRuntime:
             return OperationResult(
                 operation=operation,
                 success=False,
+                operation_id=operation_id,
                 before=before,
                 failures=[{"kind": "bridge_error", "message": str(exc)}],
             )
@@ -122,6 +129,7 @@ class SceneRuntime:
                 return OperationResult(
                     operation=operation,
                     success=False,
+                    operation_id=operation_id,
                     changed=True,
                     result=result,
                     before=before,
@@ -143,6 +151,7 @@ class SceneRuntime:
         return OperationResult(
             operation=operation,
             success=success,
+            operation_id=operation_id,
             changed=bool(mutating),
             result=result,
             before=before,

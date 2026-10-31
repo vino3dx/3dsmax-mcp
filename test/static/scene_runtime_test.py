@@ -25,6 +25,7 @@ def main() -> None:
         verify=lambda result, before, after: before["objects"] + 1 == after["objects"],
     )
     assert record.success is True
+    assert record.operation_id.startswith("op-")
     assert record.changed is True
     assert record.verification.passed is True
     assert [item[0] for item in calls] == ["scene_info", "create_box", "scene_info"]
