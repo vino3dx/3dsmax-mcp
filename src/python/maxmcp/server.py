@@ -7,6 +7,8 @@ ship a single self-contained Python runtime without resolving a package graph.
 from __future__ import annotations
 
 import json
+import base64
+from pathlib import Path
 import platform
 import sys
 import time
@@ -40,6 +42,31 @@ from .wire import from_wire, to_wire
 
 
 # ---------------------------------------------------------------- image results
+_IMAGE_MAX_BYTES = 8 * 1024 * 1024
+_IMAGE_MIME = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp"}
+
+
+def _image_bytes(item: Dict[str, Any]) -> Tuple[Optional[str], Optional[str]]:
+    data = item.get("data")
+    if isinstance(data, str) and data:
+        return data, None
+    raw_path = item.get("path")
+    if not isinstance(raw_path, str) or not raw_path:
+        return None, "missing image data or path"
+    path = Path(raw_path)
+    mime = str(item.get("mime") or item.get("mimeType") or _IMAGE_MIME.get(path.suffix.lower(), ""))
+    if mime not in _IMAGE_MIME.values():
+        return None, "unsupported image type"
+    try:
+        size = path.stat().st_size
+        if size > _IMAGE_MAX_BYTES:
+            return None, "image exceeds 8 MiB limit"
+        with path.open("rb") as stream:
+            return base64.b64encode(stream.read(_IMAGE_MAX_BYTES + 1)).decode("ascii"), None
+    except OSError as exc:
+        return None, "image file unavailable: %s" % exc
+
+
 def _split_images(payload: Any, operation_id: str = "") -> Tuple[List[Dict[str, Any]], Any]:
     """Pull base64 pixels out of a bridge result into MCP image blocks.
 
@@ -71,8 +98,10 @@ def _split_images(payload: Any, operation_id: str = "") -> Tuple[List[Dict[str, 
     for item in raw:
         if not isinstance(item, dict):
             continue
-        data = item.get("data")
-        if not isinstance(data, str) or not data:
+        data, image_error = _image_bytes(item)
+        if image_error:
+            described.append({"label": item.get("label") or (len(described) + 1),
+                              "error": image_error})
             continue
         mime = str(item.get("mime") or item.get("mimeType") or "image/png")
         if not mime.startswith("image/"):
@@ -90,6 +119,9 @@ def _split_images(payload: Any, operation_id: str = "") -> Tuple[List[Dict[str, 
     rest.pop("_images", None)
     if described:
         rest["images"] = described
+        errors = [item for item in described if item.get("error")]
+        if errors:
+            rest["image_errors"] = errors
         if operation_id:
             rest["operation_id"] = operation_id
             for item in described:
@@ -392,7 +424,8 @@ class MaxMcpServer:
 
         content: List[Dict[str, Any]] = [text_content(text)]
         content.extend(images)
-        return make_result(content, is_error=runtime_failure)
+        image_failure = isinstance(summary, dict) and bool(summary.get("image_errors"))
+        return make_result(content, is_error=runtime_failure or image_failure)
 
     def _error_text(self, *, code: str, kind: str, tool: str,
                     message: str, suggestion: str = "",

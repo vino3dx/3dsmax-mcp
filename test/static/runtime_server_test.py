@@ -31,7 +31,7 @@ class FakeBridge:
             if self.fail_operation:
                 return {"success": False, "message": "primitive rejected"}
             self.objects += 1
-            return {"created": True}
+            return {"success": True, "created": True}
         if method == "bridge_status":
             return {"language": "en", "maxLanguage": "ENU"}
         return {"ok": True}

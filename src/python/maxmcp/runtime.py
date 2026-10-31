@@ -20,6 +20,97 @@ Recover = Callable[[str], Any]
 _OPERATION_IDS = itertools.count(1)
 
 
+def normalize_payload(raw: Any, operation: str, *, changed: bool = False,
+                      operation_id: str = "") -> Dict[str, Any]:
+    """Adapt a legacy bridge payload without turning missing success into success."""
+    source = dict(raw) if isinstance(raw, dict) else {"value": raw}
+    explicit_success = source.get("success")
+    if isinstance(explicit_success, bool):
+        success = explicit_success
+    elif isinstance(source.get("ok"), bool):
+        success = bool(source["ok"])
+    else:
+        success = False
+
+    failures = list(source.get("failures") or [])
+    if not isinstance(explicit_success, bool) and not isinstance(source.get("ok"), bool):
+        failures.append({
+            "kind": "missing_success",
+            "message": "Bridge payload did not declare success=true/false",
+        })
+    if not success and not failures:
+        failures.append({
+            "kind": "operation_failed",
+            "message": source.get("message") or source.get("error") or "Operation failed",
+        })
+
+    payload: Dict[str, Any] = {
+        "success": success,
+        "operation": operation,
+        "changed": bool(source.get("changed", changed)),
+        "warnings": list(source.get("warnings") or []),
+        "failures": failures,
+        "verification": source.get("verification") or {
+            "performed": False, "passed": None, "detail": None
+        },
+        "data": source.get("data", source.get("result", source)),
+    }
+    if operation_id:
+        payload["operation_id"] = operation_id
+    if "objects" in source:
+        payload["objects"] = source["objects"]
+    return payload
+
+
+def build_batch_result(operation: str, items: List[Dict[str, Any]], *, changed: Optional[bool] = None) -> Dict[str, Any]:
+    """Build a conservative per-object result; partial success is never overall success."""
+    normalized: List[Dict[str, Any]] = []
+    for item in items:
+        row = dict(item)
+        row["success"] = row.get("success") is True
+        row["verified"] = row["verified"] is True if row["success"] else False
+        if not row["success"] and not row.get("error"):
+            row["error"] = {"kind": "item_failed", "message": "Batch item failed"}
+        normalized.append(row)
+    succeeded = sum(1 for row in normalized if row["success"])
+    return {
+        "success": bool(normalized) and succeeded == len(normalized),
+        "operation": operation,
+        "changed": bool(changed if changed is not None else succeeded > 0),
+        "objects": normalized,
+        "summary": {
+            "total": len(normalized),
+            "succeeded": succeeded,
+            "failed": len(normalized) - succeeded,
+        },
+        "warnings": [],
+        "failures": [] if succeeded == len(normalized) else [{
+            "kind": "partial_success" if succeeded else "batch_failed",
+            "message": "One or more batch items failed",
+        }],
+        "verification": {"performed": any(row["verified"] for row in normalized),
+                         "passed": bool(normalized) and all(row["verified"] for row in normalized),
+                         "detail": None},
+    }
+
+
+def resolve_object_refs(requested: List[Any], available: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Resolve names conservatively; reject ambiguity and stale references."""
+    result: List[Dict[str, Any]] = []
+    for ref in requested:
+        name = ref.get("name") if isinstance(ref, dict) else ref
+        matches = [obj for obj in available if isinstance(obj, dict) and obj.get("name") == name]
+        if len(matches) > 1:
+            result.append({"success": False, "name": name,
+                           "error": {"kind": "ambiguous_object_reference"}})
+        elif not matches:
+            result.append({"success": False, "name": name,
+                           "error": {"kind": "stale_object_reference"}})
+        else:
+            result.append({"success": True, "name": name, "object": matches[0]})
+    return result
+
+
 @dataclass
 class Verification:
     performed: bool = False
@@ -64,6 +155,9 @@ class OperationResult:
             payload["recovery"] = self.recovery
         if self.result is not None:
             payload["result"] = self.result
+            payload["data"] = self.result
+            if isinstance(self.result, dict) and "objects" in self.result:
+                payload["objects"] = self.result["objects"]
         if self.before is not None:
             payload["before"] = self.before
         if self.after is not None:
@@ -193,6 +287,13 @@ class SceneRuntime:
             failures.append({
                 "kind": "operation_failed",
                 "message": result.get("message") or result.get("error") or "Bridge operation reported failure",
+                "detail": result,
+            })
+        elif isinstance(result, dict) and not isinstance(result.get("success"), bool) \
+                and not isinstance(result.get("ok"), bool):
+            failures.append({
+                "kind": "missing_success",
+                "message": "Bridge payload did not declare success=true/false",
                 "detail": result,
             })
         verifier = verify

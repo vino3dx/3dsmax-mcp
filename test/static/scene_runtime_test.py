@@ -17,7 +17,7 @@ def main() -> None:
         calls.append((method, params))
         if method == "scene_info":
             return state.pop(0)
-        return {"created": True}
+        return {"success": True, "created": True}
 
     runtime = SceneRuntime(bridge)
     record = runtime.execute(
@@ -37,7 +37,15 @@ def main() -> None:
     assert reported_failure.success is False
     assert reported_failure.failures[0]["kind"] == "operation_failed"
 
-    verification_failure = SceneRuntime(lambda method, params: {"objectCount": 1}).execute(
+    missing_success = SceneRuntime(lambda method, params: (
+        {"objectCount": 0} if method == "scene_info" else {"created": True}
+    )).execute("create_box", "create_box")
+    assert missing_success.success is False
+    assert missing_success.failures[0]["kind"] == "missing_success"
+
+    verification_failure = SceneRuntime(lambda method, params: (
+        {"objectCount": 1} if method == "scene_info" else {"success": True}
+    )).execute(
         "create_box", "create_box", verify=lambda result, before, after: False
     )
     assert verification_failure.success is False
@@ -57,13 +65,17 @@ def main() -> None:
     assert reset.success is True
     assert reset.verification.detail["expected"] == "zero"
 
-    material = SceneRuntime(lambda method, params: {"objectCount": 1}).execute(
+    material = SceneRuntime(lambda method, params: (
+        {"objectCount": 1} if method == "scene_info" else {"success": True}
+    )).execute(
         "create_material", "create_material"
     )
     assert material.success is True
     assert material.verification.performed is False
 
-    unchanged = SceneRuntime(lambda method, params: {"objectCount": 1})
+    unchanged = SceneRuntime(lambda method, params: (
+        {"objectCount": 1} if method == "scene_info" else {"success": True}
+    ))
     same = unchanged.execute("noop", "noop")
     assert same.success is True
     assert same.changed is False
