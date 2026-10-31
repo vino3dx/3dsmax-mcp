@@ -218,7 +218,8 @@
 | 本轮 Commit | `c7e76882313b387b3e3ec10cd36467e1a834d8a8` |
 | Commit 标题 | `fix: strengthen core runtime reliability and validation` |
 | 提交文件数 | 29（10 个源码/MAXScript + 9 个测试 + 10 个文档，4474 insertions / 142 deletions） |
-| 未提交修改 | 仅本报告（`docs/audit/OVERNIGHT_FINAL_REPORT.md`，单独提交） |
+| 报告 Commit | `185dd610f51e92011757e82b65586eff4f20e838` `docs: add overnight final report for core runtime reliability` |
+| 未提交修改 | 无（本报告单独提交；如后续修改本报告会再有一次 docs 提交） |
 | 用户原有修改 | 开始时工作树干净，无用户未提交修改被混入 |
 | 破坏性命令 | 未使用 |
 
