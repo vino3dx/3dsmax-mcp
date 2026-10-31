@@ -54,7 +54,7 @@ bi.biBitCount = 32
 bi.biCompression = 0
 buf = ctypes.create_string_buffer(x * y * 4)
 gdi32.GetDIBits(bmp, hbmp, 0, y, buf, ctypes.byref(bi), 0)
-out = r"D:\Workspace\Dev\3dsmax-mcp\test\logs\max_window_state.bmp"
+out = r"D:\Workspace\MCP\3dsmax-mcp\test\logs\max_window_state.bmp"
 with open(out, "wb") as f:
     f.write(b"BM" + struct.pack("<IHHI", 14 + 40 + x * y * 4, 0, 0, 54))
     f.write(struct.pack("<IiiHHIIiiII", 40, x, y, 1, 32, 0, x * y * 4, 0, 0, 0, 0))
