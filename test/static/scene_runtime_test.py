@@ -37,6 +37,12 @@ def main() -> None:
     assert reported_failure.success is False
     assert reported_failure.failures[0]["kind"] == "operation_failed"
 
+    verification_failure = SceneRuntime(lambda method, params: {"objectCount": 1}).execute(
+        "create_box", "create_box", verify=lambda result, before, after: False
+    )
+    assert verification_failure.success is False
+    assert verification_failure.failures[0]["kind"] == "verification_failed"
+
     material = SceneRuntime(lambda method, params: {"objectCount": 1}).execute(
         "create_material", "create_material"
     )

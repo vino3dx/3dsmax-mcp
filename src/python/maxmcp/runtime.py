@@ -199,6 +199,14 @@ class SceneRuntime:
                 verification.passed = False
                 verification.detail = str(exc)
                 failures.append({"kind": "verification_error", "message": str(exc)})
+        if verification.passed is False and not any(
+            item.get("kind") == "verification_failed" for item in failures
+        ):
+            failures.append({
+                "kind": "verification_failed",
+                "message": "Scene read-back verification did not pass",
+                "detail": verification.detail,
+            })
         success = not failures and verification.passed is not False
         recovery = None
         if not success and recover is not None:
