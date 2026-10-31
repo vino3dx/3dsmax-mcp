@@ -31,6 +31,12 @@ def main() -> None:
     assert record.verification.detail["kind"] == "object_count"
     assert [item[0] for item in calls] == ["scene_info", "create_box", "scene_info"]
 
+    reported_failure = SceneRuntime(lambda method, params: (
+        {"objectCount": 0} if method == "scene_info" else {"success": False, "message": "rejected"}
+    )).execute("create_box", "create_box")
+    assert reported_failure.success is False
+    assert reported_failure.failures[0]["kind"] == "operation_failed"
+
     unchanged = SceneRuntime(lambda method, params: {"objectCount": 1})
     same = unchanged.execute("noop", "noop")
     assert same.success is True

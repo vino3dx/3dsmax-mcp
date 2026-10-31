@@ -168,6 +168,12 @@ class SceneRuntime:
                 )
         verification = Verification()
         failures: List[Dict[str, Any]] = []
+        if isinstance(result, dict) and result.get("success") is False:
+            failures.append({
+                "kind": "operation_failed",
+                "message": result.get("message") or result.get("error") or "Bridge operation reported failure",
+                "detail": result,
+            })
         verifier = verify
         if verifier is None:
             default_detail = self._default_verify(operation, result, before, after)
