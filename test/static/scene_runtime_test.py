@@ -39,6 +39,21 @@ def main() -> None:
     error = failed.execute("create_box", "create_box")
     assert error.success is False
     assert error.failures[0]["kind"] == "bridge_error"
+
+    recovery_ids = []
+    recovery_calls = {"count": 0}
+    def partial(method, params):
+        if method == "scene_info":
+            return {"objects": 0}
+        recovery_calls["count"] += 1
+        raise RuntimeError("operation failed")
+    recovered = SceneRuntime(partial).execute(
+        "create_box", "create_box", recover=recovery_ids.append
+    )
+    assert recovered.success is False
+    assert recovered.recovery["attempted"] is True
+    assert recovered.recovery["passed"] is True
+    assert recovery_ids == [recovered.operation_id]
     print("scene runtime: all checks passed")
 
 

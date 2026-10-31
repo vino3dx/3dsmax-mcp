@@ -16,6 +16,7 @@ from typing import Any, Callable, Dict, List, Optional
 
 BridgeCall = Callable[[str, Dict[str, Any]], Any]
 Verify = Callable[[Any, Any, Any], Any]
+Recover = Callable[[str], Any]
 _OPERATION_IDS = itertools.count(1)
 
 
@@ -47,6 +48,7 @@ class OperationResult:
     warnings: List[str] = field(default_factory=list)
     failures: List[Dict[str, Any]] = field(default_factory=list)
     verification: Verification = field(default_factory=Verification)
+    recovery: Optional[Dict[str, Any]] = None
 
     def as_dict(self) -> Dict[str, Any]:
         payload: Dict[str, Any] = {
@@ -58,6 +60,8 @@ class OperationResult:
             "failures": list(self.failures),
             "verification": self.verification.as_dict(),
         }
+        if self.recovery is not None:
+            payload["recovery"] = self.recovery
         if self.result is not None:
             payload["result"] = self.result
         if self.before is not None:
@@ -90,6 +94,7 @@ class SceneRuntime:
         *,
         mutating: bool = True,
         verify: Optional[Verify] = None,
+        recover: Optional[Recover] = None,
     ) -> OperationResult:
         """Run one operation and optionally verify its real post-state.
 
@@ -113,12 +118,21 @@ class SceneRuntime:
         try:
             result = self._call(method, params or {})
         except Exception as exc:  # adapter-specific errors stay below runtime
+            recovery = None
+            if recover is not None:
+                recovery = {"attempted": True, "passed": False}
+                try:
+                    recovery["detail"] = recover(operation_id)
+                    recovery["passed"] = True
+                except Exception as recovery_exc:
+                    recovery["detail"] = str(recovery_exc)
             return OperationResult(
                 operation=operation,
                 success=False,
                 operation_id=operation_id,
                 before=before,
                 failures=[{"kind": "bridge_error", "message": str(exc)}],
+                recovery=recovery,
             )
 
         after = None
@@ -148,6 +162,14 @@ class SceneRuntime:
                 verification.detail = str(exc)
                 failures.append({"kind": "verification_error", "message": str(exc)})
         success = not failures and verification.passed is not False
+        recovery = None
+        if not success and recover is not None:
+            recovery = {"attempted": True, "passed": False}
+            try:
+                recovery["detail"] = recover(operation_id)
+                recovery["passed"] = True
+            except Exception as exc:
+                recovery["detail"] = str(exc)
         return OperationResult(
             operation=operation,
             success=success,
@@ -158,5 +180,6 @@ class SceneRuntime:
             after=after,
             failures=failures,
             verification=verification,
+            recovery=recovery,
         )
 
