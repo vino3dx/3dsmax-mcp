@@ -2,7 +2,7 @@
 
 > 本文档为 P2 设计输入，**不改任何代码**。所有数字由
 > `maxmcp.catalog` 现场重算（Python 313，2026-10-19），标注【实测】；
-> 估算方法随文给出。行号引用仓库 `D:\Workspace\Dev\3dsmax-mcp` 当前 HEAD
+> 估算方法随文给出。行号引用仓库 `D:\Workspace\MCP\3dsmax-mcp` 当前 HEAD
 > （`2332415`）下的文件。
 
 ---
