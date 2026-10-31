@@ -8,7 +8,7 @@ try
 )
 catch ( out = "ERROR: " + (getCurrentException()) )
 
-local f = createFile @"D:\Workspace\Dev\3dsmax-mcp\test\logs\batch_probe_result.txt"
+local f = createFile @"D:\Workspace\MCP\3dsmax-mcp\test\logs\batch_probe_result.txt"
 format "%" out to:f
 close f
 print out
