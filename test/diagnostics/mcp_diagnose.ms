@@ -3,7 +3,7 @@
 
    Run it once from the MAXScript Listener:
 
-       fileIn @"D:\Workspace\Dev\3dsmax-mcp\test\mcp_diagnose.ms"
+       fileIn @"D:\Workspace\MCP\3dsmax-mcp\test\mcp_diagnose.ms"
 
    Deliberately self contained: it does not assume any bridge function exists,
    so it can report *why* the bridge failed instead of failing with it.
@@ -15,7 +15,7 @@
    Log location (first writable wins):
        <temp>\3dsmax-mcp\diag.log
        <userScripts>\3dsmax-mcp\diag.log
-       D:\Workspace\Dev\3dsmax-mcp\test\diag.log
+       D:\Workspace\MCP\3dsmax-mcp\test\diag.log
 
    Reading the outcome
        no diag.log at all    -> the script was never executed
@@ -78,7 +78,7 @@ fn mcpDiagResolveLog =
     (
         try ( append cands ((getDir #temp) + "\\3dsmax-mcp") ) catch()
         try ( append cands ((getDir #userScripts) + "\\3dsmax-mcp") ) catch()
-        try ( append cands @"D:\Workspace\Dev\3dsmax-mcp\test" ) catch()
+        try ( append cands @"D:\Workspace\MCP\3dsmax-mcp\test" ) catch()
 
         try ( cls = dotNetClass "System.IO.File" ) catch ( cls = undefined )
 
