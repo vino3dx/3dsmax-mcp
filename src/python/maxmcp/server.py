@@ -11,6 +11,7 @@ import platform
 import sys
 import time
 import traceback
+import uuid
 from typing import Any, Dict, List, Optional, Tuple
 
 from . import i18n
@@ -39,7 +40,7 @@ from .wire import from_wire, to_wire
 
 
 # ---------------------------------------------------------------- image results
-def _split_images(payload: Any) -> Tuple[List[Dict[str, Any]], Any]:
+def _split_images(payload: Any, operation_id: str = "") -> Tuple[List[Dict[str, Any]], Any]:
     """Pull base64 pixels out of a bridge result into MCP image blocks.
 
     The MAXScript side (``max/mcp_vision.ms``) can only send JSON text over the
@@ -89,6 +90,10 @@ def _split_images(payload: Any) -> Tuple[List[Dict[str, Any]], Any]:
     rest.pop("_images", None)
     if described:
         rest["images"] = described
+        if operation_id:
+            rest["operation_id"] = operation_id
+            for item in described:
+                item["operation_id"] = operation_id
     return blocks, rest
 
 
@@ -374,7 +379,10 @@ class MaxMcpServer:
         # without touching any config.
         self.sync_language_from_bridge()
 
-        images, summary = _split_images(result)
+        operation_id = "op-" + uuid.uuid4().hex[:12]
+        if isinstance(result, dict) and result.get("operation_id"):
+            operation_id = str(result["operation_id"])
+        images, summary = _split_images(result, operation_id)
 
         text = json.dumps(summary, ensure_ascii=False, indent=2, default=str)
         text = clamp_text(text, self.config.max_response_chars)
