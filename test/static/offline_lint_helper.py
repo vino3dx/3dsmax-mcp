@@ -37,6 +37,8 @@ What it checks
                  BOM; a UTF-8 file *without* BOM is mis-decoded by ``fileIn``
    * structure -- balanced ``()``/``[]`` and terminated strings, reusing the
                  proven lexer from ``ms_check.py`` (never reimplemented)
+   * silent catches -- report direct ``catch()`` and empty catch blocks as
+                 warnings; cleanup probes may remain best-effort
 3. Catalog tool definitions (every module in ``maxmcp.catalog.MODULE_NAMES``):
    * bilingual descriptions present, not placeholders, not identical
    * parameter ``type`` spelled as one of the six JSON schema types
@@ -570,6 +572,16 @@ def check_catalog(report: Report, modules: List[Tuple[str, List[Any]]]) -> None:
     report.stats["catalog_modules"] = len(modules)
 
 
+def check_silent_catches(name: str, text: str, report: Report) -> None:
+    """Warn about MAXScript failures swallowed without a result."""
+    count = len(re.findall(r"\bcatch\s*\(\s*\)", text, flags=re.I))
+    if count:
+        report.warnings.append(
+            "%s: %d silent catch occurrence(s); core handlers should collect errors"
+            % (name, count)
+        )
+
+
 # ---------------------------------------------------------------------- driver
 def run_checks(quiet: bool = False) -> Report:
     """Run every offline check.  Raises HarnessError when the tree is broken."""
@@ -638,6 +650,11 @@ def run_checks(quiet: bool = False) -> Report:
     for name, text in ms_texts:
         check_ms_structure(name, text, report)
     done("brackets / strings", mark)
+
+    mark = group("6b. silent catch audit (warning only)")
+    for name, text in ms_texts:
+        check_silent_catches(name, text, report)
+    done("silent catch audit", mark)
 
     mark = group("7. catalog tool definitions")
     try:

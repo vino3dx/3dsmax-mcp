@@ -65,6 +65,7 @@ warning 不拦提交，但会在 `verify.py` 末尾统一列出；violation 让�
 |---|---|---|
 | 编码三选一：纯 ASCII / ANSI(GBK) / UTF-8 **带 BOM** | 违例 | MAXScript 的 `fileIn` 按 ANSI 代码页读文件；UTF-8 无 BOM 的含非 ASCII 文件会被错解码（Autodesk 仅支持 "UTF-8 with BOM"）。本关首跑即抓到真实案例：`examples/maxscript/listener_cheatsheet.ms` 含中文示例却是 UTF-8 无 BOM，已补 BOM 修复 |
 | `()`/`[]` 平衡、字符串终止 | 违例 | 失衡即 `fileIn` 编译错误，整个桥接静默死亡。**复用 `ms_check.py` 的词法分析器**（`strip_code` / `check_structure`），不重写第三份 |
+| 直接 `catch()` / 空 catch 块 | 告警 | 核心工具吞掉 Max 异常会造成假成功；清理路径和兼容性探针可以保留，但业务操作应收集并返回失败 |
 
 > 分工：`ms_check.py` 是逐文件深报（含方法链取成员、`mcp*` 符号），
 > 第七关给的是全仓汇总视角；编码规则两边一致，结论不会互相矛盾。
