@@ -162,7 +162,7 @@ repository consolidation into `src/python` + `src/ms`.
 ### Changed
 
 - **Repository consolidation.** The project now lives at
-  `D:\Workspace\Dev\3dsmax-mcp` with a `src/python/maxmcp` (server) +
+  `D:\Workspace\MCP\3dsmax-mcp` with a `src/python/maxmcp` (server) +
   `src/ms` (bridge) layout; the previous iteration's tree is archived under
   `backup/20261018_project_merge_before/` (git history included).
 - **Deployment is byte-exact.** `install.py` copies files verbatim instead of
