@@ -350,7 +350,8 @@ class MaxMcpServer:
 
         runtime_failure = False
         try:
-            if self.config.runtime_verify and entry.mutating:
+            runtime_enabled = self.config.runtime_verify or self.config.tool_profile == "core"
+            if runtime_enabled and entry.mutating:
                 result = self.runtime.execute(
                     entry.name,
                     entry.bridge_method,
