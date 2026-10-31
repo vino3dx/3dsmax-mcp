@@ -1,0 +1,29 @@
+{
+  "name": "@vino3dx/3dsmax-mcp",
+  "version": "0.1.0",
+  "description": "Launcher for the 3dsmax-mcp Python MCP server",
+  "license": "MIT",
+  "bin": {
+    "3dsmax-mcp": "bin/3dsmax-mcp.js"
+  },
+  "files": [
+    "bin/3dsmax-mcp.js",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/vino3dx/3dsmax-ai-mcp.git"
+  },
+  "homepage": "https://github.com/vino3dx/3dsmax-ai-mcp",
+  "bugs": {
+    "url": "https://github.com/vino3dx/3dsmax-ai-mcp/issues"
+  },
+  "keywords": ["mcp", "3dsmax", "autodesk", "ai", "launcher"],
+  "publishConfig": {
+    "access": "public"
+  }
+}
