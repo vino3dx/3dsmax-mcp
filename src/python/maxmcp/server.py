@@ -333,7 +333,13 @@ class MaxMcpServer:
             payload = self._build_payload(entry, arguments)
         except ValueError as exc:
             return make_result(
-                [text_content(i18n.t("tool.bad_arguments", self.config.language, detail=str(exc)))],
+                [text_content(self._error_text(
+                    code="invalid_arguments",
+                    kind="validation_error",
+                    tool=name,
+                    message=i18n.t("tool.bad_arguments", self.config.language, detail=str(exc)),
+                    suggestion="Provide all required parameters with the declared types.",
+                ))],
                 is_error=True,
             )
 
@@ -348,7 +354,17 @@ class MaxMcpServer:
             else:
                 result = self.bridge.call(entry.bridge_method, payload)
         except BridgeError as exc:
-            return make_result([text_content(str(exc))], is_error=True)
+            return make_result(
+                [text_content(self._error_text(
+                    code=getattr(exc, "code", None) or exc.kind,
+                    kind=exc.kind,
+                    tool=name,
+                    message=str(exc),
+                    detail=getattr(exc, "detail", None),
+                    suggestion=self._error_suggestion(exc),
+                ))],
+                is_error=True,
+            )
 
         result = from_wire(result)
         self._apply_side_effects(entry, arguments, result)
@@ -366,6 +382,33 @@ class MaxMcpServer:
         content: List[Dict[str, Any]] = [text_content(text)]
         content.extend(images)
         return make_result(content)
+
+    def _error_text(self, *, code: str, kind: str, tool: str,
+                    message: str, suggestion: str = "",
+                    detail: Any = None) -> str:
+        """Return a human-readable message with machine-readable error fields."""
+        envelope: Dict[str, Any] = {
+            "error": {
+                "code": code,
+                "kind": kind,
+                "tool": tool,
+                "message": message,
+                "suggestion": suggestion or "Inspect the error and retry after correcting the input.",
+            }
+        }
+        if detail:
+            envelope["error"]["detail"] = detail
+        return json.dumps(envelope, ensure_ascii=False, indent=2, default=str)
+
+    @staticmethod
+    def _error_suggestion(exc: BridgeError) -> str:
+        if exc.kind == "not_running":
+            return "Start 3ds Max, load the bridge, and confirm the configured port."
+        if exc.kind == "timeout":
+            return "Retry after checking Max; increase MAXMCP_TIMEOUT for long operations."
+        if exc.kind == "protocol_error":
+            return "Check bridge/server version alignment and reload the bridge module."
+        return "Correct the reported Max-side problem, then retry; verify scene state before continuing."
 
     def _build_payload(self, entry: Tool, arguments: Dict[str, Any]) -> Dict[str, Any]:
         schema = entry.schema

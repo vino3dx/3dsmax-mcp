@@ -46,6 +46,10 @@ class BridgeCommandError(BridgeError):
     def __init__(self, message: str, detail: Optional[Dict[str, Any]] = None) -> None:
         super().__init__(message)
         self.detail = detail or {}
+        # MAXScript may provide a stable error code in the response.  Keep it
+        # optional so older bridges remain compatible while newer clients can
+        # branch without parsing localized text.
+        self.code = self.detail.get("code") or "max_command_failed"
 
 
 class MaxBridge:
