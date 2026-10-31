@@ -9,7 +9,7 @@ import threading
 import time
 
 PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 8765
-LOG = r"D:\Workspace\Dev\3dsmax-mcp\test\logs\mock_bridge.log"
+LOG = r"D:\Workspace\MCP\3dsmax-mcp\test\logs\mock_bridge.log"
 
 
 def log(msg):
