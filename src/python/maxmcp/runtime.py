@@ -86,6 +86,23 @@ class SceneRuntime:
     def snapshot(self) -> Any:
         return self._call(self.snapshot_method, {})
 
+    @staticmethod
+    def _default_verify(operation: str, result: Any, before: Any, after: Any) -> Any:
+        """Verify only invariants whose meaning is unambiguous across Max versions."""
+        if not isinstance(before, dict) or not isinstance(after, dict):
+            return None
+        old = before.get("objectCount")
+        new = after.get("objectCount")
+        if not isinstance(old, int) or not isinstance(new, int):
+            return None
+        if operation.startswith("create_"):
+            return {"kind": "object_count", "expected": "increase", "passed": new > old}
+        if operation in ("delete_objects", "detach_elements"):
+            return {"kind": "object_count", "expected": "decrease", "passed": new < old}
+        if operation in ("scene_new", "scene_reset"):
+            return {"kind": "object_count", "expected": "zero", "passed": new == 0}
+        return None
+
     def execute(
         self,
         operation: str,
@@ -151,10 +168,17 @@ class SceneRuntime:
                 )
         verification = Verification()
         failures: List[Dict[str, Any]] = []
-        if verify is not None:
+        verifier = verify
+        if verifier is None:
+            default_detail = self._default_verify(operation, result, before, after)
+            if default_detail is not None:
+                verification.performed = True
+                verification.detail = default_detail
+                verification.passed = bool(default_detail.get("passed"))
+        if verifier is not None:
             verification.performed = True
             try:
-                detail = verify(result, before, after)
+                detail = verifier(result, before, after)
                 verification.detail = detail
                 verification.passed = detail if isinstance(detail, bool) else True
             except Exception as exc:

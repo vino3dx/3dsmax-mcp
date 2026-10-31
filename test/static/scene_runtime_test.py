@@ -11,7 +11,7 @@ from maxmcp.runtime import SceneRuntime
 
 def main() -> None:
     calls = []
-    state = [{"objects": 0}, {"objects": 1}]
+    state = [{"objectCount": 0}, {"objectCount": 1}]
 
     def bridge(method, params):
         calls.append((method, params))
@@ -22,15 +22,16 @@ def main() -> None:
     runtime = SceneRuntime(bridge)
     record = runtime.execute(
         "create_box", "create_box", {"class": "Box"},
-        verify=lambda result, before, after: before["objects"] + 1 == after["objects"],
     )
     assert record.success is True
     assert record.operation_id.startswith("op-")
     assert record.changed is True
     assert record.verification.passed is True
+    assert record.verification.performed is True
+    assert record.verification.detail["kind"] == "object_count"
     assert [item[0] for item in calls] == ["scene_info", "create_box", "scene_info"]
 
-    unchanged = SceneRuntime(lambda method, params: {"objects": 1})
+    unchanged = SceneRuntime(lambda method, params: {"objectCount": 1})
     same = unchanged.execute("noop", "noop")
     assert same.success is True
     assert same.changed is False
@@ -44,7 +45,7 @@ def main() -> None:
     recovery_calls = {"count": 0}
     def partial(method, params):
         if method == "scene_info":
-            return {"objects": 0}
+            return {"objectCount": 0}
         recovery_calls["count"] += 1
         raise RuntimeError("operation failed")
     recovered = SceneRuntime(partial).execute(
