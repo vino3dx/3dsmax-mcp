@@ -95,9 +95,17 @@ class SceneRuntime:
         new = after.get("objectCount")
         if not isinstance(old, int) or not isinstance(new, int):
             return None
-        if operation.startswith("create_"):
+        object_creators = {
+            "create_arc", "create_box", "create_capsule", "create_chamferbox",
+            "create_circle", "create_cone", "create_cylinder", "create_donut",
+            "create_ellipse", "create_geosphere", "create_hedra", "create_helix",
+            "create_line", "create_ngon", "create_plane", "create_primitive",
+            "create_pyramid", "create_rectangle", "create_sphere", "create_teapot",
+            "create_text", "create_torus", "create_tube",
+        }
+        if operation in object_creators:
             return {"kind": "object_count", "expected": "increase", "passed": new > old}
-        if operation in ("delete_objects", "detach_elements"):
+        if operation == "delete_objects":
             return {"kind": "object_count", "expected": "decrease", "passed": new < old}
         if operation in ("scene_new", "scene_reset"):
             return {"kind": "object_count", "expected": "zero", "passed": new == 0}
