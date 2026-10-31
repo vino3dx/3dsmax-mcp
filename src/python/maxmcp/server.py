@@ -33,6 +33,7 @@ from .protocol import (
     make_result,
     text_content,
 )
+from .runtime import SceneRuntime
 from .wire import ANSI as _ANSI
 from .wire import from_wire, to_wire
 
@@ -98,6 +99,7 @@ class MaxMcpServer:
         self.transport = transport or StdioTransport()
         self.catalog: Catalog = build_catalog()
         self.bridge = MaxBridge(self.config)
+        self.runtime = SceneRuntime(self.bridge.call)
         self._initialized = False
 
         # Language handling. "auto" means: mirror the UI language of the running
@@ -336,7 +338,15 @@ class MaxMcpServer:
             )
 
         try:
-            result = self.bridge.call(entry.bridge_method, payload)
+            if self.config.runtime_verify and entry.mutating:
+                result = self.runtime.execute(
+                    entry.name,
+                    entry.bridge_method,
+                    payload,
+                    mutating=True,
+                ).as_dict()
+            else:
+                result = self.bridge.call(entry.bridge_method, payload)
         except BridgeError as exc:
             return make_result([text_content(str(exc))], is_error=True)
 

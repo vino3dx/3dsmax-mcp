@@ -35,6 +35,10 @@ DEFAULTS: Dict[str, Any] = {
     "auto_launch_hint": True,
     "max_response_chars": 200000,
     "tool_profile": "full",
+    # When enabled, mutating calls are wrapped with real scene_info snapshots.
+    # Keep the default off for backwards-compatible wire payloads; clients can
+    # opt in once the bridge session is known to support scene_info reliably.
+    "runtime_verify": False,
     # Transport. stdio is what a locally launched client uses; http adds a
     # Streamable HTTP endpoint plus the legacy HTTP+SSE pair so cloud-side
     # agents can reach the server by URL.
@@ -58,6 +62,7 @@ class Config:
     auto_launch_hint: bool = True
     max_response_chars: int = 200000
     tool_profile: str = "full"
+    runtime_verify: bool = False
     disabled_categories: List[str] = field(default_factory=list)
     transport: str = "stdio"
     http_host: str = "127.0.0.1"
@@ -104,6 +109,7 @@ class Config:
             "MAXMCP_LANGUAGE": ("language", str),
             "MAXMCP_BILINGUAL": ("bilingual", _as_bool),
             "MAXMCP_PROFILE": ("tool_profile", str),
+            "MAXMCP_RUNTIME_VERIFY": ("runtime_verify", _as_bool),
             "MAXMCP_TRANSPORT": ("transport", str),
             "MAXMCP_HTTP_HOST": ("http_host", str),
             "MAXMCP_HTTP_PORT": ("http_port", int),
