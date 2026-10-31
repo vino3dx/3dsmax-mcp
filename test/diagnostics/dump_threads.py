@@ -2,7 +2,7 @@
 import struct
 import sys
 
-sys.path.insert(0, r"D:\Workspace\Dev\3dsmax-mcp\test")
+sys.path.insert(0, r"D:\Workspace\MCP\3dsmax-mcp\test")
 from dump_unwind import Module, load_pe_sections  # noqa: E402
 
 
