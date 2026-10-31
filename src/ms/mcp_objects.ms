@@ -50,12 +50,13 @@ fn mcpH_create_primitive params =
     local obj = execute (cls + "()")
     if obj == undefined do mcpFail "err.bad_value" a1:cls
 
+    local failures = #()
     local nm = mcpStr params "name" default:""
     if nm == "" do nm = mcpStr params "setName" default:""
-    if nm != "" do ( try ( obj.name = nm ) catch() )
+    if nm != "" do ( try ( obj.name = nm ) catch ( append failures ("name: " + (getCurrentException() as string)) ) )
 
     local pos = mcpGet params "position"
-    if pos != undefined do ( try ( obj.position = (mcpPoint3From pos) ) catch() )
+    if pos != undefined do ( try ( obj.position = (mcpPoint3From pos) ) catch ( append failures ("position: " + (getCurrentException() as string)) ) )
 
     local dimProps = #("length","width","height","depth","radius","radius1","radius2","segments",
                        "sides","chamfer","fillet","turns","heightSegs","widthSegs","lengthSegs",
@@ -64,7 +65,7 @@ fn mcpH_create_primitive params =
     (
         if (mcpGet params pn) != undefined do
         (
-            try ( setProperty obj pn (mcpNum params pn) ) catch()
+            try ( setProperty obj pn (mcpNum params pn) ) catch ( append failures (pn + ": " + (getCurrentException() as string)) )
         )
     )
 
@@ -76,13 +77,15 @@ fn mcpH_create_primitive params =
     (
         if (mcpGet params pn) != undefined do
         (
-            try ( setProperty obj pn (mcpBool params pn) ) catch()
+            try ( setProperty obj pn (mcpBool params pn) ) catch ( append failures (pn + ": " + (getCurrentException() as string)) )
         )
     )
 
     mcpRedraw()
     local p = #()
+    mcpPair p "success" (failures.count == 0)
     mcpPair p "object" (mcpNodeInfo obj)
+    mcpPair p "failures" failures
     mcpPair p "message" (mcpMsg "msg.created" a1:obj.name)
     mcpObj p
 )
