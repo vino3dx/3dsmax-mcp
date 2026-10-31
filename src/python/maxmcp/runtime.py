@@ -87,6 +87,19 @@ class SceneRuntime:
         return self._call(self.snapshot_method, {})
 
     @staticmethod
+    def _bridge_failure(exc: Exception, stage: str = "") -> Dict[str, Any]:
+        failure: Dict[str, Any] = {
+            "kind": getattr(exc, "kind", "bridge_error"),
+            "message": str(exc),
+        }
+        code = getattr(exc, "code", None)
+        if code:
+            failure["code"] = code
+        if stage:
+            failure["stage"] = stage
+        return failure
+
+    @staticmethod
     def _default_verify(operation: str, result: Any, before: Any, after: Any) -> Any:
         """Verify only invariants whose meaning is unambiguous across Max versions."""
         if not isinstance(before, dict) or not isinstance(after, dict):
@@ -138,7 +151,7 @@ class SceneRuntime:
                     operation=operation,
                     success=False,
                     operation_id=operation_id,
-                    failures=[{"kind": "bridge_error", "stage": "before", "message": str(exc)}],
+                    failures=[self._bridge_failure(exc, "before")],
                 )
         try:
             result = self._call(method, params or {})
@@ -156,7 +169,7 @@ class SceneRuntime:
                 success=False,
                 operation_id=operation_id,
                 before=before,
-                failures=[{"kind": "bridge_error", "message": str(exc)}],
+                failures=[self._bridge_failure(exc)],
                 recovery=recovery,
             )
 
@@ -172,7 +185,7 @@ class SceneRuntime:
                     changed=True,
                     result=result,
                     before=before,
-                    failures=[{"kind": "bridge_error", "stage": "after", "message": str(exc)}],
+                    failures=[self._bridge_failure(exc, "after")],
                 )
         verification = Verification()
         failures: List[Dict[str, Any]] = []

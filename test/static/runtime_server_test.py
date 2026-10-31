@@ -8,6 +8,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "src" / "python"))
 
 from maxmcp.config import Config
+from maxmcp.bridge import BridgeNotRunning
 from maxmcp.protocol import NullTransport
 from maxmcp.runtime import SceneRuntime
 from maxmcp.server import MaxMcpServer
@@ -46,6 +47,11 @@ def call_with(fake):
     return server.on_tools_call({"name": "create_box", "arguments": {"class": "Box"}})
 
 
+class DisconnectedBridge(FakeBridge):
+    def call(self, method, params=None):
+        raise BridgeNotRunning("bridge unavailable")
+
+
 def main():
     fake = FakeBridge()
     reply = call_with(fake)
@@ -67,6 +73,13 @@ def main():
     operation_payload = json.loads(operation_failed["content"][0]["text"])
     assert operation_payload["success"] is False
     assert operation_payload["failures"][0]["kind"] == "operation_failed"
+
+    disconnected = call_with(DisconnectedBridge())
+    assert disconnected["isError"] is True
+    disconnected_text = disconnected["content"][0]["text"]
+    disconnected_payload = json.loads(disconnected_text)
+    assert disconnected_payload["success"] is False
+    assert disconnected_payload["failures"][0]["kind"] == "not_running"
     print("runtime server integration: all checks passed")
 
 
