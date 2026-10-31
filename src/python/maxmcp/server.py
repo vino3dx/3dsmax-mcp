@@ -348,6 +348,7 @@ class MaxMcpServer:
                 is_error=True,
             )
 
+        runtime_failure = False
         try:
             if self.config.runtime_verify and entry.mutating:
                 result = self.runtime.execute(
@@ -356,6 +357,7 @@ class MaxMcpServer:
                     payload,
                     mutating=True,
                 ).as_dict()
+                runtime_failure = result.get("success") is False
             else:
                 result = self.bridge.call(entry.bridge_method, payload)
         except BridgeError as exc:
@@ -389,7 +391,7 @@ class MaxMcpServer:
 
         content: List[Dict[str, Any]] = [text_content(text)]
         content.extend(images)
-        return make_result(content)
+        return make_result(content, is_error=runtime_failure)
 
     def _error_text(self, *, code: str, kind: str, tool: str,
                     message: str, suggestion: str = "",
