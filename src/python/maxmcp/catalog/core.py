@@ -321,9 +321,10 @@ TOOLS.append(tool(
 
 TOOLS.append(tool(
     "scene_save", "scene",
-    "保存当前场景。若从未保存过则等同于另存为。",
-    "Save the current scene. If it has never been saved this behaves like save-as.",
-    mutating=False,
+    "保存当前场景。若从未保存过则等同于另存为。写盘操作，不是只读工具。",
+    "Save the current scene. If it has never been saved this behaves like save-as. "
+    "This writes to disk and is not a read-only tool.",
+    mutating=True,
 ))
 
 TOOLS.append(tool(
@@ -332,8 +333,12 @@ TOOLS.append(tool(
     "Save the current scene to a given path, creating missing folders.",
     props={
         "path": s("目标 .max 文件路径。", "Destination .max path."),
-        "keepPath": b("是否把新路径设为当前场景路径，默认是。",
-                      "Adopt the new path as the current scene path, default true."),
+        "keepPath": b("是否把新路径设为当前场景路径，默认是；false 表示只写一份副本、"
+                      "当前场景仍停留在原文件。",
+                      "Adopt the new path as the current scene path (default true); false "
+                      "writes a copy and keeps the current scene on its original file."),
+        "confirm": b("目标文件已存在时必须显式传 true 才会覆盖。",
+                     "Required as true to overwrite an existing .max file."),
     },
     required=["path"],
 ))

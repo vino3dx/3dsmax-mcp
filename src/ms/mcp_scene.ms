@@ -177,10 +177,30 @@ fn mcpH_scene_save_as params =
 (
     local path = mcpReqStr params "path"
     if (getFilenameType path) == "" do path = path + ".max"
+    -- Overwriting an existing scene destroys work with no undo; require the
+    -- caller to say so explicitly instead of doing it on a typo.
+    if (doesFileExist path) and not (mcpBool params "confirm" default:false) do
+        mcpFail "err.confirm_required" a1:"scene_save_as"
+
+    local oldDir = ""
+    local oldName = ""
+    try ( oldDir = maxFilePath ) catch ( oldDir = "" )
+    try ( oldName = maxFileName ) catch ( oldName = "" )
+
     try ( makeDir (getFilenamePath path) all:true ) catch()
     saveMaxFile path quiet:true clearNeedSaveFlag:true
+
+    -- keepPath=false means "write this copy but stay on the original scene".
+    local keepPath = mcpBool params "keepPath" default:true
+    if not keepPath do
+    (
+        try ( maxFilePath = oldDir ) catch()
+        try ( maxFileName = oldName ) catch()
+    )
+
     local p = #()
     mcpPair p "saved" path
+    mcpPair p "pathKept" (if keepPath then false else true)
     mcpPair p "message" (mcpMsg "msg.saved" a1:path)
     mcpObj p
 )

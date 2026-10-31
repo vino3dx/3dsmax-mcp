@@ -113,3 +113,35 @@
 4. 对重命名后引用、删除后旧引用、同名对象进行实机身份实验；记录 Max 2020 的实际句柄能力。
 5. 对 viewport/vision 工具保存真实图片摘要和 MCP image block 证据；本阶段不把静态图片转换测试当作截图通过。
 6. 重新生成 `docs/LIVE_MATRIX.md`，分别记录 `RUNTIME_VERIFIED`、失败、未验证和环境阻塞。
+
+## 夜间任务补充证据（2026-10-31，Core Runtime Reliability）
+
+上文表格是历史基线，保持原样。本轮新增的证据只提升到 **S（静态）/ O（离线集成）**，
+`RUNTIME_VERIFIED` 的判断标准没有放松，仍以 live matrix 为准。
+
+- 新增静态校验：`test/static/core_tool_validation_test.py` 覆盖下面 24 个工具的
+  注册、必填参数、类型、枚举、上下界、只读/破坏性标注，并验证非法参数在 Python 层
+  以 `invalid_arguments` 被拒（不会触达 Max）。
+- 新增离线集成：`test/static/offline_acceptance_test.py`、`batch_reliability_test.py`、
+  `object_reference_test.py`（假场景 + 真实 TCP 桩桥）。
+- 批量与身份：`transform_object`/`clone_objects`/`delete_objects` 现在有逐对象 read-back
+  与错误；`select_objects`/`mat_assign`/`mod_add` 有逐对象对账；同名对象返回
+  `ambiguous_object`，删除/改名后返回 `stale_object_reference`，
+  `object_ref{name,handle}` 作为诊断字段返回（handle 未作为执行引用）。
+
+| 工具 | 静态校验 (S) | 离线集成 (O) | 真实 Max (M) |
+|---|---|---|---|
+| bridge_capabilities / bridge_ping | core_tool_validation_test | offline_acceptance (transport) | 待验收 |
+| create_circle / cone / geosphere / plane / pyramid / torus / tube | core_tool_validation_test | — | 待验收 |
+| delete_objects | core_tool_validation_test | batch_reliability_test（删除/未删/歧义） | 待验收 |
+| execute_maxscript | core_tool_validation_test | offline_acceptance（kind 透传） | 待验收 |
+| get_selection | core_tool_validation_test | batch_reliability_test（选择集对账） | 待验收 |
+| mat_list | core_tool_validation_test | — | 待验收 |
+| mod_symmetry / mod_turbosmooth | core_tool_validation_test | batch_reliability_test（mod_add 对账） | 待验收 |
+| poly_chamfer_edges / connect_edges / inset_faces / weld_vertices | core_tool_validation_test | — | 待验收 |
+| poly_get_selection / poly_get_stats | core_tool_validation_test | — | 待验收 |
+| scene_open | core_tool_validation_test | — | 待验收 |
+| scene_save | core_tool_validation_test（标注为 mutating） | — | 待验收 |
+| scene_save_as | core_tool_validation_test（confirm 覆盖保护） | — | 待验收 |
+
+真实 Max 验收清单（L1–L24）见 `docs/OVERNIGHT_ACCEPTANCE.md`。

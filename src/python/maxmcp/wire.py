@@ -38,8 +38,19 @@ def to_wire(value: Any) -> Any:
 
 
 def from_wire(value: Any) -> Any:
-    """Inverse of :func:`to_wire`, applied to everything coming back from Max."""
+    """Inverse of :func:`to_wire`, applied to everything coming back from Max.
+
+    A wire string can only contain code points U+0000..U+00FF (it is a latin-1
+    view of ANSI bytes).  Anything outside that range has already been decoded -
+    for example a localized MAXScript error message that the bridge decoded on
+    purpose - and re-decoding it would turn "找不到对象" into mojibake.  Treating
+    such strings as identity makes the conversion safe to apply to envelopes that
+    mix decoded diagnostics with raw bridge payloads (the Scene Runtime does
+    exactly that).
+    """
     if isinstance(value, str):
+        if any(ord(ch) > 0xFF for ch in value):
+            return value
         try:
             return value.encode("latin-1", "backslashreplace").decode(ANSI, "replace")
         except (LookupError, UnicodeError):

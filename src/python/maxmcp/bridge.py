@@ -19,7 +19,7 @@ import time
 from typing import Any, Dict, Optional
 
 from .config import Config
-from . import i18n, wire
+from . import errors, i18n, wire
 
 
 class BridgeError(RuntimeError):
@@ -40,16 +40,30 @@ class BridgeProtocolError(BridgeError):
     kind = "protocol_error"
 
 
+class BridgeDisconnected(BridgeNotRunning):
+    """The socket closed while a request was in flight.
+
+    Subclasses :class:`BridgeNotRunning` so callers that only know the older
+    category keep working, but it reports its own kind: "Max is not running" and
+    "Max vanished mid-command" lead to very different recovery actions.
+    """
+
+    kind = "disconnected"
+
+
 class BridgeCommandError(BridgeError):
     kind = "command_error"
 
     def __init__(self, message: str, detail: Optional[Dict[str, Any]] = None) -> None:
         super().__init__(message)
         self.detail = detail or {}
-        # MAXScript may provide a stable error code in the response.  Keep it
-        # optional so older bridges remain compatible while newer clients can
-        # branch without parsing localized text.
-        self.code = self.detail.get("code") or "max_command_failed"
+        # MAXScript declares *why* a command failed ("err.node_not_found"); that
+        # is the only machine-readable part of the failure.  Keep the raw value
+        # for diagnostics and classify it into a documented code so clients never
+        # have to parse localized prose.  Older bridges that send no kind still
+        # degrade to "max_command_failed", which is at least honest.
+        self.max_kind = str(self.detail.get("kind") or self.detail.get("code") or "")
+        self.code = errors.classify(self.max_kind)
 
 
 class MaxBridge:
@@ -166,7 +180,7 @@ class MaxBridge:
                 continue
             if not chunk:
                 self.close()
-                raise BridgeNotRunning(i18n.t("bridge.disconnected", self.config.language))
+                raise BridgeDisconnected(i18n.t("bridge.disconnected", self.config.language))
             buf.extend(chunk)
             idx = buf.find(b"\n")
             if idx >= 0:

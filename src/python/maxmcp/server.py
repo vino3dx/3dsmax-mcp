@@ -9,15 +9,16 @@ from __future__ import annotations
 import json
 import base64
 from pathlib import Path
-import platform
 import sys
+import tempfile
 import time
 import traceback
 import uuid
 from typing import Any, Dict, List, Optional, Tuple
 
-from . import i18n
-from .bridge import BridgeCommandError, BridgeError, MaxBridge
+from . import errors, i18n
+from .batch import PER_OBJECT_TOOLS, RECONCILE_TOOLS, BatchExecutor
+from .bridge import BridgeError, MaxBridge
 from .catalog import build_catalog
 from .catalog.schema import Catalog, Tool
 from .config import APP_NAME, PROTOCOL_VERSION, SUPPORTED_PROTOCOL_VERSIONS, VERSION, Config
@@ -32,7 +33,6 @@ from .protocol import (
     StdioTransport,
     clamp_text,
     image_content,
-    json_content,
     make_result,
     text_content,
 )
@@ -43,31 +43,158 @@ from .wire import from_wire, to_wire
 
 # ---------------------------------------------------------------- image results
 _IMAGE_MAX_BYTES = 8 * 1024 * 1024
+#: Total base64 payload a single tool result may carry.  One render at 8 MiB is
+#: legitimate; four of them would blow up a client's context window.
+_IMAGE_TOTAL_BYTES = 12 * 1024 * 1024
 _IMAGE_MIME = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp"}
+_IMAGE_MIMES = frozenset(_IMAGE_MIME.values())
+
+#: Magic prefixes.  A declared MIME type is a claim; these are the bytes.
+_IMAGE_SIGNATURES = (
+    (b"\x89PNG\r\n\x1a\n", "image/png"),
+    (b"\xff\xd8\xff", "image/jpeg"),
+    (b"RIFF", "image/webp"),          # further checked for the WEBP tag at offset 8
+)
 
 
-def _image_bytes(item: Dict[str, Any]) -> Tuple[Optional[str], Optional[str]]:
+def _sniff_image_mime(raw: bytes) -> Optional[str]:
+    """Return the MIME type the bytes actually are, or ``None`` if unknown."""
+    for prefix, mime in _IMAGE_SIGNATURES:
+        if raw.startswith(prefix):
+            if mime == "image/webp" and raw[8:12] != b"WEBP":
+                return None
+            return mime
+    return None
+
+
+def _allowed_image_roots(configured: Optional[List[str]] = None) -> List[Path]:
+    """Directories a screenshot path may point into.
+
+    ``_images`` entries usually carry base64 pixels, but the path form exists so a
+    producer can hand over a file the bridge already wrote.  Reading an arbitrary
+    client-supplied path would turn the server into a local file reader, so paths
+    are confined to the screenshot roots (temp dir + the MCP home by default).
+    """
+    roots: List[Path] = []
+    for item in (configured or []):
+        try:
+            roots.append(Path(str(item)).expanduser().resolve())
+        except (OSError, RuntimeError):
+            continue
+    if not roots:
+        roots.append(Path(tempfile.gettempdir()).resolve())
+    home = Path.home() / ".3dsmax-mcp"
+    try:
+        roots.append(home.resolve())
+    except (OSError, RuntimeError):  # pragma: no cover - defensive
+        pass
+    return roots
+
+
+def _is_within(path: Path, roots: List[Path]) -> bool:
+    try:
+        resolved = path.resolve()
+    except (OSError, RuntimeError):
+        return False
+    for root in roots:
+        try:
+            resolved.relative_to(root)
+        except ValueError:
+            continue
+        return True
+    return False
+
+
+def _validate_image_bytes(raw: bytes, declared: str) -> Tuple[Optional[str], Optional[str]]:
+    """Check that ``raw`` really is an image of the declared family.
+
+    Returns ``(mime, error)``.  A MIME mismatch is corrected from the bytes
+    instead of trusted (clients cannot claim ``image/png`` over JPEG data); bytes
+    that match no signature are rejected as corrupt.
+    """
+    if not raw:
+        return None, "empty image payload"
+    sniffed = _sniff_image_mime(raw)
+    if sniffed is None:
+        return None, "image data is not a recognized PNG/JPEG/WEBP stream"
+    mime = declared if declared in _IMAGE_MIMES else sniffed
+    if mime != sniffed:
+        # The bytes are authoritative: send them with the type they really are,
+        # never as the type the producer claimed.
+        mime = sniffed
+    return mime, None
+
+
+def _image_bytes(item: Dict[str, Any],
+                 roots: Optional[List[Path]] = None) -> Tuple[Optional[str], Optional[str], Optional[str]]:
+    """Return ``(base64_data, mime, error)`` for one ``_images`` entry."""
+    allowed = roots if roots is not None else _allowed_image_roots()
     data = item.get("data")
+    declared = str(item.get("mime") or item.get("mimeType") or "")
+
     if isinstance(data, str) and data:
-        return data, None
+        try:
+            raw = base64.b64decode(data, validate=True)
+        except (ValueError, TypeError):
+            return None, None, "image data is not valid base64"
+        if len(raw) > _IMAGE_MAX_BYTES:
+            return None, None, "image exceeds 8 MiB limit"
+        mime, failure = _validate_image_bytes(raw, declared)
+        if failure:
+            return None, None, failure
+        # Re-encode so the block carries canonical base64 (no stray whitespace).
+        return base64.b64encode(raw).decode("ascii"), mime, None
+
     raw_path = item.get("path")
     if not isinstance(raw_path, str) or not raw_path:
-        return None, "missing image data or path"
+        return None, None, "missing image data or path"
     path = Path(raw_path)
-    mime = str(item.get("mime") or item.get("mimeType") or _IMAGE_MIME.get(path.suffix.lower(), ""))
-    if mime not in _IMAGE_MIME.values():
-        return None, "unsupported image type"
+    if not _is_within(path, allowed):
+        return None, None, "image path is outside the allowed screenshot roots"
+    hint = declared or _IMAGE_MIME.get(path.suffix.lower(), "")
+    if hint not in _IMAGE_MIMES and not hint:
+        return None, None, "unsupported image type"
     try:
         size = path.stat().st_size
         if size > _IMAGE_MAX_BYTES:
-            return None, "image exceeds 8 MiB limit"
+            return None, None, "image exceeds 8 MiB limit"
         with path.open("rb") as stream:
-            return base64.b64encode(stream.read(_IMAGE_MAX_BYTES + 1)).decode("ascii"), None
+            raw = stream.read(_IMAGE_MAX_BYTES + 1)
     except OSError as exc:
-        return None, "image file unavailable: %s" % exc
+        return None, None, "image file unavailable: %s" % exc
+    if len(raw) > _IMAGE_MAX_BYTES:
+        return None, None, "image exceeds 8 MiB limit"
+    mime, failure = _validate_image_bytes(raw, hint)
+    if failure:
+        return None, None, failure
+    return base64.b64encode(raw).decode("ascii"), mime, None
 
 
-def _split_images(payload: Any, operation_id: str = "") -> Tuple[List[Dict[str, Any]], Any]:
+def _collect_images(payload: Any) -> Any:
+    """Find the top-level ``_images`` array, including one nested in ``data``.
+
+    Runtime-wrapped results keep the bridge payload under ``data``; without this
+    lookup a mutating tool that returns pixels would answer with metadata only.
+    """
+    if not isinstance(payload, dict):
+        return None
+    raw = payload.get("_images")
+    if isinstance(raw, list):
+        return payload
+    for key in ("data", "result"):
+        nested = payload.get(key)
+        if isinstance(nested, dict) and isinstance(nested.get("_images"), list):
+            inner = dict(nested)
+            blocks_source = inner.pop("_images")
+            replacement = dict(payload)
+            replacement[key] = inner
+            replacement["_images"] = blocks_source
+            return replacement
+    return None
+
+
+def _split_images(payload: Any, operation_id: str = "",
+                  roots: Optional[List[Path]] = None) -> Tuple[List[Dict[str, Any]], Any]:
     """Pull base64 pixels out of a bridge result into MCP image blocks.
 
     The MAXScript side (``max/mcp_vision.ms``) can only send JSON text over the
@@ -83,29 +210,30 @@ def _split_images(payload: Any, operation_id: str = "") -> Tuple[List[Dict[str, 
 
     Returns ``(blocks, rest)``.  ``rest`` always equals ``payload`` minus
     ``_images``; for results with no pictures it is ``payload`` untouched, so all
-    375 existing text-only tools behave exactly as before.
+    text-only tools behave exactly as before.
     """
-    if not isinstance(payload, dict):
-        return [], payload
-
-    raw = payload.get("_images")
-    if not isinstance(raw, list) or not raw:
+    source = _collect_images(payload)
+    if source is None:
         return [], payload
 
     blocks: List[Dict[str, Any]] = []
     described: List[Dict[str, Any]] = []
+    budget = _IMAGE_TOTAL_BYTES
 
-    for item in raw:
+    for item in source.get("_images") or []:
         if not isinstance(item, dict):
             continue
-        data, image_error = _image_bytes(item)
+        data, mime, image_error = _image_bytes(item, roots)
         if image_error:
             described.append({"label": item.get("label") or (len(described) + 1),
                               "error": image_error})
             continue
-        mime = str(item.get("mime") or item.get("mimeType") or "image/png")
-        if not mime.startswith("image/"):
-            mime = "image/png"
+        assert data is not None and mime is not None
+        if len(data) > budget:
+            described.append({"label": item.get("label") or (len(described) + 1),
+                              "error": "image exceeds the per-response image budget"})
+            continue
+        budget -= len(data)
         blocks.append(image_content(data, mime))
         described.append(
             {
@@ -115,13 +243,13 @@ def _split_images(payload: Any, operation_id: str = "") -> Tuple[List[Dict[str, 
             }
         )
 
-    rest = dict(payload)
+    rest = dict(source)
     rest.pop("_images", None)
     if described:
         rest["images"] = described
-        errors = [item for item in described if item.get("error")]
-        if errors:
-            rest["image_errors"] = errors
+        errors_list = [item for item in described if item.get("error")]
+        if errors_list:
+            rest["image_errors"] = errors_list
         if operation_id:
             rest["operation_id"] = operation_id
             for item in described:
@@ -137,6 +265,7 @@ class MaxMcpServer:
         self.catalog: Catalog = build_catalog()
         self.bridge = MaxBridge(self.config)
         self.runtime = SceneRuntime(self.bridge.call)
+        self.batch = BatchExecutor(self.bridge.call)
         self._initialized = False
 
         # Language handling. "auto" means: mirror the UI language of the running
@@ -383,7 +512,20 @@ class MaxMcpServer:
         runtime_failure = False
         try:
             runtime_enabled = self.config.runtime_verify or self.config.tool_profile == "core"
-            if runtime_enabled and entry.mutating:
+            objects = payload.get("objects")
+            has_objects = isinstance(objects, list) and bool(objects)
+            if entry.name in RECONCILE_TOOLS and has_objects:
+                # One bridge call, one undo entry - but the reply is reconciled
+                # into one row per object, so a silently skipped object can no
+                # longer masquerade as success.
+                result = self.batch.run(entry.name, entry.bridge_method, payload)
+                runtime_failure = result.get("success") is False
+            elif runtime_enabled and entry.name in PER_OBJECT_TOOLS and has_objects:
+                # Per-object execution needs real read-back, which only the
+                # reliability mode (core profile / MAXMCP_RUNTIME_VERIFY) pays for.
+                result = self.batch.run(entry.name, entry.bridge_method, payload)
+                runtime_failure = result.get("success") is False
+            elif runtime_enabled and entry.mutating:
                 result = self.runtime.execute(
                     entry.name,
                     entry.bridge_method,
@@ -396,12 +538,14 @@ class MaxMcpServer:
         except BridgeError as exc:
             return make_result(
                 [text_content(self._error_text(
-                    code=getattr(exc, "code", None) or exc.kind,
-                    kind=exc.kind,
+                    code=errors.classify(getattr(exc, "code", None) or exc.kind),
+                    kind=getattr(exc, "kind", "bridge_error"),
                     tool=name,
                     message=str(exc),
                     detail=getattr(exc, "detail", None),
                     suggestion=self._error_suggestion(exc),
+                    retryable=errors.retryable(errors.classify(
+                        getattr(exc, "code", None) or getattr(exc, "kind", ""))),
                 ))],
                 is_error=True,
             )
@@ -417,7 +561,8 @@ class MaxMcpServer:
         operation_id = "op-" + uuid.uuid4().hex[:12]
         if isinstance(result, dict) and result.get("operation_id"):
             operation_id = str(result["operation_id"])
-        images, summary = _split_images(result, operation_id)
+        images, summary = _split_images(
+            result, operation_id, _allowed_image_roots(self.config.image_roots))
 
         text = json.dumps(summary, ensure_ascii=False, indent=2, default=str)
         text = clamp_text(text, self.config.max_response_chars)
@@ -429,7 +574,7 @@ class MaxMcpServer:
 
     def _error_text(self, *, code: str, kind: str, tool: str,
                     message: str, suggestion: str = "",
-                    detail: Any = None) -> str:
+                    detail: Any = None, retryable: bool = False) -> str:
         """Return a human-readable message with machine-readable error fields."""
         envelope: Dict[str, Any] = {
             "error": {
@@ -440,6 +585,8 @@ class MaxMcpServer:
                 "suggestion": suggestion or "Inspect the error and retry after correcting the input.",
             }
         }
+        if retryable:
+            envelope["error"]["retryable"] = True
         if detail:
             envelope["error"]["detail"] = detail
         return json.dumps(envelope, ensure_ascii=False, indent=2, default=str)
@@ -507,45 +654,101 @@ class MaxMcpServer:
 
 
 def _coerce(value: Any, spec: Dict[str, Any], key: str) -> Any:
-    """Best effort coercion; the MAXScript side is tolerant but typed values help."""
+    """Coerce to the declared type and enforce the declared constraints.
+
+    The MAXScript side is tolerant, which used to mean a value outside the
+    documented range travelled all the way into Max and failed there (or, worse,
+    was clamped silently).  Rejecting it here produces a stable
+    ``invalid_arguments`` answer that names the offending parameter.
+    """
     type_name = spec.get("type")
     if value is None:
         return None
     if type_name == "integer":
         try:
-            return int(value)
+            number = int(value)
         except (TypeError, ValueError):
             raise ValueError("{0} must be an integer".format(key))
+        return _check_bounds(number, spec, key, integer=True)
     if type_name == "number":
         try:
-            return float(value)
+            number = float(value)
         except (TypeError, ValueError):
             raise ValueError("{0} must be a number".format(key))
+        return _check_bounds(number, spec, key, integer=False)
     if type_name == "boolean":
         if isinstance(value, bool):
             return value
-        return str(value).strip().lower() in ("1", "true", "yes", "on")
+        text = str(value).strip().lower()
+        if text in ("1", "true", "yes", "on", "y"):
+            return True
+        if text in ("0", "false", "no", "off", "n"):
+            return False
+        raise ValueError("{0} must be a boolean".format(key))
     if type_name == "string":
         if isinstance(value, str):
-            return value
-        return json.dumps(value, ensure_ascii=False) if isinstance(value, (dict, list)) else str(value)
+            text = value
+        elif isinstance(value, (dict, list)):
+            text = json.dumps(value, ensure_ascii=False)
+        else:
+            text = str(value)
+        return _check_enum(text, spec, key)
     if type_name == "array":
-        if isinstance(value, (list, tuple)):
-            return list(value)
-        if isinstance(value, str):
-            text = value.strip()
-            if text.startswith("["):
-                try:
-                    parsed = json.loads(text)
-                    if isinstance(parsed, list):
-                        return parsed
-                except ValueError:
-                    pass
-            if not text:
-                return []
-            return [part.strip() for part in text.split(",") if part.strip()]
-        return [value]
+        items = _coerce_array(value, key)
+        minimum = spec.get("minItems")
+        maximum = spec.get("maxItems")
+        if isinstance(minimum, int) and len(items) < minimum:
+            raise ValueError("{0} needs at least {1} item(s)".format(key, minimum))
+        if isinstance(maximum, int) and len(items) > maximum:
+            raise ValueError("{0} accepts at most {1} item(s)".format(key, maximum))
+        return items
     return value
+
+
+def _coerce_array(value: Any, key: str) -> List[Any]:
+    if isinstance(value, (list, tuple)):
+        return list(value)
+    if isinstance(value, str):
+        text = value.strip()
+        if text.startswith("["):
+            try:
+                parsed = json.loads(text)
+            except ValueError:
+                parsed = None
+            if isinstance(parsed, list):
+                return parsed
+            raise ValueError("{0} looks like JSON but is not a valid array".format(key))
+        if not text:
+            return []
+        return [part.strip() for part in text.split(",") if part.strip()]
+    if isinstance(value, (int, float, bool)):
+        return [value]
+    return [value]
+
+
+def _check_bounds(number: Any, spec: Dict[str, Any], key: str, integer: bool) -> Any:
+    minimum = spec.get("minimum")
+    maximum = spec.get("maximum")
+    if isinstance(minimum, (int, float)) and number < minimum:
+        raise ValueError("{0} must be >= {1}".format(key, minimum))
+    if isinstance(maximum, (int, float)) and number > maximum:
+        raise ValueError("{0} must be <= {1}".format(key, maximum))
+    return number
+
+
+def _check_enum(text: str, spec: Dict[str, Any], key: str) -> str:
+    allowed = spec.get("enum")
+    if not isinstance(allowed, list) or not allowed:
+        return text
+    if text in allowed:
+        return text
+    # Models often send the right word in the wrong case; normalise instead of
+    # failing, but never invent a value that is not in the enum.
+    lookup = {str(item).lower(): item for item in allowed}
+    canonical = lookup.get(text.strip().lower())
+    if canonical is not None:
+        return str(canonical)
+    raise ValueError("{0} must be one of: {1}".format(key, ", ".join(str(item) for item in allowed)))
 
 
 USAGE = """{app} {ver} - MCP server for Autodesk 3ds Max (2020 and later)

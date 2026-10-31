@@ -8,6 +8,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Per-object batch results (`maxmcp/batch.py`).** `transform_object`,
+  `clone_objects` and `delete_objects` can now run one object at a time with a
+  real read-back (`find_objects` / `get_object_info`), and
+  `select_objects` / `mat_assign` / `mod_add` reconcile Max's own
+  `applied` / selection reply into one row per requested object.  A batch where
+  one object fails now answers `success:false` with an exact
+  `summary{total,succeeded,failed,skipped,verified}` instead of a single
+  localized "Done." message.  Enabled for the per-object path in the core
+  profile / `MAXMCP_RUNTIME_VERIFY`.
+- **Object identity guard.** Names are resolved against a real scene read before
+  anything executes; duplicate names answer `ambiguous_object` instead of
+  editing an arbitrary node, and an object that disappears between resolution
+  and execution answers `stale_object_reference`.  Numeric handles are refused
+  as references (`invalid_object_reference`) until they can be proven durable.
+- **Stable error taxonomy (`maxmcp/errors.py`, `docs/ERROR_CODES.md`).** The
+  MAXScript `err.*` kind that `MaxBridge._parse` used to discard now becomes a
+  documented code (`object_not_found`, `empty_selection`, `file_not_found`, ...).
+  Transport failures get `bridge_*` codes plus `retryable`, and a mid-request
+  socket close is reported as `bridge_disconnected` instead of "not running".
+- **Scene state snapshots (`maxmcp/scene_state.py`).** Node snapshots and
+  before/after diffs (`added`/`removed`/`modified`/`unknown`) with float and
+  euler-wrap tolerances; a field that was not read is reported as missing, never
+  as "unchanged".
+- **Offline acceptance suite.** `test/static/offline_acceptance_test.py` drives
+  the real `dispatch -> server -> MaxBridge -> socket` path against a scripted
+  TCP stub (timeout, invalid JSON, empty reply, MAXScript error, disconnect) and
+  checks MCP image blocks end to end.  Additional focused tests:
+  `batch_reliability_test.py`, `object_reference_test.py`, `scene_state_test.py`,
+  `error_protocol_test.py`, `core_tool_validation_test.py`.
+- **Image validation.** `_images` bytes are now checked (strict base64, PNG /
+  JPEG / WEBP header sniffing, declared MIME corrected from the payload, 8 MiB
+  per image and 12 MiB per response budgets) and `path` entries are confined to
+  the configured screenshot roots.  Images nested in a runtime envelope
+  (`data._images`) are no longer silently dropped.
+
+### Changed
+
+- Argument validation now enforces `enum`, `minimum` / `maximum` and
+  `minItems` / `maxItems` before sending anything to 3ds Max, so an out-of-range
+  value answers `invalid_arguments` instead of being clamped inside Max.
+- `scene_save` is marked mutating (it writes to disk and was advertised as
+  read-only).  `scene_save_as` requires `confirm:true` to overwrite an existing
+  `.max` file and now honours `keepPath` (Real-Max verification pending).
+- `from_wire` treats strings outside the latin-1 range as already decoded, so
+  localized MAXScript diagnostics are no longer turned into mojibake when a
+  result envelope mixes decoded text with raw bridge payloads.
+
 - **Seventh static gate: `test/offline_lint_helper.py`.** No gate owned the
   Python source outside the catalog's import graph (`scripts/` and `test/`
   are never imported by the server), so a syntax error, a stray encoding or

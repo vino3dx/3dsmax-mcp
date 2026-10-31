@@ -34,6 +34,10 @@ DEFAULTS: Dict[str, Any] = {
     "bilingual": True,
     "auto_launch_hint": True,
     "max_response_chars": 200000,
+    # Directories an ``_images`` entry may read a screenshot file from.  Empty
+    # means "temp dir + MCP home"; set it when a producer writes captures
+    # somewhere else.  Base64 payloads need no root.
+    "image_roots": [],
     "tool_profile": "full",
     # When enabled, mutating calls are wrapped with real scene_info snapshots.
     # Keep the default off for backwards-compatible wire payloads; clients can
@@ -61,6 +65,7 @@ class Config:
     bilingual: bool = True
     auto_launch_hint: bool = True
     max_response_chars: int = 200000
+    image_roots: List[str] = field(default_factory=list)
     tool_profile: str = "full"
     runtime_verify: bool = False
     disabled_categories: List[str] = field(default_factory=list)
@@ -110,6 +115,7 @@ class Config:
             "MAXMCP_BILINGUAL": ("bilingual", _as_bool),
             "MAXMCP_PROFILE": ("tool_profile", str),
             "MAXMCP_RUNTIME_VERIFY": ("runtime_verify", _as_bool),
+            "MAXMCP_IMAGE_ROOTS": ("image_roots", _as_roots),
             "MAXMCP_TRANSPORT": ("transport", str),
             "MAXMCP_HTTP_HOST": ("http_host", str),
             "MAXMCP_HTTP_PORT": ("http_port", int),
@@ -173,3 +179,9 @@ class Config:
 
 def _as_bool(value: str) -> bool:
     return str(value).strip().lower() in ("1", "true", "yes", "on", "y")
+
+
+def _as_roots(value: str) -> List[str]:
+    """Parse ``os.pathsep`` separated directories for ``image_roots``."""
+    parts = [part.strip() for part in str(value).split(os.pathsep)]
+    return [part for part in parts if part]

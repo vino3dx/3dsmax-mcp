@@ -13,6 +13,8 @@ from dataclasses import dataclass, field
 import itertools
 from typing import Any, Callable, Dict, List, Optional
 
+from . import errors
+
 
 BridgeCall = Callable[[str, Dict[str, Any]], Any]
 Verify = Callable[[Any, Any, Any], Any]
@@ -68,11 +70,12 @@ def build_batch_result(operation: str, items: List[Dict[str, Any]], *, changed: 
     for item in items:
         row = dict(item)
         row["success"] = row.get("success") is True
-        row["verified"] = row["verified"] is True if row["success"] else False
+        row["verified"] = bool(row.get("verified")) and row["success"]
         if not row["success"] and not row.get("error"):
-            row["error"] = {"kind": "item_failed", "message": "Batch item failed"}
+            row["error"] = errors.error("item_failed", "Batch item failed")
         normalized.append(row)
     succeeded = sum(1 for row in normalized if row["success"])
+    verified_rows = [row for row in normalized if row["verified"]]
     return {
         "success": bool(normalized) and succeeded == len(normalized),
         "operation": operation,
@@ -84,30 +87,66 @@ def build_batch_result(operation: str, items: List[Dict[str, Any]], *, changed: 
             "failed": len(normalized) - succeeded,
         },
         "warnings": [],
-        "failures": [] if succeeded == len(normalized) else [{
-            "kind": "partial_success" if succeeded else "batch_failed",
-            "message": "One or more batch items failed",
-        }],
-        "verification": {"performed": any(row["verified"] for row in normalized),
-                         "passed": bool(normalized) and all(row["verified"] for row in normalized),
-                         "detail": None},
+        "failures": [] if succeeded == len(normalized) else [errors.error(
+            "partial_success" if succeeded else "batch_failed",
+            "One or more batch items failed",
+        )],
+        # Not verified is not the same as verified-and-failed.
+        "verification": {
+            "performed": bool(verified_rows),
+            "passed": (all(row["success"] for row in verified_rows)
+                       if len(verified_rows) == len(normalized) and verified_rows else None),
+            "detail": None,
+        },
     }
 
 
 def resolve_object_refs(requested: List[Any], available: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """Resolve names conservatively; reject ambiguity and stale references."""
+    """Resolve names conservatively; reject ambiguity and stale references.
+
+    A scene may legitimately contain two nodes with the same name (Max allows
+    it), and a name may point at nothing after a delete/rename.  Neither case may
+    silently resolve to "the first match": the caller gets an explicit refusal so
+    it can re-read the scene and retry with a proven identity.
+    """
     result: List[Dict[str, Any]] = []
     for ref in requested:
-        name = ref.get("name") if isinstance(ref, dict) else ref
+        if isinstance(ref, dict):
+            name = ref.get("name")
+        else:
+            name = ref
+        if not isinstance(name, str) or not name.strip():
+            result.append({
+                "success": False,
+                "name": name,
+                "error": errors.error(
+                    "invalid_object_reference",
+                    "Object reference carries no usable name",
+                ),
+            })
+            continue
         matches = [obj for obj in available if isinstance(obj, dict) and obj.get("name") == name]
         if len(matches) > 1:
-            result.append({"success": False, "name": name,
-                           "error": {"kind": "ambiguous_object_reference"}})
+            result.append({"success": False, "name": name, "error": errors.error(
+                "ambiguous_object",
+                "{0} scene objects share this name".format(len(matches)),
+                candidates=len(matches),
+            )})
         elif not matches:
-            result.append({"success": False, "name": name,
-                           "error": {"kind": "stale_object_reference"}})
+            result.append({"success": False, "name": name, "error": errors.error(
+                "stale_object_reference",
+                "The reference no longer matches any scene object",
+            )})
         else:
-            result.append({"success": True, "name": name, "object": matches[0]})
+            node = matches[0]
+            result.append({
+                "success": True,
+                "name": name,
+                "object": node,
+                # Diagnostics only: a handle is not treated as a durable ID until
+                # a read-back has proved it still resolves.
+                "object_ref": {"name": name, "handle": node.get("handle")},
+            })
     return result
 
 
@@ -136,7 +175,7 @@ class OperationResult:
     result: Any = None
     before: Any = None
     after: Any = None
-    warnings: List[str] = field(default_factory=list)
+    warnings: List[Dict[str, Any]] = field(default_factory=list)
     failures: List[Dict[str, Any]] = field(default_factory=list)
     verification: Verification = field(default_factory=Verification)
     recovery: Optional[Dict[str, Any]] = None
@@ -182,16 +221,11 @@ class SceneRuntime:
 
     @staticmethod
     def _bridge_failure(exc: Exception, stage: str = "") -> Dict[str, Any]:
-        failure: Dict[str, Any] = {
-            "kind": getattr(exc, "kind", "bridge_error"),
-            "message": str(exc),
-        }
-        code = getattr(exc, "code", None)
-        if code:
-            failure["code"] = code
-        if stage:
-            failure["stage"] = stage
-        return failure
+        # One taxonomy for every layer: transport errors keep their bridge_*
+        # code, MAXScript errors keep the kind the handler declared
+        # (object_not_found, empty_selection, ...) instead of all collapsing
+        # into "command_error".
+        return errors.from_exception(exc, stage=stage)
 
     @staticmethod
     def _default_verify(operation: str, result: Any, before: Any, after: Any) -> Any:
@@ -263,7 +297,7 @@ class SceneRuntime:
                 success=False,
                 operation_id=operation_id,
                 before=before,
-                failures=[self._bridge_failure(exc)],
+                failures=[self._bridge_failure(exc, "execute")],
                 recovery=recovery,
             )
 
@@ -283,19 +317,28 @@ class SceneRuntime:
                 )
         verification = Verification()
         failures: List[Dict[str, Any]] = []
+        warnings: List[Dict[str, Any]] = []
+        if result is None and mutating:
+            # {"ok":true,"result":null} means the bridge accepted the command but
+            # returned no evidence at all.  That is not a failure, but it is also
+            # not something a caller may read as "verified".
+            warnings.append(errors.error(
+                "empty_result",
+                "Bridge returned an empty payload; the operation is unverified",
+            ))
         if isinstance(result, dict) and result.get("success") is False:
-            failures.append({
-                "kind": "operation_failed",
-                "message": result.get("message") or result.get("error") or "Bridge operation reported failure",
-                "detail": result,
-            })
+            failures.append(errors.error(
+                "operation_failed",
+                result.get("message") or result.get("error") or "Bridge operation reported failure",
+                detail=result,
+            ))
         elif isinstance(result, dict) and not isinstance(result.get("success"), bool) \
                 and not isinstance(result.get("ok"), bool):
-            failures.append({
-                "kind": "missing_success",
-                "message": "Bridge payload did not declare success=true/false",
-                "detail": result,
-            })
+            failures.append(errors.error(
+                "missing_success",
+                "Bridge payload did not declare success=true/false",
+                detail=result,
+            ))
         verifier = verify
         if verifier is None:
             default_detail = self._default_verify(operation, result, before, after)
@@ -312,15 +355,15 @@ class SceneRuntime:
             except Exception as exc:
                 verification.passed = False
                 verification.detail = str(exc)
-                failures.append({"kind": "verification_error", "message": str(exc)})
+                failures.append(errors.error("verification_error", str(exc)))
         if verification.passed is False and not any(
             item.get("kind") == "verification_failed" for item in failures
         ):
-            failures.append({
-                "kind": "verification_failed",
-                "message": "Scene read-back verification did not pass",
-                "detail": verification.detail,
-            })
+            failures.append(errors.error(
+                "verification_failed",
+                "Scene read-back verification did not pass",
+                detail=verification.detail,
+            ))
         success = not failures and verification.passed is not False
         recovery = None
         if not success and recover is not None:
@@ -338,6 +381,7 @@ class SceneRuntime:
             result=result,
             before=before,
             after=after,
+            warnings=warnings,
             failures=failures,
             verification=verification,
             recovery=recovery,

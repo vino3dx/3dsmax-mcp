@@ -79,7 +79,10 @@ def main():
     disconnected_text = disconnected["content"][0]["text"]
     disconnected_payload = json.loads(disconnected_text)
     assert disconnected_payload["success"] is False
-    assert disconnected_payload["failures"][0]["kind"] == "not_running"
+    # transport failures now carry a canonical code (bridge_not_running) instead
+    # of the raw BridgeError.kind ("not_running"); see docs/ERROR_CODES.md
+    assert disconnected_payload["failures"][0]["kind"] == "bridge_not_running"
+    assert disconnected_payload["failures"][0]["retryable"] is True
     print("runtime server integration: all checks passed")
 
 

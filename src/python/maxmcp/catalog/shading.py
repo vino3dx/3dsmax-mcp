@@ -21,8 +21,10 @@ TOOLS.append(tool(
     "(usedBy). Paginated. **Confirm the material name here before passing it to mat_get "
     "or mat_assign.**",
     props={
-        "limit": i("最多返回条数，默认 100。", "Maximum entries to return, default 100."),
-        "offset": i("起始偏移，默认 0。", "Starting offset, default 0."),
+        "limit": i("最多返回条数，默认 100。", "Maximum entries to return, default 100.",
+                   minimum=1, maximum=5000),
+        "offset": i("起始偏移，默认 0。", "Starting offset, default 0.",
+                    minimum=0),
     },
     mutating=False,
 ))
