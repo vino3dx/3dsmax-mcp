@@ -51,7 +51,9 @@ python scripts/verify.py                       # Static  —— 目录/注册/�
 | W25 | 无参数列出工作流 / `dry_run` 不碰场景 | Offline | `check_workflow_listing_and_dry_run` |
 | W26 | 自定义步骤 + 目标未达成 -> `partial` 且 `isError:true` | Offline | `check_custom_steps_and_goal_failure` |
 
-级别统计：`Static` 14 类、`Offline` 18 类（有多类同时有两种证据）、`Runtime` 0 类。
+级别统计：`Static` 16 类、`Offline` 15 类（其中 5 类两种证据都有，共 26 类），
+`Runtime` 0 类。对应 33 个测试函数：`workflow_engine_test.py` 17 个（Static）、
+`workflow_scene_test.py` 16 个（Offline）。
 
 ## 3. Runtime 待执行清单（本轮未做）
 

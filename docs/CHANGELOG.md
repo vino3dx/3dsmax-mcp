@@ -47,7 +47,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     decision to the caller.
   - Tests: `test/static/workflow_engine_test.py` (Static, 17 scenarios) and
     `test/static/workflow_scene_test.py` (Offline, real TCP stub + fake scene,
-    15 scenarios). Docs: `docs/AGENT_WORKFLOW_CAPABILITY.md`,
+    16 scenarios). Docs: `docs/AGENT_WORKFLOW_CAPABILITY.md`,
     `docs/WORKFLOW_EXECUTION_MODEL.md`, `docs/SCENE_SNAPSHOT_DIFF.md`,
     `docs/WORKFLOW_ACCEPTANCE.md`.
 
