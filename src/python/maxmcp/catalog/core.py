@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import List
 
-from .schema import Tool, arr, b, i, n, s, tool
+from .schema import Tool, arr, b, i, n, obj_schema, s, tool
 
 TOOLS: List[Tool] = []
 
@@ -354,6 +354,97 @@ TOOLS.append(tool(
         "quiet": b("是否静默合并，默认是。", "Merge quietly, default true."),
     },
     required=["path"],
+))
+
+
+# ------------------------------------------------------- scene state snapshot
+TOOLS.append(tool(
+    "scene_snapshot", "scene",
+    "读取当前场景并返回一份可比较的快照：每个对象的名称、类、变换、材质与修改器，"
+    "外加当前选择集。传入上一次返回的 snapshot_id 可得到两份快照的差异"
+    "（新增 / 删除 / 修改 / 重命名 / 未变 / 读不到）。"
+    "**只读，不修改场景。** 与 list_objects 的区别：这里的数据经过归一化，"
+    "缺失字段会明确标为读不到（而不是当作没有该属性），浮点比较带容差，"
+    "重命名不会被误判成删除加新增。适合在操作前后各拍一次，用 diff 判断是否真的改动。",
+    "Read the scene and return a comparable snapshot: every object's name, class, "
+    "transform, material and modifiers, plus the current selection. Pass the "
+    "snapshot_id of an earlier snapshot as `baseline` to also get a diff "
+    "(added / removed / modified / renamed / unchanged / unreadable). "
+    "**Read-only, never changes the scene.** Unlike list_objects the data is "
+    "normalised: an unread field is reported as missing instead of being treated as "
+    "absent, floats compare with a tolerance, and a rename is not mistaken for a "
+    "delete plus a create. Take one before and one after an operation to prove what "
+    "actually changed.",
+    props={
+        "baseline": s("要对比的历史快照 id（形如 snap-0001）；省略则只返回当前快照。",
+                      "Earlier snapshot id (e.g. snap-0001) to diff against; omit to "
+                      "return the current snapshot only.",
+                      examples=["snap-0001"]),
+        "tolerance": n("浮点比较容差，默认 0.0001；位置/旋转/缩放的微小误差在此范围内视为未变。",
+                       "Float comparison tolerance, default 0.0001; transform differences "
+                       "smaller than this count as unchanged.", minimum=0, maximum=1000),
+        "limit": i("最多采集的对象数量，默认 5000；达到上限会标记 truncated。",
+                   "Maximum number of objects to collect, default 5000; hitting the cap "
+                   "marks the snapshot truncated.", minimum=1, maximum=5000),
+        "namePattern": s("只快照名称匹配该通配符的对象（例如 Wall*）；省略表示全部对象。",
+                         "Only snapshot objects whose name matches this wildcard pattern "
+                         "(e.g. Wall*); omit for every object.",
+                         examples=["Wall*"]),
+    },
+    mutating=False,
+    local=True,
+))
+
+
+# ------------------------------------------------------------------ workflows
+TOOLS.append(tool(
+    "workflow_run", "system",
+    "按顺序执行一组 MCP 工具调用，并逐步给出执行结果与场景校验结果。"
+    "两种用法：`workflow` 选择一个内置工作流（basic_scene / model_processing / "
+    "material_look）；或用 `steps` 传入自定义步骤数组。"
+    "每一步可以声明 verification（用场景回读判断目标是否达成，而不是只看工具是否返回成功），"
+    "depends_on（前一步没成功就跳过），on_failure（abort/continue）与 optional。"
+    "**会修改场景**（只要步骤里有修改类工具）。返回完整记录：每步状态、失败原因、"
+    "是否需要重试、以及整个工作流前后场景差异（diff）。"
+    "失败不会自动重试修改类操作；需要时按返回的 recovery 信息重新读取场景后再决定。"
+    "不传参数则列出可用的内置工作流。",
+    "Run a sequence of MCP tool calls in order, reporting per-step execution **and** "
+    "scene verification. Two modes: `workflow` picks a built-in one (basic_scene / "
+    "model_processing / material_look), or `steps` supplies explicit steps. A step may "
+    "declare `verification` (check the goal against scene read-back instead of trusting "
+    "the tool's success flag), `depends_on` (skip when a predecessor did not succeed), "
+    "`on_failure` (abort/continue) and `optional`. "
+    "**This modifies the scene** when the steps contain mutating tools. It returns the "
+    "full record: per-step status, why a step failed, whether a retry is warranted, and "
+    "the scene diff for the whole run. Mutating operations are never retried "
+    "automatically; use the returned `recovery` data to re-read the scene first. "
+    "Calling it with no arguments lists the built-in workflows.",
+    props={
+        "workflow": s("内置工作流名称。", "Name of a built-in workflow.",
+                      enum=["basic_scene", "model_processing", "material_look"]),
+        "steps": arr("自定义步骤数组，每项形如 "
+                     "{\"id\":\"s1\",\"operation\":\"create_box\",\"arguments\":{...},"
+                     "\"verification\":{\"kind\":\"exists\",\"objects\":[\"Box001\"]}}。",
+                     "Custom steps; each item looks like "
+                     "{\"id\":\"s1\",\"operation\":\"create_box\",\"arguments\":{...},"
+                     "\"verification\":{\"kind\":\"exists\",\"objects\":[\"Box001\"]}}.",
+                     items="object"),
+        "expect": obj_schema(
+            desc_zh="对整个工作流的目标断言，例如 "
+                    "{\"added_includes\":[\"Wall\"],\"count_delta\":4}；"
+                    "会在执行后用真实场景差异核对。",
+            desc_en="Goal-level assertions checked against the real diff, e.g. "
+                    "{\"added_includes\":[\"Wall\"],\"count_delta\":4}."),
+        "dry_run": b("只校验步骤定义并列出计划，不执行任何工具，默认否。",
+                     "Validate the steps and list the plan without executing anything, "
+                     "default false."),
+        "capture": b("是否在工作流前后各拍一次场景快照用于 diff，默认是。",
+                     "Take a scene snapshot before and after the run for the diff, default true."),
+        "tolerance": n("diff 的浮点容差，默认 0.0001。",
+                       "Float tolerance for the diff, default 0.0001.", minimum=0, maximum=1000),
+    },
+    mutating=True,
+    local=True,
 ))
 
 

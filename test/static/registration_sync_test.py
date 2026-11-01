@@ -73,8 +73,13 @@ def main() -> int:
     repo_cmds = registered_commands(MS_DIR)
 
     # 1. python -> maxscript
+    # Tools flagged local=true are composed in Python from other tools and have
+    # no MAXScript command of their own; catalog_contract_test A6 proves their
+    # handler exists, so they are excluded here instead of being faked.
     missing = []
     for entry in catalog:
+        if entry.local:
+            continue
         method = entry.bridge_method
         if method not in repo_cmds:
             missing.append((entry.name, method))
@@ -83,7 +88,7 @@ def main() -> int:
                         % ", ".join("%s->%s" % m for m in missing[:20]))
 
     # 2. maxscript -> python
-    orphans = sorted(repo_cmds - {e.bridge_method for e in catalog})
+    orphans = sorted(repo_cmds - {e.bridge_method for e in catalog if not e.local})
     if orphans:
         problems.append("MAXScript commands with no Python tool: %s" % ", ".join(orphans[:20]))
 

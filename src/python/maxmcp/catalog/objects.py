@@ -275,9 +275,13 @@ TOOLS.append(tool(
 TOOLS.append(tool(
     "transform_object", "objects",
     "对对象做 移动/旋转/缩放，支持绝对或相对、世界或局部、欧拉角(度)或轴角。objects 省略则作用于当前选择。"
-    "**缩放父级会连带扭曲子级，先 reset_transform 再缩放。**",
+    "**缩放父级会连带扭曲子级，先 reset_transform 再缩放。**"
+    "**value 的长度单位是场景单位（用 get_units 确认），角度单位是度。省略 objects 会用当前选择，"
+    "而选择集可能还是上一次操作留下的对象——要动的对象请显式列出来。**",
     "Move/rotate/scale objects, absolute or relative, world or local, euler(degrees) or axis-angle. "
-    "Omit objects to act on the selection. **Scaling a parent skews children; reset_transform first.**",
+    "Omit objects to act on the selection. **Scaling a parent skews children; reset_transform first.** "
+    "**Lengths in value are scene units (check get_units); angles are degrees. Omitting objects uses the "
+    "current selection, which may still hold objects from an earlier call - name the objects you mean.**",
     props={
         "objects": arr("对象名称列表；省略则用当前选择。", "Object names; omit for the selection."),
         "operation": s("操作类型。", "Operation.", enum=["move", "rotate", "scale"], default="move"),
@@ -473,8 +477,13 @@ TOOLS.append(tool(
 
 TOOLS.append(tool(
     "find_objects", "objects",
-    "按名称精确或模糊查找对象，返回命中列表与 count。只读。exact=true 时只匹配完全相同名称。",
-    "Find objects by exact or fuzzy name; returns hits and a count. Read-only. exact=true matches only identical names.",
+    "按名称精确或模糊查找对象，返回命中列表与 count。只读。exact=true 时只匹配完全相同名称。"
+    "**默认是模糊包含匹配：name=Box 会同时命中 Box001 和 Box002。名称在 Max 里不唯一，"
+    "所以改对象之前先看 count 与每条命中；count==1 才能把名称当身份用，count>1 视为重名。**",
+    "Find objects by exact or fuzzy name; returns hits and a count. Read-only. exact=true matches only identical names. "
+    "**The default is fuzzy contains, so name=Box also hits Box001 and Box002. Names are not unique in Max: "
+    "check count and the hit list before editing. Only count==1 makes a name usable as an identity; "
+    "count>1 means a duplicate name.**",
     props={
         "name": s("要查找的名称或关键字。", "Name or keyword to find."),
         "pattern": s("通配符形式，例如 *prop*（与 name 二选一）。", "Wildcard form, e.g. *prop* (alternative to name)."),
@@ -503,8 +512,12 @@ TOOLS.append(tool(
 
 TOOLS.append(tool(
     "select_objects", "objects",
-    "选择对象。mode=replace 替换、add 追加、subtract 移除、invert 反选。",
-    "Select objects. mode=replace/add/subtract/invert.",
+    "选择对象。mode=replace 替换、add 追加、subtract 移除、invert 反选。"
+    "**选择集不是可靠的状态存储：它会被后续任何选择类操作改写，重新打开场景也会丢。"
+    "批量工具请显式传 objects，不要靠“我上一步选过了”。**",
+    "Select objects. mode=replace/add/subtract/invert. "
+    "**The selection is not durable state: any later select-type call rewrites it, and it is lost with the "
+    "scene. Pass objects explicitly to batch tools instead of relying on an earlier selection.**",
     props={
         "objects": arr("对象名称列表。", "Object name list."),
         "mode": s("replace/add/subtract/invert。", "replace/add/subtract/invert.",
@@ -596,8 +609,12 @@ TOOLS.append(tool(
 
 TOOLS.append(tool(
     "clone_objects", "objects",
-    "克隆对象：copy 独立副本、instance 关联实例、reference 参考。count>1 时按 offset 间隔摆放。",
-    "Clone objects: copy (independent), instance (linked), reference. count>1 spaces them by offset.",
+    "克隆对象：copy 独立副本、instance 关联实例、reference 参考。count>1 时按 offset 间隔摆放。"
+    "**克隆不幂等：同一条命令再跑一次就会多出一份副本。失败或超时后先用 find_objects 读场景，"
+    "确认副本到底有没有生成，再决定要不要重来。**",
+    "Clone objects: copy (independent), instance (linked), reference. count>1 spaces them by offset. "
+    "**Cloning is not idempotent: running the same call again leaves a second set of copies. After a failure "
+    "or a timeout, read the scene with find_objects to see whether the copies exist before repeating it.**",
     props={
         "objects": arr("对象名称列表；省略则用当前选择。", "Object names; omit for the selection."),
         "cloneType": s("copy/instance/reference。", "copy/instance/reference.",

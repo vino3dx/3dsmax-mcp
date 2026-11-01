@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import itertools
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from . import errors
 
@@ -21,21 +21,57 @@ Verify = Callable[[Any, Any, Any], Any]
 Recover = Callable[[str], Any]
 _OPERATION_IDS = itertools.count(1)
 
+#: Keys a MAXScript handler uses to enumerate what it actually did.  When one of
+#: them is a list, the handler has declared an outcome even without a
+#: ``success`` flag - ``{applied: [...], failures: []}`` is the dominant shape in
+#: ``src/ms`` (``mcp_poly.ms``, ``mcp_modifiers.ms``, ``mcp_shading.ms``).
+_OUTCOME_KEYS = ("applied", "deleted", "created", "objects")
+
+
+def declared_outcome(source: Dict[str, Any]) -> Optional[Tuple[bool, str]]:
+    """Read the outcome a MAXScript handler declared, in the shape it used.
+
+    Returns ``(success, source)`` or ``None`` when the payload says nothing about
+    its own outcome.
+
+    Why this exists: the runtime used to accept only ``success``/``ok``, so in
+    reliability mode (``--profile core``) every tool whose handler answers
+    ``{applied, failures, message}`` was reported as ``missing_success`` - the
+    operation ran and worked, but the envelope claimed failure.  Reading the
+    handler's own enumeration keeps the strict rule ("no evidence is not
+    success") *and* stops it from mislabelling the whole poly/modifier/material
+    surface.
+
+    It does not invent success: a non-empty ``failures`` list is a failure, and
+    an enumeration that is present but empty (with no ``failures`` key) means the
+    handler reported doing nothing - which is not a success claim either.
+    """
+    if isinstance(source.get("success"), bool):
+        return bool(source["success"]), "success"
+    if isinstance(source.get("ok"), bool):
+        return bool(source["ok"]), "ok"
+    failures = source.get("failures")
+    if isinstance(failures, list):
+        return (not failures), "failures"
+    for key in _OUTCOME_KEYS:
+        value = source.get(key)
+        if isinstance(value, list):
+            return bool(value), key
+    return None
+
 
 def normalize_payload(raw: Any, operation: str, *, changed: bool = False,
                       operation_id: str = "") -> Dict[str, Any]:
     """Adapt a legacy bridge payload without turning missing success into success."""
     source = dict(raw) if isinstance(raw, dict) else {"value": raw}
-    explicit_success = source.get("success")
-    if isinstance(explicit_success, bool):
-        success = explicit_success
-    elif isinstance(source.get("ok"), bool):
-        success = bool(source["ok"])
+    declared = declared_outcome(source)
+    if declared is not None:
+        success = declared[0]
     else:
         success = False
 
     failures = list(source.get("failures") or [])
-    if not isinstance(explicit_success, bool) and not isinstance(source.get("ok"), bool):
+    if declared is None:
         failures.append({
             "kind": "missing_success",
             "message": "Bridge payload did not declare success=true/false",
@@ -326,14 +362,20 @@ class SceneRuntime:
                 "empty_result",
                 "Bridge returned an empty payload; the operation is unverified",
             ))
-        if isinstance(result, dict) and result.get("success") is False:
-            failures.append(errors.error(
-                "operation_failed",
-                result.get("message") or result.get("error") or "Bridge operation reported failure",
-                detail=result,
-            ))
-        elif isinstance(result, dict) and not isinstance(result.get("success"), bool) \
-                and not isinstance(result.get("ok"), bool):
+        declared = declared_outcome(result) if isinstance(result, dict) else None
+        if declared is not None:
+            ok, source_key = declared
+            if not ok:
+                detail = {"outcome_source": source_key}
+                if isinstance(result.get("failures"), list):
+                    detail["reported"] = result["failures"][:10]
+                failures.append(errors.error(
+                    "operation_failed",
+                    result.get("message") or result.get("error")
+                    or "Bridge operation reported failure",
+                    detail=detail,
+                ))
+        elif isinstance(result, dict):
             failures.append(errors.error(
                 "missing_success",
                 "Bridge payload did not declare success=true/false",

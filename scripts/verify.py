@@ -355,9 +355,13 @@ def main() -> int:
     missing = sorted(names - set(registered))
     orphans = sorted(set(registered) - names)
     if missing:
-        # A catalog tool may intentionally map to another bridge command.
+        # A catalog tool may intentionally map to another bridge command, and a
+        # local tool is implemented in Python over other tools and has no bridge
+        # command at all (catalog_contract_test's A6 checks that direction).
         bridged = {e.name: e.bridge_method for e in tools}
-        real_missing = [m for m in missing if bridged.get(m, m) not in registered]
+        local = {e.name for e in tools if e.local}
+        real_missing = [m for m in missing
+                        if m not in local and bridged.get(m, m) not in registered]
         if real_missing:
             failures.append(
                 "{0} catalog tool(s) with no MAXScript handler: {1}".format(

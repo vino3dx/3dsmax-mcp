@@ -25,6 +25,8 @@ class Tool:
     mutating: bool = True
     #: optional preset merged into the arguments before the call
     preset: Dict[str, Any] = field(default_factory=dict)
+    #: handled entirely in Python (composes other tools); no MAXScript command
+    local: bool = False
 
     @property
     def bridge_method(self) -> str:
@@ -94,6 +96,7 @@ def tool(
     bridge: Optional[str] = None,
     mutating: bool = True,
     preset: Optional[Dict[str, Any]] = None,
+    local: bool = False,
 ) -> Tool:
     properties = props or {}
     schema: Dict[str, Any] = {"type": "object", "properties": properties}
@@ -109,6 +112,7 @@ def tool(
         bridge=bridge,
         mutating=mutating,
         preset=preset or {},
+        local=local,
     )
 
 
@@ -124,6 +128,7 @@ CORE_TOOLS = frozenset({
     "bridge_status", "bridge_ping", "bridge_capabilities", "bridge_selftest",
     "get_max_version", "execute_maxscript",
     "scene_info", "scene_new", "scene_save", "scene_save_as", "scene_open",
+    "scene_snapshot", "workflow_run",
     "create_box", "create_sphere", "create_cylinder", "create_cone",
     "create_torus", "create_teapot", "create_plane", "create_tube",
     "create_pyramid", "create_geosphere", "create_line", "create_rectangle",

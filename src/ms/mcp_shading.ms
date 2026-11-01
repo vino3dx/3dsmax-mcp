@@ -119,6 +119,11 @@ fn mcpAssignCreatedMat m params =
     )
   ) catch()
   local p = #()
+  -- Declare the outcome: by this point the material object exists, so this is a
+  -- real success rather than an assumption.  Without it the reliability mode
+  -- (--profile core) reported every mat_create_* call as missing_success,
+  -- because the Python runtime only accepted an explicit success/ok flag.
+  mcpPair p "success" (m != undefined)
   mcpPair p "class" (try ((classof m) as string) catch (""))
   mcpPair p "name" (try (m.name) catch (""))
   local assigned = #()

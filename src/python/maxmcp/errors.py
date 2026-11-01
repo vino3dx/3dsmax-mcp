@@ -167,6 +167,34 @@ ERROR_SPECS: Dict[str, ErrorSpec] = {
     "not_attempted": _spec(
         "not_attempted", "runtime",
         "The item was queued but never attempted."),
+    # ---- workflow orchestration --------------------------------------------
+    "workflow_invalid": _spec(
+        "workflow_invalid", "workflow",
+        "The workflow definition is malformed (unknown operation, missing step id, "
+        "duplicate id, or a broken dependency)."),
+    "workflow_unknown": _spec(
+        "workflow_unknown", "workflow",
+        "No built-in workflow has that name; list the available ones and retry."),
+    "workflow_nested": _spec(
+        "workflow_nested", "workflow",
+        "A workflow may not call workflow_run: nesting orchestration would multiply "
+        "partial results with no way to attribute them."),
+    "workflow_interrupted": _spec(
+        "workflow_interrupted", "workflow",
+        "A transport failure stopped the workflow; the remaining steps were not attempted."),
+    "dependency_failed": _spec(
+        "dependency_failed", "workflow",
+        "A step was skipped because a step it depends on did not succeed."),
+    "retry_blocked": _spec(
+        "retry_blocked", "workflow",
+        "The failed step was not retried automatically because the operation is not "
+        "idempotent (clone/delete/relative transform/create...)."),
+    "snapshot_unavailable": _spec(
+        "snapshot_unavailable", "workflow",
+        "The scene could not be read for a snapshot, so before/after cannot be compared."),
+    "snapshot_truncated": _spec(
+        "snapshot_truncated", "workflow",
+        "The snapshot stopped at the node cap, so the diff covers only part of the scene."),
     # ---- media / visual feedback -------------------------------------------
     "image_unavailable": _spec(
         "image_unavailable", "media",

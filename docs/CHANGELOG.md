@@ -8,6 +8,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Agent scene workflows — `workflow_run` + `scene_snapshot` (Stage 3).** The
+  capability gap was never "more tools": it was that a 15-step scene build had no
+  way to say *what was supposed to happen*, *what actually happened*, or *what is
+  safe to do next*. Two Python-side tools (`local=true`, no new MAXScript
+  commands, 384 -> 386 tools) close it:
+  - **`workflow_run`** executes an ordered list of tool calls (`workflow` for a
+    built-in one, or explicit `steps`). Every step may declare `verification`
+    (read-back only), `depends_on`, `on_failure` (abort/continue), `optional` and
+    `retry` (never/transport). The reply carries a per-step record — `execution`
+    (`execution_success` / `execution_failed` / `execution_skipped` /
+    `execution_interrupted`), `verification`
+    (`verification_passed` / `verification_failed` / `verification_unavailable`),
+    `status` (`success` / `verification_failed` / `failed` / `skipped` /
+    `interrupted`), retry log, `retry_blocked`, `recovery` — plus the whole-run
+    `status` (`success` / `partial` / `failed` / `interrupted`), the before/after
+    `diff` and an `expectation` block. `partial` keeps `success:false`; it is not
+    reported as a tool error unless a verification contradicted the scene or a
+    declared goal failed.
+  - **`scene_snapshot`** documents one real scene read (`nodes`, `selection`,
+    `complete`/`truncated`/`partial_nodes`/`missing_fields`/`handles_unique`) and
+    diffs it against a cached baseline (`added` / `removed` / `modified` /
+    `renamed` / `identity_uncertain` / `unknown` / `selection`).
+  - Built-in workflows: `basic_scene` (10 steps), `model_processing` (10),
+    `material_look` (7) — `success` with every step verified on the stub bridge.
+  - **Operation verification (`maxmcp/verify.py`).** 12 read-back verifiers
+    (`read_ok`, `exists`, `absent`, `count`, `transform`, `material`, `modifier`,
+    `class`, `face_count`, `selection`, `payload_number`, `image`). Execution
+    success and goal attainment are separate claims: `verification_unavailable`
+    is never folded into `passed`, and an unknown verification kind is refused
+    instead of silently ignored.
+  - **No automatic retry for anything that is not idempotent.** Only a transport
+    failure on a read-only/idempotent step may be replayed once
+    (`IDEMPOTENT_MUTATIONS`); clone/delete/create/relative transforms answer
+    `retry_blocked: non_idempotent_operation`, `execute_maxscript` /
+    `execute_python` are never retried under any declaration. Every failed step
+    re-reads the scene (`recovery.automatic_retry: false`) and leaves the retry
+    decision to the caller.
+  - Tests: `test/static/workflow_engine_test.py` (Static, 17 scenarios) and
+    `test/static/workflow_scene_test.py` (Offline, real TCP stub + fake scene,
+    15 scenarios). Docs: `docs/AGENT_WORKFLOW_CAPABILITY.md`,
+    `docs/WORKFLOW_EXECUTION_MODEL.md`, `docs/SCENE_SNAPSHOT_DIFF.md`,
+    `docs/WORKFLOW_ACCEPTANCE.md`.
+
 - **Per-object batch results (`maxmcp/batch.py`).** `transform_object`,
   `clone_objects` and `delete_objects` can now run one object at a time with a
   real read-back (`find_objects` / `get_object_info`), and
@@ -128,6 +171,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `mod_collapse` stays the main entry; its behaviour is unchanged.
 
 ### Fixed
+
+- **Reliability mode reported successful tool calls as `missing_success`
+  (found during Stage 3, pre-existing).** `runtime.normalize_payload` only
+  accepted a reply as conclusive when it carried `success` or `ok`, so every
+  tool that answers with `{applied, failures}` (`poly_*`, `mod_*`, `mat_assign`)
+  or `{class, name, assignedTo}` (`mat_create_*`) was wrapped as a failure under
+  the core profile / `MAXMCP_RUNTIME_VERIFY` even though Max had done the work.
+  The check now also accepts a declared outcome (`applied` / `deleted` /
+  `created` / `objects`), and `mcpAssignCreatedMat` reports its own `success`.
+  A payload that declares nothing still answers `missing_success`. This blocked
+  every modelling / material step of a workflow, which is why it was fixed here
+  rather than deferred.
 
 - **Crash timeline wording in docs (D8 follow-up).** "18 crashes since
   2026-10-15" corrected to "18 within the event-log window (first

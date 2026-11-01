@@ -35,7 +35,7 @@ An MCP (Model Context Protocol) plugin that gives AI agents full control of Auto
 
 | 部分 | 运行位置 | 职责 |
 | --- | --- | --- |
-| **MCP 服务端** | 独立 Python 进程（stdlib-only） | 对 AI 客户端讲 MCP/JSON-RPC，对外暴露 **384 个工具** |
+| **MCP 服务端** | 独立 Python 进程（stdlib-only） | 对 AI 客户端讲 MCP/JSON-RPC，对外暴露 **386 个工具** |
 | **MAXScript 桥接** | 3ds Max 进程内（主线程） | 监听本地 TCP，执行真实场景操作 |
 
 AI 客户端（Cursor / Claude Desktop / 任意 MCP 客户端）→ MCP 服务端 → 本地 TCP → 3ds Max 桥接 → 场景。
@@ -67,7 +67,7 @@ AI 客户端（Cursor / Claude Desktop / 任意 MCP 客户端）→ MCP 服务�
 ```
 ┌────────────────────┐   MCP / JSON-RPC 2.0    ┌──────────────────────────┐
 │  AI client         │  ◀── stdio / HTTP ────▶ │  maxmcp (Python)         │
-│  Cursor / Claude   │                         │  · catalog: 384 tools    │
+│  Cursor / Claude   │                         │  · catalog: 386 tools    │
 │  WorkBuddy / Cline │                         │  · i18n: zh / en / auto  │
 │  国产 AI 客户端     │                         │  · wire codec (ANSI)     │
 └────────────────────┘                         └────────────┬─────────────┘
@@ -180,7 +180,7 @@ python scripts/doctor.py
 -- environment
   [ok]   Python 3.13.14 at ...\python.exe
   [ok]   MCP server package (installed)
-         384 tools (animation=59, files=8, modeling=83, objects=61, pipeline=54, scene=17, shading=69, system=33)
+         386 tools (animation=59, files=8, modeling=83, objects=61, pipeline=54, scene=18, shading=69, system=34)
 -- 3ds Max side
   [ok]   3ds Max 2020 [CHS]: 19 bridge modules + autoloader
   [ok]   3ds Max 2020 [ENU]: 19 bridge modules + autoloader
@@ -224,7 +224,7 @@ Max 未运行时对应的一行是 `[warn] No bridge listening on 8765, 8766, ..
 }
 ```
 
-重启 Cursor，在 **Settings → MCP** 里应看到 `3dsmax-mcp` 已连接、384 个工具。
+重启 Cursor，在 **Settings → MCP** 里应看到 `3dsmax-mcp` 已连接、386 个工具。
 
 ### Claude Desktop
 
@@ -252,12 +252,12 @@ stdio 上的 JSON-RPC 服务端，`initialize` → `tools/list` → `tools/call`
 
 ## 工具一览
 
-共 **384 个工具**，分 8 类：
+共 **386 个工具**，分 8 类：
 
 | 分类 | 数量 | 覆盖内容 |
 | --- | ---: | --- |
-| `system` | 33 | 桥接控制、握手、脚本逃逸仓、undo/redo 事务、单位与时间配置、内省 |
-| `scene` | 17 | 场景新建/打开/保存/合并、图层、资源与丢失贴图重链 |
+| `system` | 34 | 桥接控制、握手、脚本逃逸仓、undo/redo 事务、单位与时间配置、内省 |
+| `scene` | 18 | 场景新建/打开/保存/合并、图层、资源与丢失贴图重链 |
 | `files` | 8 | 文本读写、目录列举、复制/删除、文件信息 |
 | `objects` | 61 | 基础体与样条、变换/对齐/镜像/轴心、层级与父子、组、选择、隐藏冻结、克隆阵列、布尔/ProBoolean |
 | `modeling` | 83 | 可编辑多边形（点/边/面全套操作）、修改器栈管理与 30+ 常用修改器、放样/扫掠/路径变形 |
@@ -278,21 +278,63 @@ python -m maxmcp --list-tools
 - **`undo_last` / `begin_undo` / `end_undo` / `cancel_undo`** —— 显式事务，方便让 AI 把"一整套建模操作"合成**一步**撤销。
 - **`bridge_capabilities`** —— 运行时报告桥接模块、命令数、当前语言、Max 版本，AI 可以自己发现能力边界。
 - **`find_missing_assets` / `relink_assets`** —— 换机器打开工程时的贴图重链。
+- **`workflow_run`** —— 把一串工具调用变成一条**可验证**的执行记录：每步都声明
+  "做到什么算成功"（`verification`），跑完给出逐步状态、场景前后差异（`diff`）和目标是否达成
+  （`expectation`）。内置 `basic_scene` / `model_processing` / `material_look` 三条标准工作流，
+  也可以自己传 `steps`。**修改类操作失败后绝不自动重试**，只回一份"重新读过场景"的 `recovery`。
+- **`scene_snapshot`** —— 拍一份场景快照并可对任意历史快照做 diff（新增/删除/变换/材质/
+  修改器/选择集）。重命名不会被误报成"删了一个又建了一个"，证不出来的身份进 `identity_uncertain`。
+  见 [`docs/SCENE_SNAPSHOT_DIFF.md`](docs/SCENE_SNAPSHOT_DIFF.md)。
+
+---
+
+## 场景工作流
+
+Agent 做场景从来不是"一次调用"，而是十几步：读场景 → 确认对象身份 → 建几何 →
+摆位置 → 转多边形 → 挤面 → 加修改器 → 上材质 → 截图确认 → 存盘。
+`workflow_run` 把这条链路变成**可观察、可验证、可恢复**的一次执行：
+
+```jsonc
+// 跑内置工作流
+{ "name": "workflow_run", "arguments": { "workflow": "basic_scene" } }
+
+// 或者自己描述一套步骤
+{ "name": "workflow_run", "arguments": {
+    "steps": [
+      { "id": "mk", "operation": "create_box", "arguments": { "name": "Cube" },
+        "verification": { "kind": "exists", "objects": ["Cube"] } },
+      { "id": "mv", "operation": "transform_object",
+        "arguments": { "objects": ["Cube"], "operation": "move",
+                       "mode": "absolute", "value": [0, 0, 25] },
+        "verification": { "kind": "transform", "object": "Cube", "position": [0, 0, 25] },
+        "depends_on": ["mk"] }
+    ],
+    "expect": { "added_includes": ["Cube"], "count_delta": 1 } } }
+```
+
+返回里每步都区分三件事：**执行成功**（`execution`）、**验证结果**
+（`verification_passed` / `verification_failed` / `verification_unavailable`）、
+**最终状态**（`success` / `verification_failed` / `failed` / `skipped` / `interrupted`）。
+整体状态是 `success` / `partial` / `failed` / `interrupted` —— **部分成功永远不写成成功**。
+
+详见 [`docs/WORKFLOW_EXECUTION_MODEL.md`](docs/WORKFLOW_EXECUTION_MODEL.md)、
+[`docs/WORKFLOW_ACCEPTANCE.md`](docs/WORKFLOW_ACCEPTANCE.md)、
+[`docs/AGENT_WORKFLOW_CAPABILITY.md`](docs/AGENT_WORKFLOW_CAPABILITY.md)。
 
 ---
 
 ## 工具档位
 
-384 个工具全塞进上下文会明显占额度。用 `--profile` 按需裁剪：
+386 个工具全塞进上下文会明显占额度。用 `--profile` 按需裁剪：
 
 | 档位 | 工具数 | 包含分类 |
 | --- | ---: | --- |
-| `core` | 56 | field-tested modeling loop and session essentials |
-| `modeling` | 202 | core + modeling |
-| `lookdev` | 188 | core + shading |
-| `animation` | 178 | core + animation |
-| `pipeline` | 173 | core + pipeline |
-| `full` | **384** | 全部（默认） |
+| `core` | 58 | field-tested modeling loop and session essentials |
+| `modeling` | 204 | core + modeling |
+| `lookdev` | 190 | core + shading |
+| `animation` | 180 | core + animation |
+| `pipeline` | 175 | core + pipeline |
+| `full` | **386** | 全部（默认） |
 
 ```bash
 python -m maxmcp --profile modeling
@@ -563,7 +605,7 @@ mcpSelfTest()
 │   │   ├── wire.py            #   ANSI 线编解码（中文往返的关键）
 │   │   ├── i18n.py            #   双语消息层 + Max 语言码映射
 │   │   ├── config.py          #   配置加载
-│   │   └── catalog/           #   384 个工具定义
+│   │   └── catalog/           #   386 个工具定义
 │   │       ├── schema.py      #     Tool 类 + 档位 + DSL
 │   │       ├── core.py        #     system / scene / files
 │   │       ├── objects.py     #     objects
@@ -615,7 +657,7 @@ mcpSelfTest()
 │   └── logs/                  # 证据与日志，按日期归档（gitignored）
 ├── docs/
 │   ├── BRIDGE_CONVENTIONS.md  # 桥接契约与编码规范
-│   ├── LIVE_MATRIX.md         # 384 工具 × 实机状态矩阵（生成物）
+│   ├── LIVE_MATRIX.md         # 386 工具 × 实机状态矩阵（生成物）
 │   ├── OFFLINE_LINT_GUIDE.md  # 离线门禁使用指南
 │   ├── P0_ENV.md              # Max 启动崩溃调查环境记录
 │   ├── TOOL_PROFILES_PROPOSAL.md

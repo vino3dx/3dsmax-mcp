@@ -10,10 +10,19 @@ corresponds to a real MAXScript handler (``find_objects``, ``get_object_info``,
 ``transform_object``, ``delete_objects``, ``clone_objects``, ``select_objects``,
 ``mat_assign``, ``mod_add``), and it mutates its own state so read-back
 verification is exercised for real - only Max itself is missing.
+
+Stage 3 added the handlers the workflow layer needs (``list_objects``, the
+``create_*`` primitives, ``convert_to_editable_poly``, ``poly_*``,
+``mat_create_standard`` / ``mat_list`` / ``mat_get_for_object``,
+``rename_object`` and ``vision_capture``).  They follow the same rule: the
+signature and the reply shape follow the MAXScript handler, and the state change
+is real inside this object, so a workflow can be executed and verified offline
+without ever claiming a 3ds Max result.
 """
 
 from __future__ import annotations
 
+import base64
 import copy
 from pathlib import Path
 import sys
@@ -23,6 +32,34 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "src" / "python"))
 
 from maxmcp.bridge import BridgeCommandError, BridgeNotRunning, BridgeTimeout  # noqa: E402
+
+#: ``create_*`` catalog entries -> the class the MAXScript handler instantiates.
+PRIMITIVE_CLASSES: Dict[str, str] = {
+    "create_box": "Box",
+    "create_plane": "Plane",
+    "create_sphere": "Sphere",
+    "create_cylinder": "Cylinder",
+    "create_cone": "Cone",
+    "create_teapot": "Teapot",
+    "create_torus": "Torus",
+    "create_tube": "Tube",
+    "create_pyramid": "Pyramid",
+    "create_geosphere": "GeoSphere",
+    "create_line": "Line",
+    "create_rectangle": "Rectangle",
+    "create_circle": "Circle",
+    "create_ngon": "NGon",
+    "create_ellipse": "Ellipse",
+    "create_arc": "Arc",
+    "create_donut": "Donut",
+    "create_helix": "Helix",
+    "create_capsule": "Capsule",
+    "create_chamferbox": "ChamferBox",
+    "create_text": "Text",
+}
+
+#: Smallest possible valid PNG header + payload; enough for the server's sniff.
+PNG_BYTES = b"\x89PNG\r\n\x1a\n" + b"\x00" * 64
 
 
 def _node(name: str, handle: int, klass: str = "Box") -> Dict[str, Any]:
@@ -52,6 +89,9 @@ class FakeScene:
         self.nodes: Dict[str, List[Dict[str, Any]]] = {}
         self.selection: List[str] = []
         self.calls: List[str] = []
+        self.materials: Dict[str, Dict[str, Any]] = {}
+        #: per-object face selection kept between poly_select_faces/extrude
+        self.selected_faces: Dict[str, List[int]] = {}
         self._handle = 100
         #: names Max will refuse to delete (simulates a locked/referenced node)
         self.undeletable: set = set()
@@ -63,6 +103,11 @@ class FakeScene:
         self.ignore_transform = False
         #: when True, delete_objects returns success without deleting
         self.fake_delete = False
+        #: when True, vision_capture returns a result with no image bytes
+        self.vision_without_image = False
+        #: raise ``transport_failure`` once this many calls have been served
+        #: (``None`` = never).  Lets a test kill the bridge mid-workflow.
+        self.fail_after: Optional[int] = None
 
     # ------------------------------------------------------------------ helpers
     def add(self, name: str, klass: str = "Box", position: Optional[List[float]] = None) -> Dict[str, Any]:
@@ -93,15 +138,20 @@ class FakeScene:
     def call(self, method: str, params: Optional[Dict[str, Any]] = None) -> Any:
         self.calls.append(method)
         if self.transport_failure is not None:
-            raise self.transport_failure
+            # fail_after=None keeps the old behaviour: every call fails.
+            if self.fail_after is None or len(self.calls) > self.fail_after:
+                raise self.transport_failure
         params = params or {}
         handler = getattr(self, "_h_" + method, None)
-        if handler is None:
-            raise BridgeCommandError(
-                "Unknown command: {0}".format(method),
-                detail={"kind": "err.unknown_method", "message": method},
-            )
-        return handler(params)
+        if handler is not None:
+            return handler(params)
+        primitive = PRIMITIVE_CLASSES.get(method)
+        if primitive is not None:
+            return self._create(dict(params, **{"class": params.get("class") or primitive}))
+        raise BridgeCommandError(
+            "Unknown command: {0}".format(method),
+            detail={"kind": "err.unknown_method", "message": method},
+        )
 
     # ---------------------------------------------------------------- handlers
     def _h_bridge_status(self, params):
@@ -229,5 +279,170 @@ class FakeScene:
             applied.append(name)
         return {"applied": applied, "failures": failures, "message": "Done."}
 
+    # ------------------------------------------------- stage 3: scene reading
+    def _h_list_objects(self, params):
+        pattern = str(params.get("namePattern") or "")
+        klass = str(params.get("class") or "")
+        entries: List[Dict[str, Any]] = []
+        for key in sorted(self.nodes):
+            if pattern and not self._glob(key, pattern):
+                continue
+            for node in self.nodes[key]:
+                if klass and node.get("class") != klass:
+                    continue
+                entries.append(copy.deepcopy(node))
+        total = len(entries)
+        limit = int(params.get("limit") or 200)
+        offset = int(params.get("offset") or 0)
+        return {"count": total, "offset": offset, "limit": limit,
+                "objects": entries[offset:offset + limit]}
 
-__all__ = ["FakeScene", "BridgeCommandError", "BridgeNotRunning", "BridgeTimeout"]
+    # ------------------------------------------------- stage 3: primitives
+    def _unique_name(self, name: str) -> str:
+        """Mirror Max's automatic rename when a name is already taken."""
+        if name not in self.nodes:
+            return name
+        stem = name.rstrip("0123456789") or name
+        index = 1
+        while "{0}{1:03d}".format(stem, index) in self.nodes:
+            index += 1
+        return "{0}{1:03d}".format(stem, index)
+
+    def _create(self, params):
+        klass = str(params.get("class") or "Box")
+        requested = str(params.get("name") or params.get("setName") or "{0}001".format(klass))
+        name = self._unique_name(requested)
+        node = self.add(name, klass, list(params.get("position") or [0, 0, 0]))
+        for prop in ("length", "width", "height", "radius"):
+            value = params.get(prop)
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                node[prop] = float(value)
+        # Same shape as mcpH_create_primitive: success + the created node + failures.
+        return {"success": True, "object": copy.deepcopy(node), "failures": [],
+                "message": "Created {0}".format(name)}
+
+    # ------------------------------------------------- stage 3: modelling
+    def _h_convert_to_editable_poly(self, params):
+        applied: List[str] = []
+        failures: List[str] = []
+        for name in self._targets(params):
+            node = self._require(name)
+            node["class"] = "Editable_Poly"
+            node["baseClass"] = "Editable_Poly"
+            node["isPoly"] = True
+            applied.append(name)
+        return {"applied": applied, "failures": failures, "message": "Done."}
+
+    def _h_poly_get_stats(self, params):
+        out: List[Any] = []
+        for name in self._targets(params):
+            node = self._require(name)
+            if not node.get("isPoly"):
+                # The real handler appends "ERROR <name>: <message>" as a string.
+                out.append("ERROR {0}: Editable Poly required".format(name))
+                continue
+            faces = node.get("faceCount", 6)
+            out.append({"name": name, "verts": node.get("vertexCount", 8),
+                        "faces": faces, "edges": 12, "materialIdMin": 1,
+                        "materialIdMax": 1, "polygonCount": faces})
+        return {"objects": out, "message": "Done."}
+
+    def _h_poly_select_faces(self, params):
+        applied: List[Dict[str, Any]] = []
+        for name in self._targets(params):
+            node = self._require(name)
+            if not node.get("isPoly"):
+                raise BridgeCommandError(
+                    "Editable Poly required: {0}".format(name),
+                    detail={"kind": "err.poly_required", "message": name},
+                )
+            faces = node.get("faceCount", 6)
+            self.selected_faces[name] = list(range(1, faces + 1))
+            applied.append({"name": name, "faces": faces})
+        return {"objects": applied, "message": "Done."}
+
+    def _h_poly_extrude_faces(self, params):
+        amount = params.get("amount") or 0.0
+        applied: List[Dict[str, Any]] = []
+        for name in self._targets(params):
+            node = self._require(name)
+            if not node.get("isPoly"):
+                raise BridgeCommandError(
+                    "Editable Poly required: {0}".format(name),
+                    detail={"kind": "err.poly_required", "message": name},
+                )
+            faces = params.get("faces")
+            selected = self.selected_faces.get(name) or []
+            if not isinstance(faces, list) and not selected:
+                raise BridgeCommandError(
+                    "Nothing selected",
+                    detail={"kind": "err.no_selection", "message": "empty face selection"},
+                )
+            node["faceCount"] = node.get("faceCount", 6) + 4
+            applied.append({"name": name, "amount": amount, "faces": node["faceCount"]})
+        return {"objects": applied, "message": "Done."}
+
+    # ------------------------------------------------- stage 3: materials
+    def _h_mat_create_standard(self, params):
+        name = str(params.get("name") or "Material#{0}".format(len(self.materials) + 1))
+        diffuse = list(params.get("diffuse") or [128, 128, 128])
+        existing = self.materials.get(name)
+        if existing is not None:
+            # Same shape as mcpAssignCreatedMat: success + class/name/assignedTo.
+            return {"success": True, "class": "Standard", "name": name,
+                    "assignedTo": [], "reused": True, "message": "Exists."}
+        self.materials[name] = {"class": "Standard", "name": name, "diffuse": diffuse}
+        return {"success": True, "class": "Standard", "name": name,
+                "assignedTo": [], "reused": False, "diffuse": diffuse,
+                "message": "Created."}
+
+    def _h_mat_list(self, params):
+        limit = int(params.get("limit") or 200)
+        offset = int(params.get("offset") or 0)
+        rows = [copy.deepcopy(self.materials[key]) for key in sorted(self.materials)]
+        return {"count": len(rows), "offset": offset, "limit": limit,
+                "materials": rows[offset:offset + limit]}
+
+    def _h_mat_get_for_object(self, params):
+        rows: List[Dict[str, Any]] = []
+        for name in self._targets(params):
+            node = self._require(name)
+            material = node.get("material") or ""
+            rows.append({"object": name,
+                         "material": ({"name": material} if material else None)})
+        return {"count": len(rows), "objects": rows}
+
+    def _h_rename_object(self, params):
+        old = str(params.get("name") or "")
+        new = str(params.get("newName") or "")
+        node = self._require(old)
+        if new in self.nodes and new != old:
+            raise BridgeCommandError(
+                "Name already in use: {0}".format(new),
+                detail={"kind": "err.bad_value", "message": new},
+            )
+        self.nodes.pop(old, None)
+        node["name"] = new
+        self.nodes.setdefault(new, []).append(node)
+        self.selection = [new if item == old else item for item in self.selection]
+        return {"name": old, "newName": new, "handle": node["handle"],
+                "message": "Renamed."}
+
+    # ------------------------------------------------- stage 3: visual feedback
+    def _h_vision_capture(self, params):
+        if self.vision_without_image:
+            return {"count": 0, "views": [], "message": "No active viewport"}
+        return {
+            "count": 1,
+            "views": ["perspective"],
+            "maxEdge": int(params.get("max_edge") or 640),
+            "_images": [{
+                "label": "perspective",
+                "data": base64.b64encode(PNG_BYTES).decode("ascii"),
+                "mime": "image/png",
+            }],
+        }
+
+
+__all__ = ["FakeScene", "PRIMITIVE_CLASSES", "PNG_BYTES",
+           "BridgeCommandError", "BridgeNotRunning", "BridgeTimeout"]

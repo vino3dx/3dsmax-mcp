@@ -81,7 +81,7 @@ Runtime / 批处理信封内的失败条目：
 | `empty_result` | runtime | no | 桥返回 `ok:true` 但无 payload，无法验证 |
 | `duplicate_object_in_request` | runtime | no | 同一对象在一次请求里出现多次，只执行一次 |
 | `selection_scope` | runtime | no | 未给对象列表，命令作用于当前选择，无法逐对象回报 |
-| `missing_success` | runtime | no | payload 既没有 `success` 也没有 `ok`，不能算成功 |
+| `missing_success` | runtime | no | payload 既没有 `success`/`ok`，也没有 `failures`/`applied` 之类的结论声明 |
 | `operation_failed` | runtime | no | 命令已执行但报告失败 |
 | `partial_success` | runtime | no | 部分对象失败，整体不是成功 |
 | `batch_failed` | runtime | no | 全部对象失败 |
@@ -94,7 +94,23 @@ Runtime / 批处理信封内的失败条目：
 | `aborted` | runtime | no | 遇到传输失败后停止，后续对象未执行 |
 | `not_attempted` | runtime | no | 条目被排队但从未执行 |
 
-## 6. 图像 / 视觉反馈层
+## 6. 工作流层（`workflow_run` / `scene_snapshot`）
+
+| 码 | stage | retryable | 含义 |
+| --- | --- | --- | --- |
+| `workflow_invalid` | workflow | no | 工作流定义非法：未知操作、缺步骤 id、id 重复、依赖不存在或成环 |
+| `workflow_unknown` | workflow | no | 没有这个内置工作流名；返回值里带 `available` |
+| `workflow_nested` | workflow | no | 工作流步骤里又调用 `workflow_run`，被拒绝（部分结果无法归属） |
+| `workflow_interrupted` | workflow | no | 传输失败导致工作流中断，后续步骤未执行 |
+| `dependency_failed` | workflow | no | 该步骤依赖的上一步没有成功，因此跳过 |
+| `retry_blocked` | workflow | no | 失败的步骤没有自动重试，因为操作不幂等（clone/delete/相对变换/create…） |
+| `snapshot_unavailable` | workflow | no | 场景读不到，无法生成快照或对比前后状态 |
+| `snapshot_truncated` | workflow | no | 快照达到节点上限，diff 只覆盖部分场景 |
+
+`retry_blocked` 只在**步骤执行失败且本可重试**时出现：它表示"系统主动拒绝了自动重试"，
+不是新的失败。调用方应重新读场景（步骤记录里的 `recovery`），再决定是否重试。
+
+## 7. 图像 / 视觉反馈层
 
 | 码 | stage | retryable | 含义 |
 | --- | --- | --- | --- |
@@ -104,7 +120,7 @@ Runtime / 批处理信封内的失败条目：
 | `corrupt_image` | media | no | base64 非法，或字节不符合声明格式（无有效文件头） |
 | `image_path_not_allowed` | media | no | 图片路径不在允许的截图根目录内 |
 
-## 7. 与旧版行为的差异
+## 8. 与旧版行为的差异
 
 | 旧 | 新 | 说明 |
 | --- | --- | --- |
@@ -114,3 +130,20 @@ Runtime / 批处理信封内的失败条目：
 | `kind: "ambiguous_object_reference"` | `ambiguous_object` | 与文档/任务约定统一 |
 | `verification.passed: false`（未验证时） | `verification.passed: null` | 未执行验证不再伪装成"验证失败" |
 | `changed: false`（未观测时） | `changed: null`（批处理） | 未观测不再伪装成"没有变化" |
+| `missing_success`（对 `{applied, failures}` 也报） | 只在**完全没有结论声明**时才报 | 见下 |
+
+### `missing_success` 的判定收窄（Stage 3 修复）
+
+可靠性模式（`--profile core`）过去只接受 `success`/`ok` 两个字段。而 `src/ms` 里绝大多数
+handler 用 `{applied, failures, message}` 声明结果，于是 `convert_to_editable_poly`、
+`mat_assign`、所有 `poly_*` 在 core 档位下会被判成 `missing_success`——“执行成功"却报失败。
+`runtime.declared_outcome()` 现在按 handler 实际使用的形状读取结论：
+
+1. `success`（布尔）→ 直接采用；
+2. `ok`（布尔）→ 直接采用；
+3. `failures`（数组）→ 空即成功，非空即失败（失败条目原样保留在 `failures`）；
+4. `applied` / `deleted` / `created` / `objects`（数组）→ 非空即成功，空即"没做成"；
+5. 以上都没有 → 仍然是 `missing_success`（**没有证据不等于成功**）。
+
+仍会命中 `missing_success` 的是不声明任何结论的工具（例如 `scene_new`、`scene_open`），
+这是 MAXScript 侧的待改进项，不是本层可以猜的。

@@ -16,7 +16,7 @@ import traceback
 import uuid
 from typing import Any, Dict, List, Optional, Tuple
 
-from . import errors, i18n
+from . import errors, i18n, scene_state
 from .batch import PER_OBJECT_TOOLS, RECONCILE_TOOLS, BatchExecutor
 from .bridge import BridgeError, MaxBridge
 from .catalog import build_catalog
@@ -37,6 +37,7 @@ from .protocol import (
     text_content,
 )
 from .runtime import SceneRuntime
+from .workflow import STANDARD_WORKFLOWS, Workflow, WorkflowEngine, get_workflow, list_workflows
 from .wire import ANSI as _ANSI
 from .wire import from_wire, to_wire
 
@@ -48,6 +49,15 @@ _IMAGE_MAX_BYTES = 8 * 1024 * 1024
 _IMAGE_TOTAL_BYTES = 12 * 1024 * 1024
 _IMAGE_MIME = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp"}
 _IMAGE_MIMES = frozenset(_IMAGE_MIME.values())
+
+#: How many recent scene snapshots stay addressable as a diff baseline.  An
+#: agent only ever needs "the one I just took", so a small ring is enough and
+#: keeps memory bounded on a scene with thousands of nodes.
+MAX_SNAPSHOTS = 8
+#: Nodes collected per ``list_objects`` page, and the hard cap for one snapshot.
+SNAPSHOT_PAGE = 200
+SNAPSHOT_MAX_NODES = 5000
+SNAPSHOT_MAX_PAGES = 40
 
 #: Magic prefixes.  A declared MIME type is a claim; these are the bytes.
 _IMAGE_SIGNATURES = (
@@ -255,6 +265,43 @@ def _split_images(payload: Any, operation_id: str = "",
             for item in described:
                 item["operation_id"] = operation_id
     return blocks, rest
+
+
+def _failure_from_payload(payload: Any) -> Optional[Dict[str, Any]]:
+    """First machine-readable failure entry inside a tool payload, if any."""
+    if not isinstance(payload, dict):
+        return None
+    for key in ("failures", "error"):
+        value = payload.get(key)
+        if isinstance(value, list):
+            for item in value:
+                if isinstance(item, dict) and (item.get("kind") or item.get("code")):
+                    return item
+        elif isinstance(value, dict) and (value.get("kind") or value.get("code")):
+            return value
+    return None
+
+
+def _workflow_is_error(record: Dict[str, Any]) -> bool:
+    """Whether a finished workflow is reported to the client as an error.
+
+    ``success`` answers "did the whole objective succeed", so a partial run
+    keeps ``success: false``.  ``is_error`` answers the narrower question "is
+    this scene state something the agent must not build on".  Unproven steps
+    and a missing picture degrade a run to ``partial`` without making it an
+    error - the scene work did happen - whereas a hard failure, an interrupt, a
+    contradicted verification or an unmet declared goal do not get that pardon.
+    """
+    status = record.get("status")
+    if status in ("failed", "interrupted"):
+        return True
+    summary = record.get("summary") or {}
+    if summary.get("verification_failed"):
+        return True
+    expectation = record.get("expectation") or {}
+    if expectation.get("performed") and expectation.get("passed") is False:
+        return True
+    return False
 
 
 # ------------------------------------------------------------------- the server
@@ -489,25 +536,95 @@ class MaxMcpServer:
         if not isinstance(arguments, dict):
             raise RpcError(INVALID_PARAMS, "tools/call arguments must be an object")
 
-        entry = self.catalog.get(name)
-        if entry is None:
+        if self.catalog.get(name) is None:
             return make_result(
                 [text_content(i18n.t("tool.unknown", self.config.language, name=name))], is_error=True
             )
 
-        try:
-            payload = self._build_payload(entry, arguments)
-        except ValueError as exc:
+        run = self._execute_tool(name, arguments)
+
+        if run.get("validation_error"):
             return make_result(
                 [text_content(self._error_text(
                     code="invalid_arguments",
                     kind="validation_error",
                     tool=name,
-                    message=i18n.t("tool.bad_arguments", self.config.language, detail=str(exc)),
+                    message=i18n.t("tool.bad_arguments", self.config.language,
+                                   detail=run["validation_error"]),
                     suggestion="Provide all required parameters with the declared types.",
                 ))],
                 is_error=True,
             )
+
+        bridge_error = run.get("bridge_error")
+        if bridge_error is not None:
+            return make_result(
+                [text_content(self._error_text(
+                    code=errors.classify(getattr(bridge_error, "code", None) or bridge_error.kind),
+                    kind=getattr(bridge_error, "kind", "bridge_error"),
+                    tool=name,
+                    message=str(bridge_error),
+                    detail=getattr(bridge_error, "detail", None),
+                    suggestion=self._error_suggestion(bridge_error),
+                    retryable=errors.retryable(errors.classify(
+                        getattr(bridge_error, "code", None) or getattr(bridge_error, "kind", ""))),
+                ))],
+                is_error=True,
+            )
+
+        text = json.dumps(run.get("payload"), ensure_ascii=False, indent=2, default=str)
+        text = clamp_text(text, self.config.max_response_chars)
+        content: List[Dict[str, Any]] = [text_content(text)]
+        content.extend(run.get("blocks") or [])
+        image_failure = bool(run.get("image_errors"))
+        return make_result(content, is_error=(not run.get("ok", False)) or image_failure)
+
+    # ------------------------------------------------------- one tool execution
+    def _execute_tool(self, name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
+        """Run one tool and return everything the callers need to report it.
+
+        This is the single execution path: ``tools/call`` formats the result for
+        the client, and :class:`maxmcp.workflow.WorkflowEngine` reuses it for
+        every workflow step.  Keeping one path is what makes "the workflow ran
+        create_box" and "the agent called create_box" the same claim.
+
+        The returned mapping never raises for tool-level problems:
+
+            ok                whether the call succeeded
+            payload           JSON-able result (images already split out)
+            blocks            MCP image content blocks
+            images            image descriptors (label/mime/base64Chars)
+            image_errors      images that could not be turned into a block
+            validation_error  set when the arguments were rejected in Python
+            bridge_error      the transport exception, for the error envelope
+            operation_id      stable id, also embedded in image descriptors
+        """
+        run: Dict[str, Any] = {"ok": False, "payload": None, "blocks": [],
+                               "images": [], "image_errors": [], "operation_id": ""}
+        entry = self.catalog.get(name)
+        if entry is None:
+            run["validation_error"] = "unknown tool: {0}".format(name)
+            return run
+
+        if entry.local:
+            # Local tools validate their arguments exactly like bridged ones, but
+            # the payload stays as Python values (there is no ANSI wire to encode).
+            try:
+                params = self._coerce_arguments(entry, arguments)
+            except ValueError as exc:
+                run["validation_error"] = str(exc)
+                return run
+            try:
+                return self._run_local_tool(entry, params, run)
+            except BridgeError as exc:
+                run["bridge_error"] = exc
+                return run
+
+        try:
+            payload = self._build_payload(entry, arguments)
+        except ValueError as exc:
+            run["validation_error"] = str(exc)
+            return run
 
         runtime_failure = False
         try:
@@ -536,19 +653,8 @@ class MaxMcpServer:
             else:
                 result = self.bridge.call(entry.bridge_method, payload)
         except BridgeError as exc:
-            return make_result(
-                [text_content(self._error_text(
-                    code=errors.classify(getattr(exc, "code", None) or exc.kind),
-                    kind=getattr(exc, "kind", "bridge_error"),
-                    tool=name,
-                    message=str(exc),
-                    detail=getattr(exc, "detail", None),
-                    suggestion=self._error_suggestion(exc),
-                    retryable=errors.retryable(errors.classify(
-                        getattr(exc, "code", None) or getattr(exc, "kind", ""))),
-                ))],
-                is_error=True,
-            )
+            run["bridge_error"] = exc
+            return run
 
         result = from_wire(result)
         self._apply_side_effects(entry, arguments, result)
@@ -564,13 +670,278 @@ class MaxMcpServer:
         images, summary = _split_images(
             result, operation_id, _allowed_image_roots(self.config.image_roots))
 
-        text = json.dumps(summary, ensure_ascii=False, indent=2, default=str)
-        text = clamp_text(text, self.config.max_response_chars)
+        run.update({
+            "ok": not runtime_failure,
+            "payload": summary,
+            "blocks": images,
+            "images": (summary.get("images") if isinstance(summary, dict) else None) or [],
+            "image_errors": (summary.get("image_errors") if isinstance(summary, dict) else None) or [],
+            "operation_id": operation_id,
+        })
+        return run
 
-        content: List[Dict[str, Any]] = [text_content(text)]
-        content.extend(images)
-        image_failure = isinstance(summary, dict) and bool(summary.get("image_errors"))
-        return make_result(content, is_error=runtime_failure or image_failure)
+    # --------------------------------------------------- python-side tools
+    def _run_local_tool(self, entry: Tool, arguments: Dict[str, Any],
+                        run: Dict[str, Any]) -> Dict[str, Any]:
+        """Tools implemented in Python over other tools (no bridge command).
+
+        They still obey the same contract: validation problems become
+        ``validation_error`` and scene failures become ``ok: false`` with a
+        machine-readable code inside the payload.
+        """
+        handler = self._local_tools().get(entry.name)
+        if handler is None:
+            run["validation_error"] = "no local handler for {0}".format(entry.name)
+            return run
+        try:
+            payload = handler(arguments)
+        except ValueError as exc:
+            run["validation_error"] = str(exc)
+            return run
+        ok = True
+        if isinstance(payload, dict):
+            # ``success`` is the tool's own verdict on its objective; ``is_error``
+            # is the narrower question "does this reply represent a failure the
+            # caller must not build on".  They differ for a workflow that built
+            # the scene but could not prove it: not a complete success, yet not
+            # an error either.  A local tool that knows the difference declares
+            # ``is_error`` and wins.
+            if payload.get("success") is False:
+                ok = False
+            declared = payload.get("is_error")
+            if isinstance(declared, bool):
+                ok = not declared
+        run.update({"ok": ok, "payload": payload, "operation_id": "local-" + uuid.uuid4().hex[:8]})
+        return run
+
+    def _local_tools(self) -> Dict[str, Any]:
+        return {
+            "scene_snapshot": self._tool_scene_snapshot,
+            "workflow_run": self._tool_workflow_run,
+        }
+
+    # ------------------------------------------------------------ snapshots
+    def _read_nodes(self, arguments: Dict[str, Any]) -> Dict[str, Any]:
+        """Page through ``list_objects`` until the reported count is covered."""
+        wanted = arguments.get("limit")
+        max_nodes = SNAPSHOT_MAX_NODES
+        if isinstance(wanted, int) and wanted > 0:
+            max_nodes = min(wanted, SNAPSHOT_MAX_NODES)
+        filters = {key: arguments[key] for key in ("superClass", "class", "layer", "namePattern")
+                   if arguments.get(key)}
+        nodes: List[Any] = []
+        reported = None
+        offset = 0
+        for _ in range(SNAPSHOT_MAX_PAGES):
+            params = dict(filters)
+            params["limit"] = SNAPSHOT_PAGE
+            params["offset"] = offset
+            result = self._execute_tool("list_objects", params)
+            if result.get("bridge_error") is not None:
+                raise result["bridge_error"]
+            if result.get("validation_error"):
+                raise ValueError(result["validation_error"])
+            payload = result.get("payload")
+            if not isinstance(payload, dict):
+                raise ValueError("list_objects returned no object list")
+            page = payload.get("objects")
+            if not isinstance(page, list):
+                raise ValueError("list_objects reply has no objects array")
+            count = payload.get("count")
+            if isinstance(count, int):
+                reported = count
+            nodes.extend(page)
+            offset += len(page)
+            if not page or (isinstance(reported, int) and offset >= reported):
+                break
+            if len(nodes) >= max_nodes:
+                break
+        truncated = False
+        if len(nodes) > max_nodes:
+            nodes = nodes[:max_nodes]
+            truncated = True
+        if isinstance(reported, int) and len(nodes) < reported:
+            truncated = True
+        return {"nodes": nodes, "reported": reported, "truncated": truncated}
+
+    def _read_selection(self) -> Optional[List[str]]:
+        """Names of the current selection, or ``None`` when it cannot be read."""
+        result = self._execute_tool("get_selection", {})
+        if result.get("bridge_error") is not None or result.get("validation_error"):
+            return None
+        payload = result.get("payload")
+        if not isinstance(payload, dict) or not isinstance(payload.get("objects"), list):
+            return None
+        names: List[str] = []
+        for entry in payload["objects"]:
+            if isinstance(entry, dict) and isinstance(entry.get("name"), str):
+                names.append(entry["name"])
+        return names
+
+    def _capture_snapshot(self, arguments: Optional[Dict[str, Any]] = None,
+                          snapshot_id: str = "") -> Dict[str, Any]:
+        """Read the scene once and return a snapshot document (raises on failure)."""
+        read = self._read_nodes(arguments or {})
+        selection = self._read_selection()
+        document = scene_state.build_snapshot(
+            read["nodes"],
+            selection=selection,
+            reported_count=read["reported"],
+            truncated=read["truncated"],
+        )
+        document["snapshot_id"] = snapshot_id
+        if selection is None:
+            document["complete"] = False
+        return document
+
+    def _store_snapshot(self, document: Dict[str, Any]) -> str:
+        counter = getattr(self, "_snapshot_counter", 0) + 1
+        self._snapshot_counter = counter
+        snapshot_id = "snap-{0:04d}".format(counter)
+        document["snapshot_id"] = snapshot_id
+        cache = getattr(self, "_snapshots", None)
+        if cache is None:
+            cache = {}
+            self._snapshots = cache
+        cache[snapshot_id] = document
+        while len(cache) > MAX_SNAPSHOTS:
+            oldest = next(iter(cache))
+            cache.pop(oldest, None)
+        return snapshot_id
+
+    def _tool_scene_snapshot(self, arguments: Dict[str, Any]) -> Dict[str, Any]:
+        baseline_id = arguments.get("baseline")
+        tolerance = arguments.get("tolerance")
+        tolerance = float(tolerance) if isinstance(tolerance, (int, float)) else scene_state.DEFAULT_TOLERANCE
+        document = self._capture_snapshot(arguments)
+        snapshot_id = self._store_snapshot(document)
+
+        payload: Dict[str, Any] = {
+            "success": True,
+            "snapshot_id": snapshot_id,
+            "nodes": {
+                name: {key: value for key, value in snap.items()
+                       if key not in ("missing", "complete")}
+                for name, snap in document["nodes"].items()
+            },
+            "node_count": document["node_count"],
+            "reported_count": document["reported_count"],
+            "selection": document["selection"],
+            "selection_read": document["selection_read"],
+            "summary": document["summary"],
+            "complete": document["complete"],
+            "truncated": document["truncated"],
+            "partial_nodes": document["partial_nodes"][:20],
+            "missing_fields": document["missing_fields"],
+            "handles_unique": document["handles_unique"],
+            "warnings": [],
+        }
+        if document["truncated"]:
+            payload["warnings"].append(errors.error(
+                "snapshot_truncated",
+                "The snapshot stopped before every object was read; a diff over it is partial",
+                collected=document["node_count"],
+                reported=document["reported_count"],
+            ))
+        if document["missing_fields"]:
+            payload["warnings"].append(errors.error(
+                "snapshot_unavailable",
+                "Some snapshot fields were not reported by this Max build",
+                fields=document["missing_fields"],
+            ))
+        if baseline_id:
+            cache = getattr(self, "_snapshots", {})
+            baseline = cache.get(str(baseline_id))
+            if baseline is None:
+                return {
+                    "success": False,
+                    "failures": [errors.error(
+                        "invalid_arguments",
+                        "Unknown baseline snapshot id: {0}".format(baseline_id),
+                        known=sorted(cache),
+                    )],
+                    "snapshot_id": snapshot_id,
+                }
+            payload["baseline"] = str(baseline_id)
+            payload["diff"] = scene_state.diff_documents(baseline, document, tolerance)
+        return payload
+
+    # ------------------------------------------------------------- workflows
+    def _workflow_invoke(self, operation: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
+        """Adapter that lets the workflow engine reuse the tool execution path."""
+        run = self._execute_tool(operation, arguments or {})
+        if run.get("bridge_error") is not None:
+            return {"ok": False, "error": errors.from_exception(run["bridge_error"], "workflow")}
+        if run.get("validation_error"):
+            return {"ok": False, "error": errors.error(
+                "invalid_arguments", run["validation_error"], tool=operation)}
+        payload = run.get("payload")
+        error = None
+        if not run.get("ok"):
+            error = _failure_from_payload(payload) or errors.error(
+                "operation_failed", "Tool reported failure", tool=operation)
+        return {
+            "ok": bool(run.get("ok")),
+            "payload": payload,
+            "error": error,
+            "images": run.get("images") or [],
+            "image_errors": run.get("image_errors") or [],
+        }
+
+    def _tool_workflow_run(self, arguments: Dict[str, Any]) -> Dict[str, Any]:
+        name = arguments.get("workflow")
+        steps = arguments.get("steps")
+        if isinstance(name, str) and name and isinstance(steps, list) and steps:
+            raise ValueError("pass either 'workflow' or 'steps', not both")
+        if not name and not steps:
+            return {
+                "success": True,
+                "workflows": list_workflows(),
+                "hint": "Call workflow_run with {'workflow': <name>} to execute one, "
+                        "or pass an explicit 'steps' array.",
+            }
+        if name:
+            spec = get_workflow(str(name))
+            if spec is None:
+                return {
+                    "success": False,
+                    "failures": [errors.error(
+                        "workflow_unknown",
+                        "No built-in workflow named {0}".format(name),
+                        available=sorted(STANDARD_WORKFLOWS),
+                    )],
+                }
+        else:
+            raw = {"name": "custom", "steps": steps, "expect": arguments.get("expect") or {},
+                   "capture": arguments.get("capture", True)}
+            try:
+                spec = Workflow.from_dict(raw)
+            except ValueError as exc:
+                raise ValueError(str(exc))
+
+        engine = WorkflowEngine(
+            self._workflow_invoke,
+            capture=(lambda: self._capture_snapshot()) if spec.capture else None,
+            tolerance=float(arguments["tolerance"]) if isinstance(arguments.get("tolerance"), (int, float))
+            else scene_state.DEFAULT_TOLERANCE,
+        )
+        if arguments.get("dry_run"):
+            from .workflow import validate
+            problems = validate(spec, set(self.catalog.names()))
+            return {
+                "success": not problems,
+                "dry_run": True,
+                "workflow": spec.name,
+                "steps": [{"id": step.id, "operation": step.operation,
+                           "verification": (step.verify or {}).get("kind"),
+                           "depends_on": list(step.depends_on),
+                           "optional": step.optional} for step in spec.steps],
+                "problems": problems,
+            }
+        record = engine.run(spec, known_operations=set(self.catalog.names()))
+        record["success"] = record.get("status") == "success"
+        record["is_error"] = _workflow_is_error(record)
+        return record
 
     def _error_text(self, *, code: str, kind: str, tool: str,
                     message: str, suggestion: str = "",
@@ -601,7 +972,8 @@ class MaxMcpServer:
             return "Check bridge/server version alignment and reload the bridge module."
         return "Correct the reported Max-side problem, then retry; verify scene state before continuing."
 
-    def _build_payload(self, entry: Tool, arguments: Dict[str, Any]) -> Dict[str, Any]:
+    def _coerce_arguments(self, entry: Tool, arguments: Dict[str, Any]) -> Dict[str, Any]:
+        """Merge the preset and enforce the declared schema, in Python values."""
         schema = entry.schema
         properties: Dict[str, Any] = schema.get("properties", {})
         required: List[str] = schema.get("required", [])
@@ -622,7 +994,10 @@ class MaxMcpServer:
                 continue
             payload[key] = _coerce(payload[key], spec, key)
 
-        return to_wire(payload)
+        return payload
+
+    def _build_payload(self, entry: Tool, arguments: Dict[str, Any]) -> Dict[str, Any]:
+        return to_wire(self._coerce_arguments(entry, arguments))
 
     def _apply_side_effects(self, entry: Tool, arguments: Dict[str, Any], result: Any) -> None:
         """Keep server state in sync with commands that change it."""

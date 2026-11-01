@@ -122,6 +122,11 @@ PREFIX_WHITELIST: Dict[str, str] = {
                           "operations",
     "model_loft": "model_ prefix marks spline-to-surface modelling operations",
     "model_sweep": "model_ prefix marks spline-to-surface modelling operations",
+    "workflow_run": "orchestrator over other tools, not a scene operation: "
+                    "'workflow' is the domain noun and 'run' the verb, and there "
+                    "is no scene object type it could be named after",
+    "scene_snapshot": "scene_ is the documented domain prefix of the scene "
+                      "category; this one reads the whole scene as one value",
 }
 
 #: mutating-flag exceptions, each with a reason (A5).
@@ -332,6 +337,11 @@ def static_contract(catalog, locations, regs, repo_cmds) -> Dict[str, Any]:
                     "detail": "preset key %r is not bridge-recognised (known: %s)"
                               % (key, sorted(KNOWN_PRESET_KEYS)),
                 })
+        if entry.local:
+            # Python-side orchestration tools compose other tools; they have no
+            # MAXScript command of their own, by design.  A6 proves the handler
+            # really exists instead of letting this exemption hide a dead tool.
+            continue
         method = entry.bridge_method
         if method not in repo_cmds:
             violations.append({
@@ -379,6 +389,28 @@ def static_contract(catalog, locations, regs, repo_cmds) -> Dict[str, Any]:
                 or (tokens & WRITE_NAME_TOKENS and not entry.mutating)):
             advisory.append({"check": "A5", "tool": name, "where": "test",
                              "detail": "whitelist entry no longer needed: " + reason})
+
+    # A6 ------------------------------------------------- python-side tool wiring
+    # A local tool has no MAXScript command, so A4 cannot check it.  The real
+    # contract is that the catalog flag and the server's handler registry agree
+    # in both directions: a tool flagged local must have a handler, and a
+    # registered handler must be declared in the catalog.
+    handlers = set(MaxMcpServer()._local_tools())
+    declared_local = {entry.name for entry in catalog if entry.local}
+    for name in sorted(declared_local - handlers):
+        violations.append({
+            "check": "A6", "tool": name, "where": "src/python/maxmcp/server.py",
+            "detail": "declared local=true but the server has no local handler",
+        })
+    for name in sorted(handlers - declared_local):
+        violations.append({
+            "check": "A6", "tool": name, "where": "src/python/maxmcp/server.py",
+            "detail": "server registers a local handler for a tool that is not "
+                      "declared local=true in the catalog",
+        })
+    for name in sorted(declared_local & handlers):
+        advisory.append({"check": "A6", "tool": name, "where": "src/python/maxmcp/server.py",
+                         "detail": "python-side tool: no bridge command, handler verified"})
 
     return {"violations": violations, "advisory": advisory}
 
@@ -490,6 +522,16 @@ class MockBridge(threading.Thread):
         if method == "bridge_status":
             result = {"running": True, "port": self.port, "language": "zh",
                       "maxLanguage": "CHS", "handlerCount": 353}
+        elif method == "list_objects":
+            # Enough of a scene for the python-side snapshot tool to work: it
+            # pages through list_objects, so the mock has to answer that shape.
+            result = {"count": 1, "offset": 0, "limit": 200,
+                      "objects": [{"name": "MockBox", "handle": 1, "class": "Box",
+                                   "position": [0, 0, 0], "rotation": [0, 0, 0],
+                                   "scale": [1, 1, 1], "material": "",
+                                   "modifiers": []}]}
+        elif method == "get_selection":
+            result = {"count": 0, "objects": []}
         else:
             result = {"ok": True, "method": method, "mock": True}
         return {"id": request_id, "ok": True, "result": result}
@@ -621,6 +663,11 @@ def phase_c1(client: McpClient, bridge: MockBridge, catalog, rep: Reporter) -> N
     """Minimal legal arguments -> exact method and preset merge, per tool."""
     say("C1 minimal payload per tool (%d tools)" % len(catalog))
     for index, entry in enumerate(catalog):
+        if entry.local:
+            # No bridge command exists for a python-side tool; C1L covers it.
+            rep.quiet_case("C1", entry.name, "no bridge command (python-side tool)",
+                           "handled in Python", True)
+            continue
         args = {key: minimal_argument(entry.schema["properties"][key])
                 for key in entry.schema.get("required", [])}
         expected = dict(entry.preset)
@@ -647,6 +694,36 @@ def phase_c1(client: McpClient, bridge: MockBridge, catalog, rep: Reporter) -> N
                        detail, ok)
         if (index + 1) % 40 == 0:
             say("    ... %d/%d" % (index + 1, len(catalog)))
+
+
+def phase_c1_local(client: McpClient, bridge: MockBridge, catalog, rep: Reporter) -> None:
+    """Python-side tools answer without issuing a bridge command of their own.
+
+    This is the counterpart of A6: A6 proves a handler exists, this proves the
+    handler is reachable through ``tools/call`` and does not smuggle a
+    same-named command into the bridge (which would mean the catalog is lying
+    about where the work happens).
+    """
+    local = [entry for entry in catalog if entry.local]
+    if not local:
+        return
+    say("C1L python-side tools (%d tools)" % len(local))
+    for entry in local:
+        mark = len(bridge.calls)
+        reply = call_tool(client, entry.name, {})
+        result = reply.get("result") or {}
+        if reply.get("error") is not None or result.get("isError"):
+            rep.quiet_case("C1L", entry.name, "answers without an error",
+                           tool_text(reply)[:200], False)
+            continue
+        stray = bridge.since(mark, entry.bridge_method)
+        payload = json.loads(tool_text(reply))
+        ok = not stray and isinstance(payload, dict) and bool(payload)
+        rep.quiet_case("C1L", entry.name,
+                       "no bridge command named after the tool",
+                       "%d call(s); payload keys=%s"
+                       % (len(stray), sorted(payload)[:8] if isinstance(payload, dict) else "?"),
+                       ok)
 
 
 def phase_c2(client: McpClient, bridge: MockBridge, catalog, rep: Reporter) -> None:
@@ -943,6 +1020,7 @@ def main() -> int:
 
         phase_c4b(catalog, rep)
         phase_c1(client, bridge, catalog, rep)
+        phase_c1_local(client, bridge, catalog, rep)
         phase_c2(client, bridge, catalog, rep)
         phase_c3(client, bridge, rep)
         phase_c4(client, bridge, rep)

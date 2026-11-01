@@ -21,6 +21,8 @@ python test/static/core_contract_test.py
 python test/static/catalog_contract_test.py
 python test/static/core_evidence_audit.py
 python test/static/doc_alignment_audit.py
+python test/static/workflow_engine_test.py
+python test/static/workflow_scene_test.py
 python scripts/verify.py
 python scripts/test_e2e.py
 ```
@@ -32,7 +34,8 @@ python scripts/test_e2e.py
 | Batch | 空数组、单对象、多对象、部分失败、全部失败、重复对象、传输中断 | `batch_reliability_test.py` |
 | Object Reference | 正常、不存在、重名、过期、非法 | `object_reference_test.py`、`runtime_contract_test.py` |
 | Visual | 正常 PNG/JPEG、不存在、损坏、MIME 错误、超限、MCP image block | `image_result_test.py`、`vision_result_test.py` |
-| 工具契约 | 384 工具 schema/preset/类型/枚举、24 个无 live case 工具 | `catalog_contract_test.py`、`core_tool_validation_test.py` |
+| 工作流编排 | 步骤顺序/依赖/失败策略、验证三态、重试拒绝、快照与 diff、失败恢复 | `workflow_engine_test.py`、`workflow_scene_test.py`（详见 `docs/WORKFLOW_ACCEPTANCE.md`） |
+| 工具契约 | 386 工具 schema/preset/类型/枚举、24 个无 live case 工具 | `catalog_contract_test.py`、`core_tool_validation_test.py` |
 
 `offline_acceptance_test.py` 使用**真实 TCP**（127.0.0.1 随机端口）和一个按剧本应答的
 桩桥接，跑通 `dispatch -> server -> MaxBridge -> socket`，所以分帧、超时、断线都是真实
