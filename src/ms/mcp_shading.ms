@@ -276,6 +276,7 @@ fn mcpH_mat_set_diffuse params =
   if not done do ( try ( m.base_color = col; done = true ) catch() )
   if not done do mcpFail "err.invalid_argument" a1:"diffuse" a2:"material has no diffuse/base_color property"
   local p = #()
+  mcpPair p "success" true
   mcpPair p "material" (try (m.name) catch (""))
   mcpPair p "message" (mcpMsg "msg.ok")
   mcpObj p

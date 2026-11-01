@@ -115,6 +115,10 @@ fn mcpH_light_create params =
   if nm != "" do ( try ( l.name = nm ) catch() )
 
   local p = #()
+  -- An unknown type or missing class already failed above, so a reply here means
+  -- the light object exists.  Without this flag reliability mode reported a
+  -- successfully created light as missing_success.
+  mcpPair p "success" true
   mcpPair p "class" (try ((classof l) as string) catch (""))
   mcpPair p "name" (try (l.name) catch (""))
   mcpPair p "type" typeStr

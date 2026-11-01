@@ -234,6 +234,10 @@ fn mcpH_execute_maxscript params =
     if failure != undefined do throw failure
 
     local p = #()
+    -- The script threw above if it failed, so reaching here means it ran to the
+    -- end.  Saying so explicitly keeps reliability mode from calling a finished
+    -- script a failure just because MAXScript returns no verdict of its own.
+    mcpPair p "success" true
     mcpPair p "result" (mcpResultToJson raw)
     mcpPair p "resultText" (try ( raw as string ) catch ( "" ))
     mcpPair p "message" (mcpMsg "msg.ok")

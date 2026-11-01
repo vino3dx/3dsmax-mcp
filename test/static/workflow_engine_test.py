@@ -389,6 +389,61 @@ def check_recovery_reads_the_scene():
     assert recovery["automatic_retry"] is False
 
 
+def check_recovery_diagnosis():
+    """A failure has to say *why* the scene could not be re-read.
+
+    "The bridge vanished" is worth a reconnect; "the scene does not answer" is
+    not.  Reporting both as a null object count left the caller guessing.
+    """
+    # 1. scene readable: the step ran, the goal was not met
+    invoker = Invoker()
+    record = run([
+        step("s1", "create_box", {"name": "Box001"},
+             {"kind": "exists", "objects": ["Ghost"]}),
+    ], invoker)
+    row = record["steps"][0]
+    assert row["status"] == "verification_failed"
+    assert row["recovery"]["diagnosis"] == "scene_readable"
+    assert row["recovery"]["scene_readable"] is True
+    assert row["recovery"]["object_count"] == 1
+    assert row["recovery"]["suggest_actions"] == ["get_object_info"]
+    assert "read_error" not in row["recovery"]
+
+    # 2. bridge unreachable: transport failure while reading back
+    invoker = Invoker()
+    invoker.scene.add("Box001")
+    invoker.always_fail["transform_object"] = TRANSPORT
+    invoker.always_fail["scene_info"] = TRANSPORT
+    record = run([
+        step("s1", "transform_object", {"objects": ["Box001"], "operation": "move",
+                                        "mode": "relative", "value": [0, 0, 1]}),
+    ], invoker)
+    row = record["steps"][0]
+    assert row["status"] == "interrupted", row["status"]
+    recovery = row["recovery"]
+    assert recovery["diagnosis"] == "bridge_unreachable"
+    assert recovery["scene_readable"] is False
+    assert recovery["object_count"] is None
+    assert recovery["suggest_actions"] == ["bridge_status", "bridge_selftest"]
+    assert recovery["read_error"]["kind"] == "bridge_disconnected"
+    assert recovery["automatic_retry"] is False
+
+    # 3. bridge answers, the scene cannot be read: a different problem
+    invoker = Invoker()
+    invoker.always_fail["scene_info"] = {"kind": "err.unknown", "code": "err.unknown",
+                                         "message": "scene_info broke"}
+    record = run([
+        step("s1", "create_box", {"name": "Box001"},
+             {"kind": "exists", "objects": ["Ghost"]}),
+    ], invoker)
+    row = record["steps"][0]
+    assert row["status"] == "verification_failed", row["status"]
+    recovery = row["recovery"]
+    assert recovery["diagnosis"] == "scene_unreadable"
+    assert recovery["suggest_actions"] == ["bridge_selftest"]
+    assert recovery["read_error"]["kind"] == "err.unknown"
+
+
 def check_validation_rejects_bad_input():
     for raw in ({}, {"steps": []}, {"steps": [{"operation": ""}]},
                 {"steps": [{"id": "s1", "operation": "scene_info", "arguments": 5}]},
@@ -428,6 +483,7 @@ def main():
     check_snapshot_failure_degrades_diff_only()
     check_image_verification_states()
     check_recovery_reads_the_scene()
+    check_recovery_diagnosis()
     check_validation_rejects_bad_input()
     check_standard_workflow_definitions()
     print("workflow engine (static): all checks passed")

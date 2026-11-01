@@ -32,13 +32,18 @@
 | 9 | 修改器 | `mod_add` / `mod_set_param` | 是 | 对账 batch | S | `mod_add` 有；`mod_set_param` 无 | 未执行 |
 | 10 | 材质 | `mat_list` / `mat_create_standard` / `mat_assign` / `mat_get_for_object` | 是 | 对账 / Scene Runtime | S | 有（材质真的落到对象上） | 未执行 |
 | 11 | 复制与删除 | `clone_objects` / `delete_objects` | 是 | 逐对象 batch | S | 有（含部分失败与副本核对） | 未执行 |
-| 12 | 组织（层/组/父子） | `create_layer` / `assign_to_layer` / `group_objects` / `parent_objects` | 是 | 单次桥接 | S | **无** | 未执行 |
-| 13 | 验证与前后对比 | `scene_snapshot` / `workflow_run`（含 12 种 verification） | 是（Python 本地） | 本地工具，内部复用上面各步 | S | 有（本轮新增，SNAP/W 两组） | 未执行 |
+| 12 | 组织（层/组/父子） | `create_layer` / `assign_to_layer` / `group_objects` / `parent_objects` / `ungroup_objects` | 是 | 单次桥接 | S | 有（层成员数与 `parent` 独立回读；`check_organisation_workflow`） | 未执行 |
+| 13 | 验证与前后对比 | `scene_snapshot` / `workflow_run`（含 13 种 verification） | 是（Python 本地） | 本地工具，内部复用上面各步 | S | 有（本轮新增，SNAP/W 两组） | 未执行 |
 | 14 | 视觉反馈 | `vision_capture` / `vision_views` | 是 | 单次桥接 + 图片块 | S | 有（合成 PNG 走真实链路） | 未执行 |
-| 15 | 保存与导出 | `scene_save` / `scene_save_as` / `export_*` | 是 | 单次桥接（保存带确认） | S | **无** | 未执行 |
+| 15 | 保存与导出 | `scene_save` / `scene_save_as` / `export_*` | 是 | 单次桥接（保存带确认） | S | 有（回执与请求核对 + 覆盖保护；`check_save_and_export_workflow`） | 未执行 |
 
-统计：15 步中 **13 步有离线集成证据**，2 步（组织、保存导出）只有静态证据；
-**15 步全部没有真实 Max 证据**。
+统计：15 步中 **15 步有离线集成证据**；**15 步全部没有真实 Max 证据**。
+
+第 12 步的证据强度分两半，不能混为一谈：`group_objects` 之后用 `count` 验证对象数真的
++1（读回），而"对象是否真的落在那个层上"只有 `list_layers` 的 `nodeCount` 与
+`get_object_info.layer` 两处回读——离线场景里这两处是 `FakeScene` 自己维护的，
+真机上是否一致仍属 R1 风险。第 15 步同理：离线只能证明"工具回执与请求一致、覆盖保护
+会拦住误覆盖"，不能证明磁盘上真的多了一个 `.max` 文件。
 
 ## 2. 每一步真正的坑（决定工作流怎么写）
 
@@ -88,9 +93,11 @@
 
 ## 5. 结论
 
-- 现有工具**足够**组成一条完整的场景制作链路（15 步里 13 步有离线证据，
+- 现有工具**足够**组成一条完整的场景制作链路（15 步全部有离线证据，
   没有一步缺少工具），缺的不是工具数量，而是**把工具串起来时的记录与验证**。
 - 因此 Stage 3 只加 2 个 Python 侧工具（`scene_snapshot`、`workflow_run`），
   没有新增任何 MAXScript 命令：能力缺口在"编排层"，不在"桥接层"。
-- 组织（层/组/父子）与保存导出这两步的离线空档，是下一步最值得补的测试缺口，
-  而不是功能缺口。
+- Stage 4 把原先空着的组织与保存导出两步补上了离线证据，并把"执行成功却报失败"
+  的那一类缺陷（core 档位下的结论声明）量化成一项可回归的审计
+  （`test/static/outcome_audit.py`）。剩下的空档不再是"没有测试"，
+  而是"没有真实 Max 证据"，这只能靠人工验收补。

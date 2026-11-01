@@ -563,9 +563,22 @@ fn mcpH_group_objects params =
 fn mcpH_ungroup_objects params =
 (
     local nodes = mcpResolveNodes (mcpArr params "objects") fallbackToSelection:true
-    for n in nodes do ( try ( ungroup n ) catch() )
+    -- Collect what actually got ungrouped: the old loop swallowed every error,
+    -- so a selection of plain meshes answered "ok" while nothing changed.
+    local ungrouped = #()
+    local failures = #()
+    for n in nodes do
+    (
+        local nm = ""
+        try ( nm = n.name ) catch ( nm = "" )
+        local ok = true
+        try ( ungroup n ) catch ( ok = false )
+        if ok then append ungrouped nm else append failures nm
+    )
     mcpRedraw()
     local p = #()
+    mcpPair p "ungrouped" ungrouped
+    mcpPair p "failures" failures
     mcpPair p "message" (mcpMsg "msg.ok")
     mcpObj p
 )
@@ -787,6 +800,9 @@ fn mcpH_rename_object params =
     local p = #()
     mcpPair p "oldName" name
     mcpPair p "newName" n.name
+    -- Max silently keeps the old name when the new one collides, so compare
+    -- instead of assuming the assignment took effect.
+    mcpPair p "renamed" (n.name == newName)
     mcpPair p "message" (mcpMsg "msg.ok")
     mcpObj p
 )

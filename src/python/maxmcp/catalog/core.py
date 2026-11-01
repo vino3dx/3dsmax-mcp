@@ -390,6 +390,16 @@ TOOLS.append(tool(
                          "Only snapshot objects whose name matches this wildcard pattern "
                          "(e.g. Wall*); omit for every object.",
                          examples=["Wall*"]),
+        "saveBaseline": s("把这次快照写成 JSON 基线文件，供以后跨会话对比。必须是绝对路径并以 .json 结尾。",
+                          "Write this snapshot to a JSON baseline file for a later "
+                          "cross-session diff. Must be an absolute path ending in .json.",
+                          examples=["C:/work/before_modeling.json"]),
+        "baselineFile": s("从之前 saveBaseline 写出的文件读回基线并对比。文件缺失、损坏或版本不符会明确失败，"
+                          "而不是静默当成新建基线。",
+                          "Read a baseline back from a file written by saveBaseline and diff "
+                          "against it. A missing, corrupt or wrong-version file fails loudly "
+                          "instead of silently starting a new baseline.",
+                          examples=["C:/work/before_modeling.json"]),
     },
     mutating=False,
     local=True,

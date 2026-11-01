@@ -132,18 +132,37 @@ Runtime / 批处理信封内的失败条目：
 | `changed: false`（未观测时） | `changed: null`（批处理） | 未观测不再伪装成"没有变化" |
 | `missing_success`（对 `{applied, failures}` 也报） | 只在**完全没有结论声明**时才报 | 见下 |
 
-### `missing_success` 的判定收窄（Stage 3 修复）
+### `missing_success` 的判定收窄（Stage 3 修复，Stage 4 补回执字段）
 
 可靠性模式（`--profile core`）过去只接受 `success`/`ok` 两个字段。而 `src/ms` 里绝大多数
 handler 用 `{applied, failures, message}` 声明结果，于是 `convert_to_editable_poly`、
 `mat_assign`、所有 `poly_*` 在 core 档位下会被判成 `missing_success`——“执行成功"却报失败。
-`runtime.declared_outcome()` 现在按 handler 实际使用的形状读取结论：
+`runtime.declared_outcome()` 现在按 handler 实际使用的形状读取结论，顺序固定：
 
 1. `success`（布尔）→ 直接采用；
 2. `ok`（布尔）→ 直接采用；
-3. `failures`（数组）→ 空即成功，非空即失败（失败条目原样保留在 `failures`）；
-4. `applied` / `deleted` / `created` / `objects`（数组）→ 非空即成功，空即"没做成"；
-5. 以上都没有 → 仍然是 `missing_success`（**没有证据不等于成功**）。
+3. `failures`（数组）→ 空即成功，非空即失败（失败条目原样保留在 `failures`；
+   条目既可以是错误对象，也可以是 `"Box001: <原因>"` 这样的纯文本）；
+4. 枚举字段 `applied` / `deleted` / `created` / `objects` / `results`（数组）
+   → 非空即成功，空即“没做成”；
+5. **回执字段**（receipt）→ 按值判定，不按存在判定：
 
-仍会命中 `missing_success` 的是不声明任何结论的工具（例如 `scene_new`、`scene_open`），
-这是 MAXScript 侧的待改进项，不是本层可以猜的。
+   | 类型 | 字段 | 规则 |
+   | --- | --- | --- |
+   | 布尔回执 | `written` `reset` `copied` `renamed` | 取布尔值本身 |
+   | 路径/名号回执 | `saved` `opened` `merged` `group` `layer` | 非空字符串即成功，空字符串即失败 |
+   | 对象名回执 | `moved` `aligned` `attached` `detached` `children` `ungrouped` | 非空列表即成功，空列表即失败 |
+
+6. 以上都没有 → 仍然是 `missing_success`（**没有证据不等于成功**）。
+
+`message` **永远不参与判定**：每个 handler 都会返回它，包括什么都没做的那些。把它当结论
+就是把“没有证据”读成“成功”，而这正是本函数要防的错误。
+
+回执字段读的是 handler 已经给出的真实证据，不是 Python 侧的形状猜测：`saved` 来自
+`saveMaxFile` 之后的实际路径，`written` 来自导出后对文件的检查，`renamed` 来自
+`n.name == newName` 的比较（Max 遇到重名会静默保留旧名）。MAXScript 侧没有真实回执的工具
+（例如 `hide_objects`、`bake_set_output`）仍然命中 `missing_success`——这是待补的声明缺口，
+`test/static/outcome_audit.py` 会把它量化并列出清单。
+
+`test/static/outcome_audit.py` 的硬断言只覆盖**标准工作流实际调用的工具**：那些工具一旦读不出
+结论，工作流就会把一次成功的操作记成失败，进而得出关于场景的错误结论。

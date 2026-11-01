@@ -8,6 +8,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Workflow habits and evidence gaps (Stage 4).** Stage 3 built the machinery;
+  this stage makes it the default and closes the two rows of the capability
+  matrix that had no offline evidence.
+  - **Receipt-shaped outcomes (`runtime.declared_outcome`).** Reliability mode
+    already read `{applied, failures}`; it now also reads the receipts the
+    handlers were already emitting: `saved` / `opened` / `merged` (non-empty
+    path), `written` / `reset` / `copied` / `renamed` (boolean), `group` /
+    `layer` (non-empty name), `moved` / `ungrouped` / `children` (non-empty
+    list), and `results` joins the enumeration keys. Values are read, not
+    presence: `{saved: ""}` and `{written: false}` are failures. `message` is
+    never evidence — every handler returns one, including the ones that did
+    nothing. This fixes `scene_save`, `scene_save_as`, `scene_open`,
+    `create_layer`, `group_objects` and `export_*` being reported as
+    `missing_success` in the core profile even though they worked.
+  - **Honest handler verdicts (`src/ms`).** `execute_maxscript` now says
+    `success: true` when the script finished (it throws on error, so a reply
+    means it ran); `mat_set_diffuse` and `light_create` do the same after their
+    own `mcpFail` guards; `rename_object` reports `renamed: n.name == newName`
+    because Max silently keeps the old name on a collision; `ungroup_objects`
+    collects `ungrouped` / `failures` instead of swallowing every error and
+    answering "ok".
+  - **Verification strength named honestly.** New verifier `payload_field`
+    compares a value the tool reported (`saved`, `written`, `path`, `moved`)
+    against the request. It is weaker than a read-back and is documented that
+    way — for outputs that cannot be re-read without live Max it is the honest
+    option, and it still catches "wrote to the wrong directory".
+  - **`scene_snapshot` baselines across sessions.** `saveBaseline` writes a
+    versioned JSON file (`schemaVersion: 1`, `createdAt`, `document`);
+    `baselineFile` reads it back and diffs. A missing, corrupt or wrong-version
+    file fails loudly instead of silently starting a new baseline, and the path
+    must be absolute with a `.json` suffix so a typo cannot land on a `.max`.
+  - **Recovery says why.** `recovery.diagnosis` is one of `scene_readable` /
+    `bridge_unreachable` / `scene_unreadable`, with `read_error` and
+    `suggest_actions`; a dead bridge and an unreadable scene no longer look the
+    same (both used to be a null object count).
+  - **MCP `instructions` now lead with the habit** (zh/en): snapshot a baseline
+    before changing anything, run three or more dependent steps through
+    `workflow_run` with `verification`, and report unverified results as
+    unverified. The `execute_maxscript` fallback is narrowed to "only when no
+    tool covers the job, and say why".
+  - **Audit instead of hope.** `test/static/outcome_audit.py` reads every
+    `mcpH_*` handler (following `mcpRegister` and helper calls), reports how
+    many mutating tools declare a readable outcome (219/293), and fails if a
+    tool used by a standard workflow cannot be read. `outcome_declaration_test.py`
+    pins the reading rules, including "message is never evidence".
+  - Tests: `workflow_scene_test.py` grew to 22 scenarios (organisation, ungroup
+    receipts, save/export, overwrite guard, unknown verifier, baseline file
+    round-trip), `workflow_engine_test.py` to 18 (recovery diagnosis).
+
 - **Agent scene workflows — `workflow_run` + `scene_snapshot` (Stage 3).** The
   capability gap was never "more tools": it was that a 15-step scene build had no
   way to say *what was supposed to happen*, *what actually happened*, or *what is
@@ -34,7 +83,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `material_look` (7) — `success` with every step verified on the stub bridge.
   - **Operation verification (`maxmcp/verify.py`).** 12 read-back verifiers
     (`read_ok`, `exists`, `absent`, `count`, `transform`, `material`, `modifier`,
-    `class`, `face_count`, `selection`, `payload_number`, `image`). Execution
+    `class`, `face_count`, `selection`, `payload_number`, `image`; Stage 4 added
+    the receipt-level `payload_field`, which is documented as weaker than a
+    read-back). Execution
     success and goal attainment are separate claims: `verification_unavailable`
     is never folded into `passed`, and an unknown verification kind is refused
     instead of silently ignored.

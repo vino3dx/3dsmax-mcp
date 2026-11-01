@@ -9,7 +9,7 @@
 | 文件 | 职责 |
 | --- | --- |
 | `src/python/maxmcp/workflow.py` | 步骤/工作流定义、校验、执行引擎、重试策略、三个标准工作流 |
-| `src/python/maxmcp/verify.py` | 12 种操作验证（只读回读，不看请求参数） |
+| `src/python/maxmcp/verify.py` | 13 种操作验证（12 种只读回读 + 1 种回执核对 `payload_field`） |
 | `src/python/maxmcp/scene_state.py` | 快照、diff、目标断言 `check_expectations` |
 | `src/python/maxmcp/server.py` | `_execute_tool`（唯一执行路径）+ 两个本地工具 |
 
@@ -134,15 +134,26 @@ retry:"transport" + 传输类错误码 + errors.retryable + 操作幂等  ->  �
 每个失败/验证失败的步骤都带 `recovery`：
 
 ```json
-{ "attempted": true, "scene_readable": true, "object_count": 7,
-  "selection": ["Cube"], "automatic_retry": false,
-  "note_zh": "失败后已重新读取场景；是否重试由调用方按实际状态决定。",
+{ "attempted": true, "diagnosis": "scene_readable", "scene_readable": true,
+  "object_count": 7, "selection": ["Cube"], "automatic_retry": false,
+  "suggest_actions": ["get_object_info"],
+  "note_zh": "失败后已重新读取场景；失败的那一步可能已经部分生效。…",
   "note_en": "..." }
 ```
 
 它只做一件事：**重新读一次场景**，把"桥还活着吗、场景还能读吗、现在几个对象"
-交给调用方。不猜、不回滚、不自动重试。`scene_readable:false` 就是"别再往下做了，
-先把桥接修好"。
+交给调用方。不猜、不回滚、不自动重试。
+
+`diagnosis` 区分三种情况，因为反应完全不同：
+
+| diagnosis | 判据 | `suggest_actions` | 意思 |
+| --- | --- | --- | --- |
+| `scene_readable` | 对象数读到了 | `["get_object_info"]` | 场景没事，是这一步没达成目标；先看具体对象再决定 |
+| `bridge_unreachable` | 读对象数失败，且错误是传输类 | `["bridge_status", "bridge_selftest"]` | Max 可能被关了/脚本被重置/端口被占；先恢复桥接，**不要**盲目重试 |
+| `scene_unreadable` | 读对象数失败，但不是传输类 | `["bridge_selftest"]` | 桥还能答话，但场景状态读不出来；先自检，确认场景不是空白或损坏 |
+
+前两种以前都是"`object_count: null`"，调用方只能猜；现在 `read_error` 里带着原始错误，
+`diagnosis` 直接说明该修桥还是该看场景。
 
 ## 7. 目标断言 `expect`
 

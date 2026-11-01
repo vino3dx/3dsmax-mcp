@@ -123,8 +123,42 @@ scene_snapshot {"baseline": "snap-0001"}        -> 返回本次快照 + diff
 
 - 快照缓存是内存里的环形缓冲，最多 8 份（`MAX_SNAPSHOTS`），先进先出。
 - 未知 id -> `success:false` + `invalid_arguments`，并在 `known` 里列出还有哪些 id。
-- 进程重启后基线全部失效：**基线不能跨会话**。需要长期对比就自己保存
-  `scene_snapshot` 返回的 `nodes` JSON（这就是"部分/完整快照"都能拿到的原因）。
+- 进程重启后基线全部失效：内存基线**不能跨会话**。
+
+### 5.1 跨会话基线：`saveBaseline` / `baselineFile`
+
+```text
+scene_snapshot {"saveBaseline": "C:/work/before_modeling.json"}
+... 关掉 Max、第二天再开 ...
+scene_snapshot {"baselineFile": "C:/work/before_modeling.json"}   -> diff
+```
+
+文件格式固定，读到不认识的版本就拒绝，不会拿旧结构硬比：
+
+```json
+{
+  "schemaVersion": 1,
+  "tool": "scene_snapshot",
+  "createdAt": "2026-11-01T22:40:40",
+  "tolerance": 0.0001,
+  "nodeCount": 4,
+  "document": { "nodes": { ... }, "selection": [ ... ], "complete": true, ... }
+}
+```
+
+| 规则 | 行为 |
+| --- | --- |
+| 路径 | 必须是绝对路径，且后缀必须是 `.json`；其他后缀一律 `invalid_arguments`（防手误覆盖 `.max`） |
+| 目录 | 父目录不存在时自动创建 |
+| 文件缺失 | `snapshot_unavailable` + `reason: "baseline_file_missing"`，**不会静默新建** |
+| JSON 损坏 / 无 `nodes` | `snapshot_unavailable` + `reason: "baseline_file_corrupt"` |
+| 版本不符 | `snapshot_unavailable` + `reason: "unsupported_snapshot_version"`，并回报 `found` / `expected` |
+| 同时给 `baseline` 与 `baselineFile` | 文件优先 |
+
+- 容差用的是**本次调用**的 `tolerance`，文件里的 `tolerance` 只作记录，不覆盖请求。
+- 覆盖已有文件是允许的：基线是自己拍的快照，不是用户资产。文件里保留 `createdAt`，
+  所以"这份基线是什么时候的"始终可查。
+- 这不是场景数据库：一次一个文件、无索引、无历史。要管多份基线就自己命名多个文件。
 
 ## 6. 与工作流的关系
 

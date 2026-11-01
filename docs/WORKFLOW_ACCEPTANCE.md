@@ -50,10 +50,22 @@ python scripts/verify.py                       # Static  —— 目录/注册/�
 | W24 | 未知基线 id -> 明确失败并列出已知 id | Offline | `check_unknown_baseline_is_rejected` |
 | W25 | 无参数列出工作流 / `dry_run` 不碰场景 | Offline | `check_workflow_listing_and_dry_run` |
 | W26 | 自定义步骤 + 目标未达成 -> `partial` 且 `isError:true` | Offline | `check_custom_steps_and_goal_failure` |
+| W27 | 组织工作流（建层 -> 归层 -> 编组），层成员数与 `parent` 独立回读 | Offline | `check_organisation_workflow` |
+| W28 | 解组回执诚实：对普通网格解组 -> 空回执 -> 失败，不是"ok" | Offline | `check_ungroup_reports_what_it_did` |
+| W29 | 保存 + 导出工作流，回执路径与请求核对；导出路径写错 -> `verification_failed` | Offline | `check_save_and_export_workflow` |
+| W30 | 覆盖保护：目标文件已存在且未 `confirm` -> 步骤失败、后续跳过、什么都没写 | Offline | `check_overwrite_guard_stops_the_workflow` |
+| W31 | 未知 verification kind 在执行前被拒 | Offline | `check_unknown_verification_kind_is_refused` |
+| W32 | 基线文件跨会话往返（写盘 -> 改场景 -> 读回 diff） | Offline | `check_baseline_file_roundtrip` |
+| W33 | 基线文件异常三态：缺失 / 版本不符 / JSON 损坏，都明确失败 | Offline | `check_baseline_file_roundtrip` |
+| W34 | 基线路径校验：非 `.json` 后缀、相对路径都被拒 | Offline | `check_baseline_file_roundtrip` |
+| W35 | 恢复诊断三态：场景可读 / 桥接断开 / 场景读不出 | Static | `check_recovery_diagnosis` |
+| W36 | 结论声明：回执型 payload（`saved`/`written`/`group`/`moved`）判定正确 | Static | `outcome_declaration_test.py`（9 组） |
+| W37 | 结论声明覆盖率：标准工作流用到的工具必须可读；core 档位缺口为 0 | Static | `outcome_audit.py` |
 
-级别统计：`Static` 16 类、`Offline` 15 类（其中 5 类两种证据都有，共 26 类），
-`Runtime` 0 类。对应 33 个测试函数：`workflow_engine_test.py` 17 个（Static）、
-`workflow_scene_test.py` 16 个（Offline）。
+级别统计：`Static` 18 类、`Offline` 19 类（其中 6 类两种证据都有，共 37 类），
+`Runtime` 0 类。对应 45 个测试函数：`workflow_engine_test.py` 18 个（Static）、
+`workflow_scene_test.py` 22 个（Offline），外加 `outcome_declaration_test.py`
+8 组与 `outcome_audit.py` 的覆盖率断言。
 
 ## 3. Runtime 待执行清单（本轮未做）
 
@@ -66,7 +78,7 @@ python scripts/verify.py                       # Static  —— 目录/注册/�
 | R2 | 同上，执行前删掉 `Ground` 改名成 `Ground_Old` | `renamed` 里出现该配对（不是 removed+added） |
 | R3 | `model_processing` 对真 Box | `Editable_Poly`、面数真的增加、TurboSmooth 在堆栈里 |
 | R4 | `material_look` | 两个对象的 `material` 字段真的是 MatteRed/MatteBlue，视口渲染确实变色 |
-| R5 | 工作流执行中手动关闭 Max | 步骤 `interrupted`、整体 `interrupted`，`recovery.scene_readable:false`，**没有**任何自动重试 |
+| R5 | 工作流执行中手动关闭 Max | 步骤 `interrupted`、整体 `interrupted`，`recovery.diagnosis` 为 `bridge_unreachable`、`scene_readable:false`，**没有**任何自动重试 |
 | R6 | 场景里造两个同名对象后跑 `scene_snapshot` | `handles_unique` 与 `complete` 的真实取值、重名节点是否进 `partial_nodes` |
 | R7 | 大场景（>200 节点）`scene_snapshot` | 分页读全（`truncated:false`），`node_count == reported_count` |
 | R8 | 中文版 Max 跑 `basic_scene` | 错误与 `note_zh` 是正常中文，不是乱码 |

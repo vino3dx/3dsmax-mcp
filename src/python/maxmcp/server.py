@@ -304,6 +304,98 @@ def _workflow_is_error(record: Dict[str, Any]) -> bool:
     return False
 
 
+# ----------------------------------------------------------------- snapshots
+#: Version of the on-disk baseline format.  Bump it when the stored document
+#: shape changes; a reader that meets an unknown version must refuse rather than
+#: diff apples against oranges.
+SNAPSHOT_FILE_VERSION = 1
+
+
+class SnapshotFileProblem(Exception):
+    """A baseline file that cannot be used, with a machine-readable reason."""
+
+    def __init__(self, reason: str, message: str, **detail: Any) -> None:
+        super().__init__(message)
+        self.reason = reason
+        self.message = message
+        self.detail = detail
+
+
+def _snapshot_path(value: Any, field: str) -> Path:
+    """Validate a baseline path; refuse anything that could overwrite real work."""
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError("{0} must be a non-empty path".format(field))
+    path = Path(value.strip())
+    if not path.is_absolute():
+        raise ValueError("{0} must be an absolute path: {1}".format(field, value))
+    if path.suffix.lower() != ".json":
+        # Refusing anything else is what keeps a typo from landing on a .max file.
+        raise ValueError("{0} must end in .json: {1}".format(field, value))
+    return path
+
+
+def _write_snapshot_file(path: Path, document: Dict[str, Any], tolerance: float) -> int:
+    body = {
+        "schemaVersion": SNAPSHOT_FILE_VERSION,
+        "tool": "scene_snapshot",
+        "createdAt": time.strftime("%Y-%m-%dT%H:%M:%S"),
+        "tolerance": tolerance,
+        "nodeCount": document.get("node_count"),
+        "document": document,
+    }
+    text = json.dumps(body, ensure_ascii=False, indent=2, default=str)
+    if path.parent and not path.parent.exists():
+        path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+    return len(text.encode("utf-8"))
+
+
+def _read_snapshot_file(path: Path) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    """Load a baseline document; raise :class:`SnapshotFileProblem` when unusable."""
+    if not path.is_file():
+        raise SnapshotFileProblem(
+            "baseline_file_missing",
+            "No baseline file at {0}; take a snapshot with saveBaseline first".format(path),
+            path=str(path),
+        )
+    try:
+        body = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise SnapshotFileProblem(
+            "baseline_file_corrupt",
+            "Baseline file is not readable JSON: {0}".format(exc),
+            path=str(path),
+        )
+    if not isinstance(body, dict):
+        raise SnapshotFileProblem(
+            "baseline_file_corrupt",
+            "Baseline file does not hold a snapshot object",
+            path=str(path),
+        )
+    version = body.get("schemaVersion")
+    if version != SNAPSHOT_FILE_VERSION:
+        raise SnapshotFileProblem(
+            "unsupported_snapshot_version",
+            "Baseline file has schemaVersion {0}, this build writes {1}".format(
+                version, SNAPSHOT_FILE_VERSION),
+            path=str(path), found=version, expected=SNAPSHOT_FILE_VERSION,
+        )
+    document = body.get("document")
+    if not isinstance(document, dict) or not isinstance(document.get("nodes"), dict):
+        raise SnapshotFileProblem(
+            "baseline_file_corrupt",
+            "Baseline file has no nodes object",
+            path=str(path),
+        )
+    meta = {
+        "path": str(path),
+        "schema_version": version,
+        "created_at": body.get("createdAt"),
+        "node_count": body.get("nodeCount"),
+    }
+    return document, meta
+
+
 # ------------------------------------------------------------------- the server
 class MaxMcpServer:
     def __init__(self, config: Optional[Config] = None, transport: Optional[StdioTransport] = None) -> None:
@@ -478,6 +570,12 @@ class MaxMcpServer:
         }
 
     def _instructions(self) -> str:
+        """What the client reads once, before choosing any tool.
+
+        Kept short on purpose: it is prepended to every conversation, so it only
+        states what changes tool choice - connection order, the escape hatch,
+        and the snapshot/workflow habit that makes scene work checkable.
+        """
         categories = ", ".join(
             "{0}({1})".format(k, v) for k, v in sorted(self.catalog.categories().items())
         )
@@ -487,7 +585,12 @@ class MaxMcpServer:
                 "Call bridge_status first to confirm the connection, then bridge_capabilities to see "
                 "what the running Max build supports. Use bridge_selftest when something fails oddly. "
                 "Use set_language to switch the whole bridge between English and Simplified Chinese. "
-                "Prefer the specific modelling tools; fall back to execute_maxscript for anything else. "
+                "Prefer the specific tools; use execute_maxscript only when no tool covers the job, "
+                "and say why. "
+                "For scene work, take a scene_snapshot baseline before changing anything and diff it "
+                "afterwards; run three or more dependent steps through workflow_run and declare "
+                "verification on the steps that matter. A step that executed is not a goal that was "
+                "met - when nothing verified the result, report it as unverified instead of done. "
                 "Tool categories: {0}.".format(categories)
             )
         return (
@@ -495,7 +598,10 @@ class MaxMcpServer:
             "先调用 bridge_status 确认连接，再用 bridge_capabilities 查看当前 Max 版本支持哪些命令；"
             "工具异常失败时用 bridge_selftest 自检。"
             "用 set_language 可在中文和英文之间整体切换。"
-            "优先使用专用建模工具，其余情况用 execute_maxscript 兜底。"
+            "优先使用专用工具；只有现有工具确实做不到时才用 execute_maxscript，并说明原因。"
+            "处理场景时：改动前先 scene_snapshot 留一份基线，改完用它对比；"
+            "三步以上且有依赖的任务用 workflow_run，并给关键步骤声明 verification。"
+            "步骤“执行成功”不等于“目标达成”——没有验证过就如实说未验证，不要当成已完成。"
             "工具分类：{0}。".format(categories)
         )
 
@@ -813,6 +919,18 @@ class MaxMcpServer:
         baseline_id = arguments.get("baseline")
         tolerance = arguments.get("tolerance")
         tolerance = float(tolerance) if isinstance(tolerance, (int, float)) else scene_state.DEFAULT_TOLERANCE
+
+        try:
+            save_path = _snapshot_path(arguments.get("saveBaseline"), "saveBaseline") \
+                if arguments.get("saveBaseline") else None
+            load_path = _snapshot_path(arguments.get("baselineFile"), "baselineFile") \
+                if arguments.get("baselineFile") else None
+        except ValueError as exc:
+            return {
+                "success": False,
+                "failures": [errors.error("invalid_arguments", str(exc))],
+            }
+
         document = self._capture_snapshot(arguments)
         snapshot_id = self._store_snapshot(document)
 
@@ -849,7 +967,41 @@ class MaxMcpServer:
                 "Some snapshot fields were not reported by this Max build",
                 fields=document["missing_fields"],
             ))
-        if baseline_id:
+        if save_path is not None:
+            try:
+                written = _write_snapshot_file(save_path, document, tolerance)
+            except OSError as exc:
+                return {
+                    "success": False,
+                    "failures": [errors.error(
+                        "snapshot_unavailable",
+                        "Could not write the baseline file: {0}".format(exc),
+                        path=str(save_path), reason="write_failed")],
+                    "snapshot_id": snapshot_id,
+                }
+            payload["saved_baseline"] = {
+                "path": str(save_path),
+                "schema_version": SNAPSHOT_FILE_VERSION,
+                "node_count": document["node_count"],
+                "bytes": written,
+            }
+
+        baseline = None
+        if load_path is not None:
+            try:
+                baseline, meta = _read_snapshot_file(load_path)
+            except SnapshotFileProblem as exc:
+                detail = dict(exc.detail)
+                detail.setdefault("path", str(load_path))
+                detail["reason"] = exc.reason
+                return {
+                    "success": False,
+                    "failures": [errors.error(
+                        "snapshot_unavailable", exc.message, **detail)],
+                    "snapshot_id": snapshot_id,
+                }
+            payload["baseline_file"] = meta
+        elif baseline_id:
             cache = getattr(self, "_snapshots", {})
             baseline = cache.get(str(baseline_id))
             if baseline is None:
@@ -863,6 +1015,8 @@ class MaxMcpServer:
                     "snapshot_id": snapshot_id,
                 }
             payload["baseline"] = str(baseline_id)
+
+        if baseline is not None:
             payload["diff"] = scene_state.diff_documents(baseline, document, tolerance)
         return payload
 

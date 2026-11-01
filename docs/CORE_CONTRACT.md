@@ -155,3 +155,9 @@ Agent 应把 `name` 作为引用、把 `handle` 作为"同一性线索"。
 对象是否真的创建、变换、复制、删除，修改器/材质是否真的落到 Max 场景，以及截图是否
 真实生成，必须由真实 Max 读回确认（证据等级 M，见 `docs/OVERNIGHT_ACCEPTANCE.md`
 第 2 节的 L1–L24）。
+
+结论声明（`success` / `failures` / 枚举 / 回执字段）只说明"handler 说它做了什么"，
+不等于"场景真的变成了那样"。两件事在本层是分开的：**执行结论**写在 `success`，
+**目标是否达成**写在 `verification`，后者只来自读回。回执字段（`saved`、`written`、
+`moved`、`renamed` 等）的读取规则见 `docs/ERROR_CODES.md` 第 5 节——它们比
+`message` 强，但比读回弱；`payload_field` 验证器就工作在这个强度上，文档里也是这么写的。

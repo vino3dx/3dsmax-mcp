@@ -18,6 +18,13 @@ Stage 3 added the handlers the workflow layer needs (``list_objects``, the
 signature and the reply shape follow the MAXScript handler, and the state change
 is real inside this object, so a workflow can be executed and verified offline
 without ever claiming a 3ds Max result.
+
+Stage 4 added the organisation and file handlers (``create_layer`` /
+``list_layers`` / ``assign_to_layer`` / ``group_objects`` / ``ungroup_objects`` /
+``scene_save_as`` / ``export_fbx``) and made ``rename_object`` match Max's real
+behaviour: a name collision does **not** raise, it silently keeps the old name
+and reports ``renamed: false``.  The stub is deliberately not kinder than Max,
+because a stub that is easier to satisfy makes the tests lie.
 """
 
 from __future__ import annotations
@@ -92,6 +99,17 @@ class FakeScene:
         self.materials: Dict[str, Dict[str, Any]] = {}
         #: per-object face selection kept between poly_select_faces/extrude
         self.selected_faces: Dict[str, List[int]] = {}
+        #: layer name -> its properties; Max always starts with layer "0"
+        self.layers: Dict[str, Dict[str, Any]] = {
+            "0": {"name": "0", "hidden": False, "frozen": False, "wireColor": None},
+        }
+        #: group name -> member names
+        self.groups: Dict[str, List[str]] = {}
+        #: last path handed to scene_save_as / export_fbx (no bytes are written)
+        self.saved_path = ""
+        self.exported_path = ""
+        #: paths that already exist, so the overwrite guard can be exercised
+        self.existing_files: set = set()
         self._handle = 100
         #: names Max will refuse to delete (simulates a locked/referenced node)
         self.undeletable: set = set()
@@ -416,17 +434,152 @@ class FakeScene:
         old = str(params.get("name") or "")
         new = str(params.get("newName") or "")
         node = self._require(old)
-        if new in self.nodes and new != old:
+        if not new:
             raise BridgeCommandError(
-                "Name already in use: {0}".format(new),
-                detail={"kind": "err.bad_value", "message": new},
+                "Missing parameter: newName",
+                detail={"kind": "err.missing_param", "message": "newName"},
             )
-        self.nodes.pop(old, None)
-        node["name"] = new
-        self.nodes.setdefault(new, []).append(node)
-        self.selection = [new if item == old else item for item in self.selection]
-        return {"name": old, "newName": new, "handle": node["handle"],
-                "message": "Renamed."}
+        # Max does not raise when the target name is taken - it silently keeps
+        # the old one.  The handler therefore compares instead of assuming, and
+        # this stub must do the same or the offline tests would be kinder than
+        # the real thing.
+        if new == old or new not in self.nodes:
+            self.nodes.pop(old, None)
+            node["name"] = new
+            self.nodes.setdefault(new, []).append(node)
+            self.selection = [new if item == old else item for item in self.selection]
+        return {"oldName": old, "newName": node["name"],
+                "renamed": node["name"] == new, "message": "Renamed."}
+
+    # ---------------------------------------------- stage 4: layers, groups
+    def _h_list_layers(self, params):
+        rows = []
+        for name in sorted(self.layers):
+            layer = self.layers[name]
+            rows.append({
+                "name": name,
+                "hidden": bool(layer.get("hidden")),
+                "frozen": bool(layer.get("frozen")),
+                "wireColor": layer.get("wireColor"),
+                "nodeCount": sum(1 for entries in self.nodes.values()
+                                 for node in entries if node.get("layer") == name),
+            })
+        return {"count": len(rows), "layers": rows}
+
+    def _h_create_layer(self, params):
+        name = str(params.get("name") or "")
+        if not name:
+            raise BridgeCommandError(
+                "Missing parameter: name",
+                detail={"kind": "err.missing_param", "message": "name"},
+            )
+        if name in self.layers:
+            raise BridgeCommandError(
+                "layer already exists: {0}".format(name),
+                detail={"kind": "err.bad_value", "message": name},
+            )
+        self.layers[name] = {
+            "name": name,
+            "hidden": bool(params.get("hidden")),
+            "frozen": False,
+            "wireColor": params.get("color"),
+        }
+        return {"layer": name, "message": "Layer created: {0}".format(name)}
+
+    def _h_assign_to_layer(self, params):
+        layer = str(params.get("layer") or "")
+        if not layer:
+            raise BridgeCommandError(
+                "Missing parameter: layer",
+                detail={"kind": "err.missing_param", "message": "layer"},
+            )
+        if layer not in self.layers:
+            # mcpEnsureLayer creates it on demand.
+            self.layers[layer] = {"name": layer, "hidden": False,
+                                  "frozen": False, "wireColor": None}
+        moved: List[str] = []
+        failures: List[str] = []
+        for name in self._targets(params):
+            node = self._require(name)
+            if name in self.skip_assign:
+                failures.append("{0}: layer rejected".format(name))
+                continue
+            node["layer"] = layer
+            moved.append(name)
+        return {"layer": layer, "moved": moved, "failures": failures}
+
+    def _h_group_objects(self, params):
+        names = self._targets(params)
+        if not names:
+            raise BridgeCommandError(
+                "Nothing selected",
+                detail={"kind": "err.no_selection", "message": "no_selection"},
+            )
+        requested = str(params.get("name") or "")
+        group = self._unique_name(requested or "Group001")
+        self._handle += 1
+        node = _node(group, self._handle, "Group")
+        node["superClass"] = "Container"
+        node["vertexCount"] = 0
+        node["faceCount"] = 0
+        node["children"] = list(names)
+        node["childCount"] = len(names)
+        self.nodes.setdefault(group, []).append(node)
+        for name in names:
+            target = self._require(name)
+            target["parent"] = group
+        self.groups[group] = list(names)
+        return {"group": group, "message": "OK"}
+
+    def _h_ungroup_objects(self, params):
+        ungrouped: List[str] = []
+        failures: List[str] = []
+        for name in self._targets(params):
+            node = self._require(name)
+            if name not in self.groups:
+                failures.append(name)
+                continue
+            for child in self.groups.pop(name):
+                member = self.node(child)
+                if member is not None:
+                    member["parent"] = ""
+            self.nodes.pop(name, None)
+            ungrouped.append(name)
+        return {"ungrouped": ungrouped, "failures": failures, "message": "OK"}
+
+    # ------------------------------------------- stage 4: saving and export
+    def _h_scene_save_as(self, params):
+        path = str(params.get("path") or "")
+        if not path:
+            raise BridgeCommandError(
+                "Missing parameter: path",
+                detail={"kind": "err.missing_param", "message": "path"},
+            )
+        if "." not in path.rsplit("/", 1)[-1]:
+            path = path + ".max"
+        if path in self.existing_files and params.get("confirm") is not True:
+            raise BridgeCommandError(
+                "File exists, pass confirm=true to overwrite: {0}".format(path),
+                detail={"kind": "err.confirm_required", "message": path},
+            )
+        # No bytes are written: this stub records the intent so tests can assert
+        # the call happened, and never claims a file exists on disk.
+        self.saved_path = path
+        return {"saved": path, "pathKept": params.get("keepPath") is False,
+                "message": "Saved {0}".format(path)}
+
+    def _h_export_fbx(self, params):
+        path = str(params.get("path") or "")
+        if not path:
+            raise BridgeCommandError(
+                "Missing parameter: path",
+                detail={"kind": "err.missing_param", "message": "path"},
+            )
+        if not path.lower().endswith(".fbx"):
+            path = path + ".fbx"
+        self.exported_path = path
+        return {"path": path, "preset": str(params.get("preset") or "unreal"),
+                "written": True, "message": "Exported {0}".format(path)}
 
     # ------------------------------------------------- stage 3: visual feedback
     def _h_vision_capture(self, params):

@@ -546,7 +546,7 @@ class WorkflowEngine:
                     "detail": "Automatic retry refused because the operation is not "
                               "idempotent; re-read the scene before deciding.",
                 }
-            row["recovery"] = self._recover(step)
+            row["recovery"] = self._recover(step, row.get("error"))
             return row, {"status": row["status"]}
 
         ctx = {
@@ -586,29 +586,82 @@ class WorkflowEngine:
                 step=step.id,
                 verification=verification.get("kind"),
             )
-            row["recovery"] = self._recover(step)
+            row["recovery"] = self._recover(step, row.get("error"))
         return row, {"status": row["status"]}
 
     # ----------------------------------------------------------- recovery
-    def _recover(self, step: Step) -> Dict[str, Any]:
+    def _recover(self, step: Step, error: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """Re-read the scene after a failure; never retry on our own.
 
         The point is to hand the agent evidence: is the bridge still alive, is
         the scene still readable, and what does the count look like now.  A
         destructive step that "failed" may still have taken effect, so the
         answer is a fresh observation, not a guess.
+
+        "The bridge vanished" and "the scene cannot be read" need different
+        reactions - one is worth a reconnect, the other is not - so the block
+        names which one it observed instead of leaving the caller to infer it
+        from a null count.
         """
         count_status, count_value = self._reader.count()
         readable = count_status == "ok"
+        observed = None if readable else count_value
+        code = ""
+        if isinstance(observed, dict):
+            code = str(observed.get("code") or observed.get("kind") or "")
+
+        if readable:
+            diagnosis = "scene_readable"
+        elif code and errors.is_transport_failure(code):
+            diagnosis = "bridge_unreachable"
+        else:
+            diagnosis = "scene_unreadable"
+
         recovery: Dict[str, Any] = {
             "attempted": True,
+            "diagnosis": diagnosis,
             "scene_readable": readable,
             "object_count": count_value if readable else None,
             "automatic_retry": False,
-            "note_zh": "失败后已重新读取场景；是否重试由调用方按实际状态决定。",
-            "note_en": "The scene was re-read after the failure; the caller decides "
-                       "whether to retry, based on the observed state.",
         }
+        if not readable:
+            recovery["read_error"] = observed
+
+        if diagnosis == "bridge_unreachable":
+            recovery["suggest_actions"] = ["bridge_status", "bridge_selftest"]
+            recovery["note_zh"] = (
+                "读取场景时桥接已断开：Max 可能被关闭、脚本被重置或端口被占用。"
+                "先恢复桥接并确认场景状态，再决定是否重试；不要假定失败的那一步没有生效。"
+            )
+            recovery["note_en"] = (
+                "The bridge was gone when the scene was re-read: Max may have been "
+                "closed, the startup script reset, or the port taken. Restore the "
+                "bridge and confirm the scene before retrying - the failed step may "
+                "still have taken effect."
+            )
+        elif diagnosis == "scene_unreadable":
+            recovery["suggest_actions"] = ["bridge_selftest"]
+            recovery["note_zh"] = (
+                "桥接可达，但场景状态读不出来。先自检，确认当前场景不是空白或损坏，"
+                "再决定是否重试。"
+            )
+            recovery["note_en"] = (
+                "The bridge answers but the scene state could not be read. Run the "
+                "self-test, confirm the scene is neither empty nor broken, then decide "
+                "about a retry."
+            )
+        else:
+            recovery["suggest_actions"] = ["get_object_info"]
+            recovery["note_zh"] = (
+                "失败后已重新读取场景；失败的那一步可能已经部分生效。"
+                "是否重试由调用方按实际状态决定。"
+            )
+            recovery["note_en"] = (
+                "The scene was re-read after the failure and the failed step may have "
+                "partly taken effect. The caller decides whether to retry, based on the "
+                "observed state."
+            )
+
         selection_status, selection_value = self._reader.selection()
         if selection_status == "ok":
             recovery["selection"] = selection_value

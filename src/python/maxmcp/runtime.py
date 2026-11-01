@@ -25,7 +25,37 @@ _OPERATION_IDS = itertools.count(1)
 #: them is a list, the handler has declared an outcome even without a
 #: ``success`` flag - ``{applied: [...], failures: []}`` is the dominant shape in
 #: ``src/ms`` (``mcp_poly.ms``, ``mcp_modifiers.ms``, ``mcp_shading.ms``).
-_OUTCOME_KEYS = ("applied", "deleted", "created", "objects")
+#:
+#: ``results`` is the per-item variant used by the selection and modifier
+#: handlers: an empty list means nothing was processed, which is not success.
+_OUTCOME_KEYS = ("applied", "deleted", "created", "objects", "results")
+
+#: Receipt fields: the handler named the artefact it produced - a written path, a
+#: created group, the objects it moved.  The *name* is the claim and the *value*
+#: is the evidence, so the same key reads correctly as a bool (``written: true``),
+#: a path (``saved: "C:/a.max"``) or a list (``moved: ["Box001"]``).
+#:
+#: ``message`` is deliberately absent.  Every handler returns one, including the
+#: ones that did nothing, so treating it as a conclusion would turn "no evidence"
+#: into "success" - the exact mistake this function exists to prevent.
+_RECEIPT_KEYS = (
+    "saved", "written", "opened", "merged", "copied", "reset",
+    "group", "layer", "moved", "aligned", "attached", "detached",
+    "children", "linked", "bones", "goals", "renamed", "ungrouped",
+)
+
+
+def _receipt_verdict(value: Any) -> Optional[bool]:
+    """Read one receipt value; ``None`` means it cannot decide anything."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return bool(value.strip())
+    if isinstance(value, (list, tuple)):
+        return len(value) > 0
+    if isinstance(value, int):
+        return value > 0
+    return None
 
 
 def declared_outcome(source: Dict[str, Any]) -> Optional[Tuple[bool, str]]:
@@ -45,6 +75,10 @@ def declared_outcome(source: Dict[str, Any]) -> Optional[Tuple[bool, str]]:
     It does not invent success: a non-empty ``failures`` list is a failure, and
     an enumeration that is present but empty (with no ``failures`` key) means the
     handler reported doing nothing - which is not a success claim either.
+
+    Receipt fields come last and are read by value, not by presence: an empty
+    path, an empty list or ``written: false`` is a failure, so a handler that
+    returned ``{saved: ""}`` still cannot claim to have saved anything.
     """
     if isinstance(source.get("success"), bool):
         return bool(source["success"]), "success"
@@ -57,6 +91,12 @@ def declared_outcome(source: Dict[str, Any]) -> Optional[Tuple[bool, str]]:
         value = source.get(key)
         if isinstance(value, list):
             return bool(value), key
+    for key in _RECEIPT_KEYS:
+        if key not in source:
+            continue
+        verdict = _receipt_verdict(source[key])
+        if verdict is not None:
+            return verdict, key
     return None
 
 

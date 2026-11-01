@@ -406,6 +406,68 @@ def verify_payload_number(spec: Dict[str, Any], ctx: Dict[str, Any]) -> Dict[str
                    field=field, value=value, checks=checks)
 
 
+def _payload_containers(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Places a tool's own values may live, in reading order.
+
+    The runtime wraps the bridge reply as ``{success, operation, data: {...}}``,
+    so a handler field such as ``saved`` is one level down while ``objects`` is
+    lifted to the top.  Callers should not have to know which.
+    """
+    containers: List[Dict[str, Any]] = [payload]
+    data = payload.get("data")
+    if isinstance(data, dict):
+        containers.append(data)
+    for holder in (payload, data if isinstance(data, dict) else {}):
+        rows = holder.get("objects")
+        if isinstance(rows, list) and rows and isinstance(rows[0], dict):
+            containers.append(rows[0])
+    return containers
+
+
+def verify_payload_field(spec: Dict[str, Any], ctx: Dict[str, Any]) -> Dict[str, Any]:
+    """Compare a value the tool itself reported against what was asked for.
+
+    This is deliberately weaker than reading the scene back, and it says so by
+    its name.  A pass means "the tool reported the artefact we requested" - not
+    that the artefact exists on disk.  It is the honest option for outputs that
+    cannot be re-read without a live Max: a saved path, an export flag, a
+    written file name.
+
+    ``includes`` is the practical comparison for paths, where separators and
+    letter case differ between the request and the reply.
+    """
+    payload = ctx.get("payload")
+    field = spec.get("field")
+    if not isinstance(payload, dict) or not isinstance(field, str) or not field:
+        return _unavailable("payload_field", "field_not_readable", field=field)
+
+    value: Any = None
+    found = False
+    for container in _payload_containers(payload):
+        if field in container:
+            value = container[field]
+            found = True
+            break
+    if not found:
+        return _unavailable("payload_field", "field_absent", field=field)
+
+    checks: List[Dict[str, Any]] = [{"check": "actual", "value": value}]
+    if "equals" in spec:
+        checks.append({"check": "equals", "expected": spec["equals"],
+                       "passed": value == spec["equals"]})
+    if "is" in spec:
+        checks.append({"check": "is", "expected": spec["is"],
+                       "passed": value is spec["is"]})
+    if isinstance(spec.get("includes"), str):
+        checks.append({"check": "includes", "expected": spec["includes"],
+                       "passed": spec["includes"].lower() in str(value).lower()})
+    graded = [item for item in checks if "passed" in item]
+    if not graded:
+        return _unavailable("payload_field", "no_expectation_declared", value=value)
+    return _result("payload_field", True, all(item["passed"] for item in graded),
+                   field=field, value=value, checks=checks)
+
+
 def verify_image(spec: Dict[str, Any], ctx: Dict[str, Any]) -> Dict[str, Any]:
     """Visual feedback is only "available" when real image bytes came back."""
     images = ctx.get("images") or []
@@ -433,6 +495,7 @@ VERIFIERS: Dict[str, Callable[[Dict[str, Any], Dict[str, Any]], Dict[str, Any]]]
     "face_count": verify_face_count,
     "selection": verify_selection,
     "payload_number": verify_payload_number,
+    "payload_field": verify_payload_field,
     "image": verify_image,
 }
 
