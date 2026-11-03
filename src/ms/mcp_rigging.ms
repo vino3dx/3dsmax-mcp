@@ -159,13 +159,21 @@ fn mcpH_rig_set_bone_size params =
     local nodes = mcpResolveNodes (mcpArr params "objects") fallbackToSelection:true
     local w = mcpNum params "width" default:-1.0
     local h = mcpNum params "height" default:-1.0
+    local applied = #()
+    local failures = #()
     for node in nodes do
     (
-        if w >= 0 do try ( node.width = w ) catch()
-        if h >= 0 do try ( node.height = h ) catch()
+        local nm = "?"
+        try ( nm = node.name ) catch ( nm = "?" )
+        local ok = true
+        if w >= 0 do try ( node.width = w ) catch ( ok = false )
+        if h >= 0 do try ( node.height = h ) catch ( ok = false )
+        if ok then append applied nm
+        else append failures (nm + ": size rejected")
     )
     local p = #()
-    mcpPair p "objects" (for n in nodes collect n.name)
+    mcpPair p "objects" applied
+    mcpPair p "failures" failures
     mcpPair p "message" (mcpMsg "msg.ok")
     mcpObj p
 )
@@ -229,10 +237,23 @@ fn mcpH_rig_list_bones params =
 fn mcpH_rig_skin_add params =
 (
     local nodes = mcpResolveNodes (mcpArr params "objects") fallbackToSelection:true
-    for node in nodes do try ( addModifier node (Skin()) ) catch()
+    local applied = #()
+    local failures = #()
+    for node in nodes do
+    (
+        local nm = "?"
+        try ( nm = node.name ) catch ( nm = "?" )
+        local ok = true
+        try ( addModifier node (Skin()) ) catch ( ok = false )
+        -- Read back: the only proof a Skin was added is that the node now has one.
+        local now = (mcpGetSkinMod node) != undefined
+        if ok and now then append applied nm
+        else append failures (nm + ": no Skin after addModifier")
+    )
     local p = #()
-    mcpPair p "objects" (for n in nodes collect n.name)
-    mcpPair p "message" (mcpMsg "msg.skin_added" a1:(nodes.count as string))
+    mcpPair p "objects" applied
+    mcpPair p "failures" failures
+    mcpPair p "message" (mcpMsg "msg.skin_added" a1:(applied.count as string))
     mcpObj p
 )
 
@@ -257,7 +278,16 @@ fn mcpH_rig_skin_add_bone params =
             try ( skinOps.addBone skinMod boneNode flag ) catch ( append failed (node.name + ": " + (getCurrentException())) )
     )
     local p = #()
-    mcpPair p "objects" (for n in nodes collect n.name)
+    -- A node named in `failed` is not a success just because it was asked for.
+    local applied = #()
+    for n in nodes do
+    (
+        local nm = try (n.name) catch ("")
+        local bad = false
+        for f in failed do ( if (findString f nm) == 1 do bad = true )
+        if not bad and nm != "" do append applied nm
+    )
+    mcpPair p "objects" applied
     mcpPair p "bone" boneNode.name
     mcpPair p "rigid" rigid
     mcpPair p "failures" failed
@@ -287,7 +317,16 @@ fn mcpH_rig_skin_set_weight params =
         )
     )
     local p = #()
-    mcpPair p "objects" (for n in nodes collect n.name)
+    -- A node named in `failed` is not a success just because it was asked for.
+    local applied = #()
+    for n in nodes do
+    (
+        local nm = try (n.name) catch ("")
+        local bad = false
+        for f in failed do ( if (findString f nm) == 1 do bad = true )
+        if not bad and nm != "" do append applied nm
+    )
+    mcpPair p "objects" applied
     mcpPair p "vertex" vertex
     mcpPair p "failures" failed
     mcpPair p "message" (mcpMsg "msg.ok")
@@ -381,7 +420,16 @@ fn mcpH_rig_skin_remove_bone params =
         )
     )
     local p = #()
-    mcpPair p "objects" (for n in nodes collect n.name)
+    -- A node named in `failed` is not a success just because it was asked for.
+    local applied = #()
+    for n in nodes do
+    (
+        local nm = try (n.name) catch ("")
+        local bad = false
+        for f in failed do ( if (findString f nm) == 1 do bad = true )
+        if not bad and nm != "" do append applied nm
+    )
+    mcpPair p "objects" applied
     mcpPair p "bone" boneName
     mcpPair p "failures" failed
     mcpPair p "message" (mcpMsg "msg.ok")
@@ -417,7 +465,16 @@ fn mcpH_rig_skin_set_vertex_weights params =
         )
     )
     local p = #()
-    mcpPair p "objects" (for n in nodes collect n.name)
+    -- A node named in `failed` is not a success just because it was asked for.
+    local applied = #()
+    for n in nodes do
+    (
+        local nm = try (n.name) catch ("")
+        local bad = false
+        for f in failed do ( if (findString f nm) == 1 do bad = true )
+        if not bad and nm != "" do append applied nm
+    )
+    mcpPair p "objects" applied
     mcpPair p "vertex" vertex
     mcpPair p "failures" failed
     mcpPair p "message" (mcpMsg "msg.ok")
@@ -494,10 +551,25 @@ fn mcpH_rig_spline_ik params =
 fn mcpH_rig_ik_enable params =
 (
     local nodes = mcpResolveNodes (mcpArr params "objects") fallbackToSelection:true
+    local applied = #()
+    local failures = #()
     for node in nodes do
-        try ( node.ikEnabled = true ) catch ( try ( node.isIKNode = true ) catch() )
+    (
+        local nm = "?"
+        try ( nm = node.name ) catch ( nm = "?" )
+        local ok = true
+        try ( node.ikEnabled = true ) catch ( ok = false )
+        if not ok do try ( node.isIKNode = true; ok = true ) catch ( ok = false )
+        -- Read the flag back; when the node has no such property the write
+        -- itself decides, which is still better than assuming.
+        local got = ok
+        try ( got = node.ikEnabled ) catch ( got = ok )
+        if got == true then append applied nm
+        else append failures (nm + ": IK flag did not change")
+    )
     local p = #()
-    mcpPair p "objects" (for n in nodes collect n.name)
+    mcpPair p "objects" applied
+    mcpPair p "failures" failures
     mcpPair p "ikEnabled" true
     mcpPair p "message" (mcpMsg "msg.ok")
     mcpObj p
@@ -506,10 +578,25 @@ fn mcpH_rig_ik_enable params =
 fn mcpH_rig_ik_disable params =
 (
     local nodes = mcpResolveNodes (mcpArr params "objects") fallbackToSelection:true
+    local applied = #()
+    local failures = #()
     for node in nodes do
-        try ( node.ikEnabled = false ) catch ( try ( node.isIKNode = false ) catch() )
+    (
+        local nm = "?"
+        try ( nm = node.name ) catch ( nm = "?" )
+        local ok = true
+        try ( node.ikEnabled = false ) catch ( ok = false )
+        if not ok do try ( node.isIKNode = false; ok = true ) catch ( ok = false )
+        -- Read the flag back; when the node has no such property the write
+        -- itself decides, which is still better than assuming.
+        local got = ok
+        try ( got = node.ikEnabled ) catch ( got = ok )
+        if got == false then append applied nm
+        else append failures (nm + ": IK flag did not change")
+    )
     local p = #()
-    mcpPair p "objects" (for n in nodes collect n.name)
+    mcpPair p "objects" applied
+    mcpPair p "failures" failures
     mcpPair p "ikEnabled" false
     mcpPair p "message" (mcpMsg "msg.ok")
     mcpObj p
@@ -520,9 +607,21 @@ fn mcpH_rig_ik_disable params =
 fn mcpH_rig_morpher_add params =
 (
     local nodes = mcpResolveNodes (mcpArr params "objects") fallbackToSelection:true
-    for node in nodes do try ( addModifier node (Morpher()) ) catch()
+    local applied = #()
+    local failures = #()
+    for node in nodes do
+    (
+        local nm = "?"
+        try ( nm = node.name ) catch ( nm = "?" )
+        local ok = true
+        try ( addModifier node (Morpher()) ) catch ( ok = false )
+        local now = (mcpGetMorpherMod node) != undefined
+        if ok and now then append applied nm
+        else append failures (nm + ": no Morpher after addModifier")
+    )
     local p = #()
-    mcpPair p "objects" (for n in nodes collect n.name)
+    mcpPair p "objects" applied
+    mcpPair p "failures" failures
     mcpPair p "message" (mcpMsg "msg.ok")
     mcpObj p
 )
@@ -541,7 +640,16 @@ fn mcpH_rig_morpher_add_target params =
             try ( morpherOps.addMorphTarget mm node targetNode ) catch ( append failed (node.name + ": " + (getCurrentException())) )
     )
     local p = #()
-    mcpPair p "objects" (for n in nodes collect n.name)
+    -- A node named in `failed` is not a success just because it was asked for.
+    local applied = #()
+    for n in nodes do
+    (
+        local nm = try (n.name) catch ("")
+        local bad = false
+        for f in failed do ( if (findString f nm) == 1 do bad = true )
+        if not bad and nm != "" do append applied nm
+    )
+    mcpPair p "objects" applied
     mcpPair p "target" targetNode.name
     mcpPair p "failures" failed
     mcpPair p "message" (mcpMsg "msg.ok")

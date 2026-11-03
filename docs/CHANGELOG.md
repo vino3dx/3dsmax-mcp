@@ -8,6 +8,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Animation / Rigging outcomes are now evidence, not an echo (Stage 9).**
+  A handler that answers `mcpPair p "objects" (for n in nodes collect n.name)`
+  reports success even when every node was skipped, because the runtime reads
+  `objects` as an enumeration. Stage 8 fixed 8 of them; this stage audited the
+  remaining 23 one by one and fixed 17 more.
+  - **Read-back where a flag exists.** `anim_set_controller` and
+    `constraint_remove` compare the installed controller class with the one
+    requested (Max silently keeps the old controller when it refuses a class).
+    `rig_skin_add` / `rig_morpher_add` check the modifier is actually there.
+    `rig_ik_enable` / `disable` read `ikEnabled` back instead of echoing the
+    request. `constraint_surface` reads the bound surface name, so a controller
+    that was created but never bound no longer counts as a constraint.
+  - **Three-way answers for key operations.** `anim_clear_animation`,
+    `anim_offset_keys`, `anim_scale_keys` separate `applied` / `skipped` /
+    `failures`: clearing an object with no animation is a successful no-op, not
+    a failure, while a controller that still holds keys afterwards is.
+  - **Bake proves a key landed.** `anim_bake` and `anim_bake_range` check that a
+    key exists at `startFrame` after the loop, per object; `keysWritten == 0` for
+    every object is now a reported failure instead of a cheerful message.
+  - **Skin / Morpher report only what changed.** `rig_skin_add_bone`,
+    `rig_skin_remove_bone`, `rig_skin_set_weight`,
+    `rig_skin_set_vertex_weights` and `rig_morpher_add_target` derive `objects`
+    from their `failed` list instead of echoing the request.
+  - Six handlers stay on the backlog with a written reason (not reproducible
+    read-back, or an API the project has never used):
+    `anim_set_interpolation`, `anim_set_out_of_range`, `constraint_set_weight`,
+    `ctrl_add_list`, `rig_morpher_set_value`, `rig_set_ik_chain`.
+  - `outcome_audit.py` grades every handler that reports an object list as
+    CONFIRMED_BUG / SUSPICIOUS / SAFE_ECHO / VERIFIED_RESULT / UNKNOWN, prints
+    the reason (including bare-`catch()` counts), and gates only the core
+    profile. Counts: CONFIRMED_BUG 23 -> 6, VERIFIED_RESULT 8 -> 26.
+  - `test/static/result_semantics_test.py` pins the six concepts apart: a
+    successful no-op, "nothing said" as `missing_success`, and `changed` never
+    standing in for `success`.
+
 - **`objects` echoed the request in 29 handlers (Stage 8).** The runtime reads
   `objects` as an enumeration, so `mcpPair p "objects" (for n in nodes collect n.name)`
   made a handler report success even when every node was skipped - a missing

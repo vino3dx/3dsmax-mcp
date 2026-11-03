@@ -348,16 +348,43 @@ fn mcpH_anim_clear_animation params =
     local plist = #()
     if props.count == 0 then plist = #("position", "rotation", "scale")
     else ( for x in props do append plist (x as string) )
+    -- Clearing an object that has no animation is a legitimate no-op, not a
+    -- failure.  Clearing a controller that still holds keys afterwards is a
+    -- failure.  The old code could not tell those apart: it echoed the request.
+    local applied = #()
+    local skipped = #()
+    local failures = #()
     for node in nodes do
     (
+        local nm = "?"
+        try ( nm = node.name ) catch ( nm = "?" )
+        local had = false
+        local ok = true
+        local leftover = 0
         for pr in plist do
         (
             local ctrl = mcpGetAnimController node pr
-            if ctrl != undefined do try ( deleteKeys ctrl #all ) catch()
+            if ctrl != undefined do
+            (
+                local before = 0
+                try ( before = ctrl.keys.count ) catch ( before = 0 )
+                if before > 0 do had = true
+                try ( deleteKeys ctrl #all ) catch ( ok = false )
+                local after = 0
+                try ( after = ctrl.keys.count ) catch ( after = 0 )
+                leftover = leftover + after
+            )
         )
+        -- Read back: if any controller still reports keys, the clear did not take.
+        if not ok or leftover > 0 then
+            append failures (nm + ": " + (leftover as string) + " key(s) left")
+        else if had then append applied nm
+        else append skipped (nm + ": no keys to clear")
     )
     local p = #()
-    mcpPair p "objects" (for n in nodes collect n.name)
+    mcpPair p "objects" applied
+    mcpPair p "skipped" skipped
+    mcpPair p "failures" failures
     mcpPair p "message" (mcpMsg "msg.ok")
     mcpObj p
 )
@@ -367,14 +394,29 @@ fn mcpH_anim_offset_keys params =
     local nodes = mcpResolveNodes (mcpArr params "objects") fallbackToSelection:true
     local propName = mcpReqStr params "property"
     local dt = (mcpReqInt params "offset") * ticksPerFrame
+    local applied = #()
+    local skipped = #()
+    local failures = #()
     for node in nodes do
     (
+        local nm = "?"
+        try ( nm = node.name ) catch ( nm = "?" )
         local ctrl = mcpGetAnimController node propName
-        if ctrl != undefined do
-            for k in ctrl.keys do try ( k.time = k.time + dt ) catch()
+        if ctrl == undefined then append skipped (nm + ": no " + propName + " controller")
+        else
+        (
+            local n = 0
+            local ok = true
+            for k in ctrl.keys do ( n = n + 1; try ( k.time = k.time + dt ) catch ( ok = false ) )
+            if not ok then append failures (nm + ": key move failed")
+            else if n == 0 then append skipped (nm + ": no keys")
+            else append applied nm
+        )
     )
     local p = #()
-    mcpPair p "objects" (for n in nodes collect n.name)
+    mcpPair p "objects" applied
+    mcpPair p "skipped" skipped
+    mcpPair p "failures" failures
     mcpPair p "property" propName
     mcpPair p "offset" (mcpInt params "offset")
     mcpPair p "message" (mcpMsg "msg.ok")
@@ -387,14 +429,29 @@ fn mcpH_anim_scale_keys params =
     local propName = mcpReqStr params "property"
     local factor = mcpNum params "factor" default:1.0
     local pt = (mcpInt params "pivotFrame" default:0) * ticksPerFrame
+    local applied = #()
+    local skipped = #()
+    local failures = #()
     for node in nodes do
     (
+        local nm = "?"
+        try ( nm = node.name ) catch ( nm = "?" )
         local ctrl = mcpGetAnimController node propName
-        if ctrl != undefined do
-            for k in ctrl.keys do try ( k.time = pt + (k.time - pt) * factor ) catch()
+        if ctrl == undefined then append skipped (nm + ": no " + propName + " controller")
+        else
+        (
+            local n = 0
+            local ok = true
+            for k in ctrl.keys do ( n = n + 1; try ( k.time = pt + (k.time - pt) * factor ) catch ( ok = false ) )
+            if not ok then append failures (nm + ": key move failed")
+            else if n == 0 then append skipped (nm + ": no keys")
+            else append applied nm
+        )
     )
     local p = #()
-    mcpPair p "objects" (for n in nodes collect n.name)
+    mcpPair p "objects" applied
+    mcpPair p "skipped" skipped
+    mcpPair p "failures" failures
     mcpPair p "property" propName
     mcpPair p "factor" factor
     mcpPair p "message" (mcpMsg "msg.ok")
@@ -407,22 +464,38 @@ fn mcpH_anim_set_controller params =
     local propName = mcpReqStr params "property"
     local ctrlType = mcpReqStr params "controller"
     local cls = mcpControllerClass propName ctrlType
+    local applied = #()
+    local failures = #()
     for node in nodes do
     (
-        if propName == "position" then
-            try ( node.position.controller = (execute cls)() ) catch()
-        else if propName == "rotation" then
-            try ( node.rotation.controller = (execute cls)() ) catch()
-        else if propName == "scale" then
-            try ( node.scale.controller = (execute cls)() ) catch()
-        else
+        local nm = "?"
+        try ( nm = node.name ) catch ( nm = "?" )
+        local ok = true
+        try
         (
-            local code = "$'" + node.name + "'." + propName + ".controller = (" + cls + ")()"
-            try ( execute code ) catch()
+            if propName == "position" then node.position.controller = (execute cls)()
+            else if propName == "rotation" then node.rotation.controller = (execute cls)()
+            else if propName == "scale" then node.scale.controller = (execute cls)()
+            else
+            (
+                local code = "$'" + node.name + "'." + propName + ".controller = (" + cls + ")()"
+                execute code
+            )
         )
+        catch ( ok = false )
+        -- Read back the controller that is actually installed.  Max refuses some
+        -- classes for a given track and silently keeps the old one; the reply
+        -- used to state the requested type either way.
+        local actual = ""
+        try ( actual = (classof (mcpGetAnimController node propName)) as string ) catch ( actual = "" )
+        if ok and actual != "" and (toLower actual) == (toLower cls) then
+            append applied nm
+        else
+            append failures (nm + ": installed '" + actual + "', wanted '" + cls + "'")
     )
     local p = #()
-    mcpPair p "objects" (for n in nodes collect n.name)
+    mcpPair p "objects" applied
+    mcpPair p "failures" failures
     mcpPair p "property" propName
     mcpPair p "controller" cls
     mcpPair p "message" (mcpMsg "msg.ok")
@@ -522,8 +595,12 @@ fn mcpH_anim_bake params =
     if propArr.count == 0 then props = #("position", "rotation", "scale")
     else ( for x in propArr do append props (x as string) )
     local totalKeys = 0
+    local applied = #()
+    local failures = #()
     for node in nodes do
     (
+        local nm = "?"
+        try ( nm = node.name ) catch ( nm = "?" )
         animate on
         (
             for f = startF to endF by step do
@@ -554,15 +631,26 @@ fn mcpH_anim_bake params =
             )
         )
         local c = 0
+        local atStart = 0
         for pr in props do
         (
             local ctrl = mcpGetAnimController node pr
-            if ctrl != undefined do ( try ( c = c + ctrl.keys.count ) catch() )
+            if ctrl != undefined do
+            (
+                try ( c = c + ctrl.keys.count ) catch()
+                -- Bake promises a key on every sampled frame; check the
+                -- first one exists instead of trusting the loop ran.
+                local k = try ( getKey ctrl (startF * ticksPerFrame) ) catch ( undefined )
+                if k != undefined do atStart = atStart + 1
+            )
         )
         totalKeys = totalKeys + c
+        if atStart > 0 then append applied nm
+        else append failures (nm + ": no key at frame " + (startF as string))
     )
     local p = #()
-    mcpPair p "objects" (for n in nodes collect n.name)
+    mcpPair p "objects" applied
+    mcpPair p "failures" failures
     mcpPair p "startFrame" startF
     mcpPair p "endFrame" endF
     mcpPair p "step" step
@@ -585,8 +673,12 @@ fn mcpH_anim_bake_range params =
     if propArr.count == 0 then props = #("position", "rotation", "scale")
     else ( for x in propArr do append props (x as string) )
     local totalKeys = 0
+    local applied = #()
+    local failures = #()
     for node in all do
     (
+        local nm = "?"
+        try ( nm = node.name ) catch ( nm = "?" )
         animate on
         (
             for f = startF to endF by step do
@@ -617,15 +709,27 @@ fn mcpH_anim_bake_range params =
             )
         )
         local c = 0
+        local atStart = 0
         for pr in props do
         (
             local ctrl = mcpGetAnimController node pr
-            if ctrl != undefined do ( try ( c = c + ctrl.keys.count ) catch() )
+            if ctrl != undefined do
+            (
+                try ( c = c + ctrl.keys.count ) catch()
+                -- Bake promises a key on every sampled frame; check the
+                -- first one exists instead of trusting the loop ran.
+                local k = try ( getKey ctrl (startF * ticksPerFrame) ) catch ( undefined )
+                if k != undefined do atStart = atStart + 1
+            )
         )
         totalKeys = totalKeys + c
+        if atStart > 0 then append applied nm
+        else append failures (nm + ": no key at frame " + (startF as string))
     )
     local p = #()
     mcpPair p "roots" (for r in roots collect r.name)
+    mcpPair p "objects" applied
+    mcpPair p "failures" failures
     mcpPair p "objectCount" all.count
     mcpPair p "startFrame" startF
     mcpPair p "endFrame" endF
@@ -1109,20 +1213,37 @@ fn mcpH_constraint_surface params =
     local targetNode = mcpResolveNode (mcpReqStr params "target")
     local u = mcpNum params "u" default:0.5
     local v = mcpNum params "v" default:0.5
+    -- This one cannot use the shape of the other constraints: it tries two
+    -- constructor names, and it can leave a half-built constraint behind (the
+    -- controller is installed but never bound to the target).
+    local applied = #()
+    local failures = #()
     for node in nodes do
     (
-        local ok = false
-        try ( node.position.controller = surface(); ok = true ) catch()
-        if not ok do try ( node.position.controller = surface_constraint(); ok = true ) catch()
-        if ok do
+        local nm = "?"
+        try ( nm = node.name ) catch ( nm = "?" )
+        local made = false
+        try ( node.position.controller = surface(); made = true ) catch()
+        if not made do try ( node.position.controller = surface_constraint(); made = true ) catch()
+        if not made then
+            append failures (nm + ": no surface constraint class")
+        else
         (
             local sc = node.position.controller
-            try ( sc.surface = targetNode ) catch()
+            local bound = true
+            try ( sc.surface = targetNode ) catch ( bound = false )
             try ( sc.u = u; sc.v = v ) catch()
+            -- Read back the bound surface: "the controller was created" is not
+            -- "the constraint points at the target".
+            local actual = ""
+            try ( actual = sc.surface.name ) catch ( actual = "" )
+            if bound and actual == targetNode.name then append applied nm
+            else append failures (nm + ": surface bound to '" + actual + "'")
         )
     )
     local p = #()
-    mcpPair p "objects" (for n in nodes collect n.name)
+    mcpPair p "objects" applied
+    mcpPair p "failures" failures
     mcpPair p "target" targetNode.name
     mcpPair p "message" (mcpMsg "msg.ok")
     mcpObj p
@@ -1171,22 +1292,40 @@ fn mcpH_constraint_remove params =
 (
     local nodes = mcpResolveNodes (mcpArr params "objects") fallbackToSelection:true
     local propName = mcpStr params "property" default:"position"
+    -- Removing a constraint means putting a plain bezier controller back.  Read
+    -- the installed class back: a locked track keeps its constraint, and the
+    -- reply used to say the removal happened anyway.
+    local want = "bezier_position"
+    if propName == "rotation" do want = "bezier_rotation"
+    else if propName == "scale" do want = "bezier_scale"
+    else if propName != "position" do want = "bezier_float"
+    local applied = #()
+    local failures = #()
     for node in nodes do
     (
-        if propName == "position" then
-            try ( node.position.controller = bezier_position() ) catch()
-        else if propName == "rotation" then
-            try ( node.rotation.controller = bezier_rotation() ) catch()
-        else if propName == "scale" then
-            try ( node.scale.controller = bezier_scale() ) catch()
-        else
+        local nm = "?"
+        try ( nm = node.name ) catch ( nm = "?" )
+        local ok = true
+        try
         (
-            local code = "$'" + node.name + "'." + propName + ".controller = bezier_float()"
-            try ( execute code ) catch()
+            if propName == "position" then node.position.controller = bezier_position()
+            else if propName == "rotation" then node.rotation.controller = bezier_rotation()
+            else if propName == "scale" then node.scale.controller = bezier_scale()
+            else
+            (
+                local code = "$'" + node.name + "'." + propName + ".controller = bezier_float()"
+                execute code
+            )
         )
+        catch ( ok = false )
+        local actual = ""
+        try ( actual = (classof (mcpGetAnimController node propName)) as string ) catch ( actual = "" )
+        if ok and (toLower actual) == (toLower want) then append applied nm
+        else append failures (nm + ": controller is '" + actual + "', wanted '" + want + "'")
     )
     local p = #()
-    mcpPair p "objects" (for n in nodes collect n.name)
+    mcpPair p "objects" applied
+    mcpPair p "failures" failures
     mcpPair p "property" propName
     mcpPair p "message" (mcpMsg "msg.ok")
     mcpObj p

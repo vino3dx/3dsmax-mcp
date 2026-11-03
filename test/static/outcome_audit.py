@@ -23,6 +23,12 @@ Reading the output:
     missing    it emits only keys that carry no conclusion (``message`` is the
                usual one).  Those tools are still callable; under reliability
                mode they will answer ``missing_success`` instead of a verdict.
+
+Stage 9 added a second question, about the *content* of the verdict: a handler
+can declare success through ``objects`` while that list is really the request it
+was given.  ``grade_handler`` classifies those five ways, and only the core
+profile is gated - see ``docs/audit/STAGE9_OUTCOME_AUDIT.md`` for why the rest is
+a backlog rather than a gate.
 """
 
 from pathlib import Path
@@ -46,6 +52,53 @@ DECISIVE = {"success", "ok", "failures"} | set(_OUTCOME_KEYS) | set(_RECEIPT_KEY
 #: gate would just fail until someone did all of them.
 ECHO_OBJECTS = re.compile(
     r'mcpPair\s+\w+\s+"objects"\s+\(\s*for\s+\w+\s+in\s+\w+\s+collect')
+
+# ---------------------------------------------------------------- grading
+#: ``objects`` is built from a list the handler filled only on success.
+APPLIED_OBJECTS = re.compile(r'mcpPair\s+\w+\s+"objects"\s+applied\b')
+#: The handler names the nodes it could not process.
+DECLARES_FAILURES = re.compile(r'mcpPair\s+\w+\s+"failures"')
+#: ``catch()`` with an empty body: the exception is discarded, not recorded.
+BARE_CATCH = re.compile(r'catch\s*\(\s*\)')
+
+CONFIRMED_BUG = "CONFIRMED_BUG"      # echoes the request and never records a failure
+SUSPICIOUS = "SUSPICIOUS"            # one half is honest, the other is not
+SAFE_ECHO = "SAFE_ECHO"              # echo, but the verdict comes from another field
+VERIFIED_RESULT = "VERIFIED_RESULT"  # objects == applied, failures named
+UNKNOWN = "UNKNOWN"                  # no static read is possible
+
+GRADES = (CONFIRMED_BUG, SUSPICIOUS, SAFE_ECHO, VERIFIED_RESULT, UNKNOWN)
+
+
+def grade_handler(body: str) -> tuple:
+    """``(grade, reasons)`` for one handler body - purely structural."""
+    reasons = []
+    echo = bool(ECHO_OBJECTS.search(body))
+    applied = bool(APPLIED_OBJECTS.search(body))
+    failures = bool(DECLARES_FAILURES.search(body))
+    bare = len(BARE_CATCH.findall(body))
+
+    if bare:
+        reasons.append("%d bare catch" % bare)
+    if applied and failures:
+        grade = VERIFIED_RESULT
+        reasons.insert(0, "objects=applied, failures named")
+    elif applied:
+        grade = SUSPICIOUS
+        reasons.insert(0, "objects=applied but no failure list")
+    elif echo and failures:
+        grade = SUSPICIOUS
+        reasons.insert(0, "failures named but objects still echoes the request")
+    elif echo:
+        grade = CONFIRMED_BUG
+        reasons.insert(0, "objects echoes the request, no failure list")
+    elif failures:
+        grade = SAFE_ECHO
+        reasons.insert(0, "verdict rests on failures alone")
+    else:
+        grade = UNKNOWN
+        reasons.insert(0, "no objects/applied/failures shape recognised")
+    return grade, reasons
 
 #: ``fn name whatever =`` opens a definition; the block runs to the next one.
 _FN = re.compile(r"^fn\s+(\w+)\s*[^=\n]*=", re.M)
@@ -135,13 +188,34 @@ def main() -> None:
     if unknown:
         print("unreadable (handler not found statically): " + ", ".join(sorted(unknown)))
 
-    echoes = []
+    graded = {grade: [] for grade in GRADES}
     for entry in catalog:
+        if entry.local:
+            continue
         handler = registered.get(entry.bridge_method, "mcpH_" + entry.bridge_method)
-        if handler in blocks and ECHO_OBJECTS.search("\n".join(blocks[handler])):
-            echoes.append(entry.name)
-    print("objects echo the request (success not proven): %d %s" % (
-        len(echoes), ", ".join(sorted(echoes)) if echoes else ""))
+        if handler not in blocks:
+            continue
+        body = "\n".join(blocks[handler])
+        if not (ECHO_OBJECTS.search(body) or APPLIED_OBJECTS.search(body)):
+            continue
+        grade, reasons = grade_handler(body)
+        graded[grade].append((entry.name, reasons))
+
+    print("result integrity (handlers that report an object list):")
+    for grade in GRADES:
+        names = sorted(name for name, _ in graded[grade])
+        print("  %-16s %2d  %s" % (grade, len(names), ", ".join(names)))
+    for name, reasons in graded[CONFIRMED_BUG] + graded[SUSPICIOUS]:
+        print("    %-28s %s" % (name, "; ".join(reasons)))
+
+    # A core tool that echoes the request and never records a failure is a live
+    # lie in the default profile, so that stays a gate.  The rest of the list is
+    # a backlog: gating it would only push people to add `success: true`.
+    core_bad = [name for name, _ in graded[CONFIRMED_BUG] if name in CORE_TOOLS]
+    assert not core_bad, (
+        "core tools must not report an object list that merely echoes the request: "
+        + ", ".join(sorted(core_bad))
+    )
 
     # The standard workflows are the strongest claim the project makes, so the
     # tools they drive must be readable by the runtime - otherwise a working
