@@ -20,9 +20,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     node could fail silently. Now per node, with the exception text.
   - Fixed `rig_skin_auto_weight`: `objects` listed the request, not the nodes
     whose weights were recomputed.
-  - `outcome_audit.py` now prints the remaining 27 handlers that echo the request
+  - Fixed `constraint_look_at` / `constraint_position` / `constraint_path` /
+    `constraint_orientation`: same bare-catch shape as `constraint_link`. A
+    constraint that could not be created on a locked controller is now named.
+  - `outcome_audit.py` now prints the remaining 23 handlers that echo the request
     (`objects echo the request (success not proven)`). It is a report, not a
-    gate: each one needs its own rewrite, and failing the build until all 27 are
+    gate: each one needs its own rewrite, and failing the build until all 23 are
     done would only encourage fake `success` flags.
 
 - **False parameter promises and a boolean-outcome blind spot (Stage 6).** A

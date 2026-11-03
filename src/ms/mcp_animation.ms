@@ -955,8 +955,13 @@ fn mcpH_constraint_look_at params =
     local target = mcpResolveNode (mcpReqStr params "target")
     local upNodeName = mcpStr params "upNode" default:""
     local keep = mcpBool params "keepOffset" default:false
+    local applied = #()
+    local failures = #()
     for node in nodes do
     (
+        local nm = "?"
+        try ( nm = node.name ) catch ( nm = "?" )
+        local ok = true
         try
         (
             node.rotation.controller = lookAt_constraint()
@@ -969,10 +974,12 @@ fn mcpH_constraint_look_at params =
             )
             try ( lc.relative = keep ) catch()
         )
-        catch()
+        catch ( ok = false; append failures (nm + ": " + (getCurrentException() as string)) )
+        if ok do append applied nm
     )
     local p = #()
-    mcpPair p "objects" (for n in nodes collect n.name)
+    mcpPair p "objects" applied
+    mcpPair p "failures" failures
     mcpPair p "target" target.name
     mcpPair p "message" (mcpMsg "msg.ok")
     mcpObj p
@@ -983,17 +990,24 @@ fn mcpH_constraint_position params =
     local nodes = mcpResolveNodes (mcpArr params "objects") fallbackToSelection:true
     local target = mcpResolveNode (mcpReqStr params "target")
     local w = mcpNum params "weight" default:100.0
+    local applied = #()
+    local failures = #()
     for node in nodes do
     (
+        local nm = "?"
+        try ( nm = node.name ) catch ( nm = "?" )
+        local ok = true
         try
         (
             node.position.controller = position_constraint()
             node.position.controller.appendTarget target w
         )
-        catch()
+        catch ( ok = false; append failures (nm + ": " + (getCurrentException() as string)) )
+        if ok do append applied nm
     )
     local p = #()
-    mcpPair p "objects" (for n in nodes collect n.name)
+    mcpPair p "objects" applied
+    mcpPair p "failures" failures
     mcpPair p "target" target.name
     mcpPair p "message" (mcpMsg "msg.ok")
     mcpObj p
@@ -1004,17 +1018,24 @@ fn mcpH_constraint_orientation params =
     local nodes = mcpResolveNodes (mcpArr params "objects") fallbackToSelection:true
     local target = mcpResolveNode (mcpReqStr params "target")
     local w = mcpNum params "weight" default:100.0
+    local applied = #()
+    local failures = #()
     for node in nodes do
     (
+        local nm = "?"
+        try ( nm = node.name ) catch ( nm = "?" )
+        local ok = true
         try
         (
             node.rotation.controller = orientation_constraint()
             node.rotation.controller.appendTarget target w
         )
-        catch()
+        catch ( ok = false; append failures (nm + ": " + (getCurrentException() as string)) )
+        if ok do append applied nm
     )
     local p = #()
-    mcpPair p "objects" (for n in nodes collect n.name)
+    mcpPair p "objects" applied
+    mcpPair p "failures" failures
     mcpPair p "target" target.name
     mcpPair p "message" (mcpMsg "msg.ok")
     mcpObj p
@@ -1026,8 +1047,13 @@ fn mcpH_constraint_path params =
     local pathNode = mcpResolveNode (mcpReqStr params "path")
     local pct = mcpNum params "percent" default:0.0
     local follow = mcpBool params "follow" default:true
+    local applied = #()
+    local failures = #()
     for node in nodes do
     (
+        local nm = "?"
+        try ( nm = node.name ) catch ( nm = "?" )
+        local ok = true
         try
         (
             node.position.controller = path_constraint()
@@ -1036,10 +1062,12 @@ fn mcpH_constraint_path params =
             try ( pc.follow = follow ) catch()
             try ( pc.percent = pct ) catch()
         )
-        catch()
+        catch ( ok = false; append failures (nm + ": " + (getCurrentException() as string)) )
+        if ok do append applied nm
     )
     local p = #()
-    mcpPair p "objects" (for n in nodes collect n.name)
+    mcpPair p "objects" applied
+    mcpPair p "failures" failures
     mcpPair p "path" pathNode.name
     mcpPair p "message" (mcpMsg "msg.ok")
     mcpObj p
