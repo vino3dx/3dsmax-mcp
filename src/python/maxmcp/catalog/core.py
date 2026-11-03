@@ -293,11 +293,13 @@ TOOLS.append(tool(
 
 TOOLS.append(tool(
     "scene_new", "scene",
-    "新建空场景。可选保留当前场景的某些设置。**未保存的改动会丢失。**",
-    "Create a new empty scene. Some session settings can be carried over. "
-    "**Unsaved changes are lost.**",
-    props={"keepScene": b("是否保留当前场景的设置（单位、渲染参数等），默认否。",
-                          "Keep current session settings such as units and render setup, default false.")},
+    "新建空场景，对象与层全部清空。keepScene=true 时保留当前的单位、帧率与渲染分辨率。"
+    "**未保存的改动会丢失。**",
+    "Create a new empty scene; objects and layers are cleared. keepScene=true keeps the "
+    "current units, frame rate and render resolution. **Unsaved changes are lost.**",
+    props={"keepScene": b("是否保留当前场景的设置（单位、帧率、渲染分辨率），默认否。",
+                          "Keep current session settings such as units, frame rate and render "
+                          "resolution, default false.")},
 ))
 
 TOOLS.append(tool(

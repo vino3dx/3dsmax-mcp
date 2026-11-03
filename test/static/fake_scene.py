@@ -119,6 +119,11 @@ class FakeScene:
         #: names that refuse state changes (locked nodes), so partial success and
         #: honest failure lists can be exercised offline
         self.reject_ops: set = set()
+        #: session settings scene_new may keep (units, frame rate, render size)
+        self.session: Dict[str, Any] = {
+            "units": "in", "scale": 1.0, "frameRate": 30,
+            "resolution": [1280, 720],
+        }
         #: set to a transport exception to make the next call fail at that layer
         self.transport_failure: Optional[BaseException] = None
         #: when True, transform_object silently ignores the request (no change)
@@ -456,6 +461,19 @@ class FakeScene:
                 "renamed": node["name"] == new, "message": "Renamed."}
 
     # ------------------------------------------- stage 5: visibility and state
+    def _h_scene_new(self, params):
+        """Mirror mcpH_scene_new: clear the scene, optionally keep session settings."""
+        keep = params.get("keepScene") is True
+        saved = dict(self.session) if keep else {}
+        self.nodes.clear()
+        self.selection = []
+        self.groups.clear()
+        self.layers = {"0": {"name": "0", "hidden": False, "frozen": False,
+                             "wireColor": None}}
+        self.session = saved
+        return {"success": True, "created": True, "kept": sorted(saved),
+                "message": "OK"}
+
     def _h_hide_objects(self, params):
         return self._set_flag(params, "isHidden", True, "hidden")
 

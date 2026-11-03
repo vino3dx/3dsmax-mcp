@@ -240,6 +240,13 @@ fn mcpH_rig_skin_add_bone params =
 (
     local nodes = mcpResolveNodes (mcpArr params "objects") fallbackToSelection:true
     local boneNode = mcpResolveNode (mcpReqStr params "bone")
+    -- The catalog has advertised a rigid/weighted switch since this tool existed,
+    -- but the handler always passed 0 (weighted), so `rigid: true` was silently
+    -- ignored.  addBone's third argument is exactly that flag.
+    local rigid = mcpBool params "rigid" default:false
+    -- Keep the integer form the old code used (0): it reads as false for
+    -- versions that want a boolean and as "weighted" for versions that want 0/1.
+    local flag = if rigid then 1 else 0
     local failed = #()
     for node in nodes do
     (
@@ -247,11 +254,12 @@ fn mcpH_rig_skin_add_bone params =
         if skinMod == undefined then
             append failed (node.name + ": no Skin")
         else
-            try ( skinOps.addBone skinMod boneNode 0 ) catch ( append failed (node.name + ": " + (getCurrentException())) )
+            try ( skinOps.addBone skinMod boneNode flag ) catch ( append failed (node.name + ": " + (getCurrentException())) )
     )
     local p = #()
     mcpPair p "objects" (for n in nodes collect n.name)
     mcpPair p "bone" boneNode.name
+    mcpPair p "rigid" rigid
     mcpPair p "failures" failed
     mcpPair p "message" (mcpMsg "msg.ok")
     mcpObj p

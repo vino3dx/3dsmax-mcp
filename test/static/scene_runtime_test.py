@@ -38,10 +38,12 @@ def main() -> None:
     assert reported_failure.failures[0]["kind"] == "operation_failed"
 
     missing_success = SceneRuntime(lambda method, params: (
-        {"objectCount": 0} if method == "scene_info" else {"created": True}
+        {"objectCount": 0} if method == "scene_info" else {"message": "OK"}
     )).execute("create_box", "create_box")
     assert missing_success.success is False
     assert missing_success.failures[0]["kind"] == "missing_success"
+    # `created: true` is the boolean form of an enumeration key, so it is a
+    # claim, not silence; that reading is covered in outcome_declaration_test.
 
     verification_failure = SceneRuntime(lambda method, params: (
         {"objectCount": 1} if method == "scene_info" else {"success": True}

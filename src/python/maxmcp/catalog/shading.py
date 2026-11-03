@@ -785,8 +785,6 @@ TOOLS.append(tool(
     props={
         "azimuth": n("方位角（度）。", "Azimuth (degrees)."),
         "altitude": n("高度角（度）。", "Altitude (degrees)."),
-        "timeOfDay": s("一天中的时间（部分系统支持，尽力设置）。",
-                       "Time of day (some systems; best-effort)."),
     },
 ))
 

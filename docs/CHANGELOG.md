@@ -8,6 +8,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **False parameter promises and a boolean-outcome blind spot (Stage 6).** A
+  catalog entry promises "this argument does something".  When the handler never
+  reads it, the agent sends the flag, the call succeeds, and the setting is
+  silently dropped.  A new static audit compares both sides for all 338
+  statically readable tools.
+  - **`scene_new.keepScene` now works.** It was advertised since the tool
+    existed and never read: every call reset units, frame rate and render size
+    along with the objects.  The handler now records those four settings before
+    `resetMaxFile` and puts them back, returning `kept` so the caller can see
+    what survived.
+  - **`rig_skin_add_bone.rigid` now works.** The description promised a
+    rigid/weighted start mode; the handler always passed `0`.  `skinOps.addBone`
+    now receives the flag (kept as 0/1 for version tolerance).
+  - **`light_set_sun.timeOfDay` was removed.** Nothing behind it: there is no
+    portable time-of-day property across Daylight/Sunlight/IES_Sun systems, so
+    the honest move was to stop advertising it and keep azimuth/altitude.
+  - **`created: true` / `deleted: true` now decide.** Enumeration keys were read
+    only in their list form, so `scene_new` and `delete_file` answered
+    `missing_success` after doing exactly what they were asked.  Both forms are
+    now read by value, the same way receipt fields already were.
+  - `test/static/param_contract_audit.py` (Static) fails when a declared
+    parameter is never read, skipping the two handler shapes a static scan
+    cannot follow (key lists in the primitive creators, `mcpPairs params`
+    pass-through in the `mod_*` family) - a false positive there would push
+    someone to delete a real parameter.
+  - `object_state_test.py` covers `scene_new` with and without `keepScene`, and
+    `outcome_declaration_test.py` pins both enumeration forms.
+
 - **Honest answers from per-object state operations (Stage 5).** The biggest
   remaining lie in `src/ms` was structural: a handler wrapped the real call in
   `try (...) catch()`, returned `{message: "OK"}`, and a batch where every object

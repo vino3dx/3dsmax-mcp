@@ -119,10 +119,44 @@ fn mcpH_scene_statistics params =
 /*=============================================================== scene session*/
 fn mcpH_scene_new params =
 (
+    -- keepScene used to be advertised but never read: every call reset the units,
+    -- frame rate and render size along with the objects.  Remember the session
+    -- settings first, then put them back after the reset.
+    local keep = mcpBool params "keepScene" default:false
+    local unitsType = undefined
+    local unitsScale = 1.0
+    local fps = 0
+    local rw = 0
+    local rh = 0
+    if keep do
+    (
+        try ( unitsType = units.SystemType ) catch ( unitsType = undefined )
+        try ( unitsScale = units.SystemScale as float ) catch ( unitsScale = 1.0 )
+        try ( fps = frameRate as integer ) catch ( fps = 0 )
+        try ( rw = renderWidth as integer ) catch ( rw = 0 )
+        try ( rh = renderHeight as integer ) catch ( rh = 0 )
+    )
+
     resetMaxFile #noPrompt
+
+    local kept = #()
+    if keep do
+    (
+        if unitsType != undefined do
+            ( try ( units.SystemType = unitsType; append kept "units" ) catch() )
+        try ( units.SystemScale = unitsScale; append kept "scale" ) catch()
+        if fps > 0 do ( try ( frameRate = fps; append kept "frameRate" ) catch() )
+        if rw > 0 and rh > 0 do
+            ( try ( renderWidth = rw; renderHeight = rh; append kept "resolution" ) catch() )
+    )
+
     mcpRedraw()
     local p = #()
+    -- `created` is a boolean here, while other tools use the same key as a list
+    -- of names; the runtime reads that key as an enumeration, so say it plainly.
+    mcpPair p "success" true
     mcpPair p "created" true
+    mcpPair p "kept" kept
     mcpPair p "message" (mcpMsg "msg.ok")
     mcpObj p
 )

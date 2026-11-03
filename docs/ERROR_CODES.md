@@ -143,8 +143,9 @@ handler 用 `{applied, failures, message}` 声明结果，于是 `convert_to_edi
 2. `ok`（布尔）→ 直接采用；
 3. `failures`（数组）→ 空即成功，非空即失败（失败条目原样保留在 `failures`；
    条目既可以是错误对象，也可以是 `"Box001: <原因>"` 这样的纯文本）；
-4. 枚举字段 `applied` / `deleted` / `created` / `objects` / `results`（数组）
-   → 非空即成功，空即“没做成”；
+4. 枚举字段 `applied` / `deleted` / `created` / `objects` / `results`
+   → **按值判定**：数组非空即成功、空即“没做成”；布尔则取布尔值本身
+   （`created: true` 与 `created: ["Box001"]` 是同一句话的两种写法）
 5. **回执字段**（receipt）→ 按值判定，不按存在判定：
 
    | 类型 | 字段 | 规则 |

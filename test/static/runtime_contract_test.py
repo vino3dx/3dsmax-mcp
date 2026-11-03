@@ -10,9 +10,16 @@ from maxmcp.runtime import build_batch_result, normalize_payload, resolve_object
 
 
 def main() -> None:
-    legacy = normalize_payload({"created": True}, "create_box")
+    # A payload that says nothing about its outcome is not a success...
+    legacy = normalize_payload({"message": "OK"}, "create_box")
     assert legacy["success"] is False
     assert legacy["failures"][0]["kind"] == "missing_success"
+
+    # ...but `created: true` is a claim.  The same key carries a list of names in
+    # clone_objects and a boolean in scene_new; both forms decide.
+    created = normalize_payload({"created": True}, "scene_new")
+    assert created["success"] is True
+    assert created["failures"] == []
 
     explicit = normalize_payload({"success": True, "result": {"name": "Box001"}}, "create_box")
     assert explicit["success"] is True

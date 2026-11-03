@@ -240,6 +240,38 @@ def check_group_open_refuses_plain_meshes():
 
 
 # ------------------------------------------------------- whole-batch behaviour
+def check_scene_new_keeps_settings_only_when_asked():
+    """`keepScene` used to be advertised but never read, so every call reset the
+    units, frame rate and render size along with the objects."""
+    h = Harness()
+    h.scene.add("Box001")
+    try:
+        # Without the flag: everything goes, settings included.
+        is_error, payload = h.call("scene_new", {})
+        assert not is_error, payload.get("failures")
+        body = data_of(payload)
+        assert body["created"] is True
+        assert body["kept"] == []
+        assert h.scene.nodes == {}, "the scene is empty"
+        assert h.scene.session == {}, "settings were reset too"
+
+        # With the flag: objects go, settings stay.
+        h.scene.add("Box001")
+        h.scene.session = {"units": "m", "frameRate": 25, "resolution": [1920, 1080]}
+        is_error, payload = h.call("scene_new", {"keepScene": True})
+        assert not is_error, payload.get("failures")
+        body = data_of(payload)
+        assert body["kept"] == ["frameRate", "resolution", "units"]
+        assert h.scene.nodes == {}, "objects are still cleared"
+        assert h.scene.session["units"] == "m"
+        assert h.scene.session["frameRate"] == 25
+        assert h.scene.session["resolution"] == [1920, 1080]
+        assert h.scene.layers == {"0": {"name": "0", "hidden": False,
+                                        "frozen": False, "wireColor": None}}
+    finally:
+        h.close()
+
+
 def check_empty_target_list_is_an_honest_no_op():
     """No objects and no selection: nothing to do, nothing claimed."""
     h = Harness()
@@ -263,6 +295,7 @@ def main():
     check_reset_transform_can_skip_parts()
     check_snap_to_grid_moves_and_reports()
     check_group_open_refuses_plain_meshes()
+    check_scene_new_keeps_settings_only_when_asked()
     check_empty_target_list_is_an_honest_no_op()
     print("object state (offline): all checks passed")
 

@@ -66,11 +66,15 @@ python scripts/verify.py                       # Static  —— 目录/注册/�
 | W40 | 逐对象变换：一个拒绝不影响其余，被拒对象状态不变 | Offline | `check_reset_transform_reports_each_object`、`check_snap_to_grid_moves_and_reports` |
 | W41 | `thawed`/`shown` 只含状态真的变了的对象 | Offline | `check_freeze_and_thaw`、`check_unhide_all_covers_every_object` |
 | W42 | 空目标列表：什么都不做，也不声称做了什么 | Offline | `check_empty_target_list_is_an_honest_no_op` |
+| W43 | `scene_new` 带/不带 `keepScene`：对象都清空，设置按需保留 | Offline | `check_scene_new_keeps_settings_only_when_asked` |
+| W44 | 参数契约：catalog 声明的参数必须被 handler 读取 | Static | `param_contract_audit.py`（338 checked / 46 skipped） |
+| W45 | 枚举键两种形态（数组 / 布尔）都判成功 | Static | `check_enumeration_decides` |
 
-级别统计：`Static` 18 类、`Offline` 24 类（其中 6 类两种证据都有，共 42 类），
-`Runtime` 0 类。对应 56 个测试函数：`workflow_engine_test.py` 18 个（Static）、
-`workflow_scene_test.py` 22 个（Offline）、`object_state_test.py` 10 个（Offline），
-外加 `outcome_declaration_test.py` 10 组与 `outcome_audit.py` 的覆盖率断言。
+级别统计：`Static` 20 类、`Offline` 25 类（其中 6 类两种证据都有，共 45 类），
+`Runtime` 0 类。对应 57 个测试函数：`workflow_engine_test.py` 18 个（Static）、
+`workflow_scene_test.py` 22 个（Offline）、`object_state_test.py` 11 个（Offline），
+外加 `outcome_declaration_test.py` 10 组、`outcome_audit.py` 的覆盖率断言与
+`param_contract_audit.py` 的参数契约断言。
 
 ## 3. Runtime 待执行清单（本轮未做）
 
@@ -92,6 +96,7 @@ python scripts/verify.py                       # Static  —— 目录/注册/�
 | R11 | 重名建层 / 重名重命名 | `create_layer` 报 `err.bad_value`；`rename_object` 返回 `renamed:false` 且对象名未变（与 Max 静默保留旧名的行为一致） |
 | R12 | 锁定或冻结层上的对象做 `hide` / `reset_transform` | `hidden` 不含该对象、`failures` 点名它，工具整体 `isError:true`；其余对象已改 |
 | R13 | `set_units` 设一个会被夹取的 `scale` | `failures` 里带实际生效的值，`systemScale` 字段与之一致 |
+| R14 | `scene_new{keepScene:true}` / `rig_skin_add_bone{rigid:true}` | `kept` 含 units/frameRate/resolution 且真的生效；绑定后骨骼是刚性（`addBone` 的第三个参数接受布尔或 0/1） |
 
 R5/R9/R10 是最关键的三个：它们验证的是"失败时不撒谎"，而这一点离线只能证明
 Python 侧的解释，证明不了 Max 侧的行为。

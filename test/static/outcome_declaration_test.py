@@ -45,6 +45,11 @@ def check_enumeration_decides():
     for key in ("applied", "deleted", "created", "objects", "results"):
         assert verdict({key: ["Box001"]}) == (True, key), key
         assert verdict({key: []}) == (False, key), key
+        # The same key is a boolean in some handlers (scene_new: created,
+        # delete_file: deleted).  Reading only the list form made those answer
+        # missing_success after doing the work.
+        assert verdict({key: True}) == (True, key), key
+        assert verdict({key: False}) == (False, key), key
 
 
 def check_receipt_fields_decide():

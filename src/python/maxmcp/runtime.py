@@ -87,10 +87,17 @@ def declared_outcome(source: Dict[str, Any]) -> Optional[Tuple[bool, str]]:
     failures = source.get("failures")
     if isinstance(failures, list):
         return (not failures), "failures"
+    # Enumerations decide by value, not by being a list: some handlers answer
+    # ``created: true`` / ``deleted: true`` while others list names under the
+    # same key, and a boolean is just as much a claim as a non-empty array.
+    # Reading only the list form left scene_new and delete_file answering
+    # missing_success after doing exactly what they were asked.
     for key in _OUTCOME_KEYS:
-        value = source.get(key)
-        if isinstance(value, list):
-            return bool(value), key
+        if key not in source:
+            continue
+        verdict = _receipt_verdict(source[key])
+        if verdict is not None:
+            return verdict, key
     for key in _RECEIPT_KEYS:
         if key not in source:
             continue
