@@ -39,6 +39,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     cannot follow (key lists in the primitive creators, `mcpPairs params`
     pass-through in the `mod_*` family) - a false positive there would push
     someone to delete a real parameter.
+  - `test/static/i18n_audit.py` (Static) checks both message tables: a missing
+    `i18n.t()` key or `mcpMsg` / `mcpFail` key is returned to the user as the key
+    itself, so a typo leaks `msg.ok` into a message instead of failing a test.
+    0 missing on both sides today (8 Python calls, 31 MAXScript call sites).
   - `object_state_test.py` covers `scene_new` with and without `keepScene`, and
     `outcome_declaration_test.py` pins both enumeration forms.
 
