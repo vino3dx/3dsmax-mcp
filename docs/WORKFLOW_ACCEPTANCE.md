@@ -69,6 +69,8 @@ python scripts/verify.py                       # Static  —— 目录/注册/�
 | W43 | `scene_new` 带/不带 `keepScene`：对象都清空，设置按需保留 | Offline | `check_scene_new_keeps_settings_only_when_asked` |
 | W44 | 参数契约：catalog 声明的参数必须被 handler 读取 | Static | `param_contract_audit.py`（338 checked / 46 skipped） |
 | W45 | 枚举键两种形态（数组 / 布尔）都判成功 | Static | `check_enumeration_decides` |
+| W46 | 必填契约：handler 离不开的参数必须写进 `required` | Static | `param_contract_audit.py`（required contract） |
+| W47 | 消息键完整：`i18n.t` 与 `mcpMsg` / `mcpFail` 的键都已声明 | Static | `i18n_audit.py` |
 
 级别统计：`Static` 20 类、`Offline` 25 类（其中 6 类两种证据都有，共 45 类），
 `Runtime` 0 类。对应 57 个测试函数：`workflow_engine_test.py` 18 个（Static）、
