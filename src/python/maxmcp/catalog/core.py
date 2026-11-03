@@ -466,6 +466,9 @@ TOOLS.append(tool(
     "列出场景所有层及其子对象数量、隐藏/冻结状态。**用层来组织大型场景是最可靠的做法。**",
     "List every scene layer with its child count and hidden/frozen state. "
     "**Layers are the most reliable way to organise a large scene.**",
+    props={"limit": i("最多返回多少层，默认 500。",
+                      "Maximum layers to return, default 500.",
+                      minimum=1, maximum=5000)},
     mutating=False,
 ))
 
@@ -541,6 +544,9 @@ TOOLS.append(tool(
     "List every external asset the scene references (bitmaps, proxies, point caches, XRefs) "
     "with its resolved status. **Check this before packaging, moving or rendering a project "
     "to avoid missing textures.**",
+    props={"limit": i("最多返回多少条，默认 500。",
+                      "Maximum entries to return, default 500.",
+                      minimum=1, maximum=5000)},
     mutating=False,
 ))
 
