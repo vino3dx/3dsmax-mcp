@@ -51,7 +51,34 @@
 
 审计跟随了函数调用，把被复用的导出逻辑也算进了这个 handler。**不需要任何改动**。
 
-## 3. 新增参数时的决策
+## 3. 第三条检查：必填契约
+
+参数还有第三种不一致：**handler 非要不可，schema 却说可选**。
+
+```maxscript
+fn mcpH_rename_object params =
+(
+    local name = mcpStr params "name" default:""
+    if name == "" do mcpFail "err.missing_param" a1:"name"   -- 实际上必填
+    ...
+)
+```
+
+如果 `required` 里没有 `name`，客户端不传也能通过校验，然后要到 Max 里才报
+`missing_param`——错误发生得太晚，而且调用方会以为是工具坏了。
+
+`param_contract_audit.py` 现在同时识别两种必填写法：
+
+| 写法 | 例子 |
+| --- | --- |
+| `mcpReqStr` / `mcpReqInt` / `mcpReqNum` | `local name = mcpReqStr params "name"` |
+| `mcpStr` + 空值守卫 | `local x = mcpStr params "k" default:""` 紧跟 `if x == "" do mcpFail` |
+
+只读 `mcpReq*` 会让检查看起来比实际更干净——`rename_object` 就是第二种写法。
+
+当前结果：**0 项欠声明**。
+
+## 4. 新增参数时的决策
 
 ```text
 要加一个参数？
@@ -65,7 +92,7 @@
 反向的陷阱：**不要**为了"让审计安静"而给 handler 加 `mcpGet params "x"`。
 那只是让参数从"不可发现"变成"可传但没用"。
 
-## 4. 相关工具
+## 5. 相关工具
 
 | 命令 | 作用 |
 | --- | --- |
@@ -73,7 +100,7 @@
 | `python test/static/catalog_contract_test.py` | schema 类型、枚举、preset 合并的正确性 |
 | `python test/static/doc_alignment_audit.py` | 工具数量与 `docs/tools.txt` 等文档的一致性 |
 
-## 5. 本轮（Stage 6）修过的
+## 6. 本轮（Stage 6）修过的
 
 | 工具 | 问题 | 处理 |
 | --- | --- | --- |

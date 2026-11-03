@@ -65,6 +65,34 @@ def _collected(body: str, blocks: dict, seen: set) -> tuple:
     return literals, dynamic
 
 
+#: A key the handler refuses to do without.
+READ_REQUIRED = re.compile(r'mcpReq(?:Str|Int|Num)\s+params\s+"(\w+)"')
+
+#: ``local x = mcpStr params "key" default:""`` followed by an empty check is the
+#: same requirement written without mcpReqStr.  Half the handlers use this form,
+#: so reading only mcpReq* would have made the check look cleaner than it is.
+EMPTY_DEFAULT = re.compile(r'local\s+(\w+)\s*=\s*mcpStr\s+params\s+"(\w+)"\s+default:""')
+EMPTY_GUARD = r'if\s+%s\s*==\s*""\s+do\s+mcpFail'
+
+
+def _required_keys(body: str, blocks: dict, seen: set) -> set:
+    """Keys this handler cannot run without (``mcpReq*`` or an empty guard)."""
+    keys = set(READ_REQUIRED.findall(body))
+    for var, key in EMPTY_DEFAULT.findall(body):
+        if re.search(EMPTY_GUARD % re.escape(var), body):
+            keys.add(key)
+    for helper in set(re.findall(r"\b(mcp\w+)\b", body)):
+        # Another handler is a separate entry point: it is usually called with a
+        # freshly built payload, so its required keys are not ours to declare.
+        if helper.startswith("mcpH_") or helper in seen or helper not in blocks:
+            continue
+        seen.add(helper)
+        rest = "\n".join(blocks[helper])
+        if "params" in rest:
+            keys |= _required_keys(rest, blocks, seen)
+    return keys
+
+
 def report_undeclared(catalog, blocks: dict, registered: dict) -> None:
     """Print keys a handler reads that the catalog does not declare.
 
@@ -127,6 +155,28 @@ def main() -> None:
     print("param contract: checked=%d skipped(dynamic)=%d violations=%d" % (
         checked, skipped, len(fake)))
     report_undeclared(catalog, blocks, registered)
+
+    # Third direction: the handler refuses to run without a key the schema does
+    # not mark as required, so the client finds out from Max instead of from the
+    # validator.  A key supplied by a preset is already there and cannot be
+    # missing.
+    underdeclared = []
+    for entry in catalog:
+        if entry.local:
+            continue
+        handler = registered.get(entry.bridge_method, "mcpH_" + entry.bridge_method)
+        if handler not in blocks:
+            continue
+        body = "\n".join(blocks[handler])
+        if READ_PASSTHROUGH in body:
+            continue
+        need = _required_keys(body, blocks, set()) - set(entry.preset or {})
+        missing = need - set(entry.schema.get("required") or [])
+        if missing:
+            underdeclared.append((entry.name, sorted(missing)))
+    print("required contract: underdeclared=%d" % len(underdeclared))
+    for name, missing in underdeclared:
+        print("  %-26s handler requires %s but schema does not" % (name, missing))
     for name, missing, handler in fake:
         print("  %-26s declares %s but %s never reads it" % (name, missing, handler))
 
@@ -134,6 +184,11 @@ def main() -> None:
         "a declared parameter the handler never reads is a false promise; "
         "implement it or remove it: "
         + ", ".join("%s(%s)" % (name, ",".join(missing)) for name, missing, _ in fake)
+    )
+    assert not underdeclared, (
+        "the handler refuses to run without a parameter the schema calls optional, "
+        "so the client only finds out inside Max: "
+        + ", ".join("%s(%s)" % (name, ",".join(missing)) for name, missing in underdeclared)
     )
 
 
