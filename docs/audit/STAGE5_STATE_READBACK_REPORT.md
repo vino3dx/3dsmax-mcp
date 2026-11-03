@@ -107,29 +107,29 @@ local split = mcpSplitByFlag was "isFrozen" false
 
 | 指标 | 修前 | 修后 |
 | --- | --- | --- |
-| 能读出结论的 mutating 工具 | 219 | **278** |
-| 读不出 | 74 | **15** |
+| 能读出结论的 mutating 工具 | 219 | **282** |
+| 读不出 | 74 | **11** |
 | core 档位缺口 | 0 | 0 |
 
-修好的 59 个按文件：
+修好的 63 个按文件：
 
 | 文件 | 数量 | 代表 |
 | --- | --- | --- |
 | `mcp_objects.ms` | 13 | hide / freeze / mirror / set_pivot / reset_transform / snap / unparent / open_group / close_group / spline_set_points |
 | `mcp_shading.ms` | 22 | mat_set_pbr / mat_set_emission / mat_delete / mat_set_slot / mat_rename / 9 个 map_create_* / mat_library_* |
-| `mcp_render.ms` | 8 | render_set_engine / resolution / output / frame_range / save_preset / load_preset / element_add / viewport_set_view |
+| `mcp_render.ms` | 11 | render_set_engine / resolution / output / frame_range / save_preset / load_preset / element_add / element_remove / element_set_output / viewport_set_view / viewport_set_layout |
 | `mcp_lights.ms` | 15 | light_set / cam_set / env_set_* / cam_create / cam_delete / light_set_sun |
 | `mcp_system.ms` | 1 | set_units |
+| `mcp_animation.ms` | 1 | anim_goto_frame（回读 currentTime） |
 
-剩下 15 个，如实列出（`outcome_audit.py` 会持续打印）：
+剩下 11 个，如实列出（`outcome_audit.py` 会持续打印）：
 
 | 工具 | 为什么没修 |
 | --- | --- |
 | `execute_python` | 逃生仓：返回值是 Python 表达式的值，没有"成功"可判 |
-| `anim_play` / `anim_play_preview` / `anim_goto_frame` / `anim_bake_range` | 播放与时间轴状态，回读只能读到"当前帧"，不能证明"播放过" |
+| `anim_play` / `anim_play_preview` / `anim_bake_range` | 播放与烘焙状态：回读只能读到"当前帧"，不能证明"播放过" |
 | `ctrl_wire` / `rig_ik_solver` / `rig_spline_ik` | 约束/解算结果通过场景关系表达，需要专门的验证 kind |
-| `render_element_remove` / `render_element_set_output` | 渲染元素管理器没有稳定的回读路径（版本间差异大） |
-| `viewport_set_layout` / `viewport_zoom_extents` / `viewport_set_shading` / `viewport_toggle_grid` | 纯视图状态，跨版本回读 API 不可靠 |
+| `viewport_zoom_extents` / `viewport_set_shading` / `viewport_toggle_grid` | 纯视图状态，跨版本回读 API 不可靠 |
 | `bake_set_output` | 只是记下参数，真正的写盘发生在 bake 时 |
 
 这一批的共同点：**没有可靠的回读方式**。给它们加 `success: true` 会把"不知道"说成

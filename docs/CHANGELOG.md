@@ -39,16 +39,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `render_set_output` and `render_set_frame_range` echo the state the renderer
     will actually use (`renderWidth`, `rendOutputFilename`, `rendTimeType`), so a
     clamped size or an ignored path is reported now, not at frame 1.
+  - **Timeline and render elements too.** `anim_goto_frame` reads
+    `currentTime.frame` back (the timeline clamps at the scene range), and
+    `render_element_remove` / `render_element_set_output` / `viewport_set_layout`
+    declare `success` after their own guards.
   - **Lights and cameras report per-property.** `light_set` / `cam_set` return
     `applied` / `skipped` (light classes disagree about `multiplier` vs
     `intensity`, cameras about `f_stop`), and fail when nothing landed.
   - **`set_units` reads the scale back**, because a clamped scale silently
     makes every later dimension wrong, and rejects an unknown `displayType`
     instead of ignoring it.
-  - Coverage: readable outcomes went 219 → **278 of 293** mutating tools; the
-    remaining 15 are listed by `test/static/outcome_audit.py` and are either
-    escape hatches (`execute_python`), playback (`anim_play`), or viewport state
-    with no portable read-back.
+  - Coverage: readable outcomes went 219 → **282 of 293** mutating tools; the
+    remaining 11 are listed by `test/static/outcome_audit.py` and are either
+    escape hatches (`execute_python`), playback (`anim_play`), wire/IK relations,
+    or viewport state with no portable read-back.
   - Tests: `test/static/object_state_test.py` (Offline, 10 scenarios) drives
     hide/freeze/unhide-all/reset/snap/group operations through the real TCP
     stub with a `reject_ops` hook, so partial success and "empty receipt is not
@@ -96,7 +100,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     tool covers the job, and say why".
   - **Audit instead of hope.** `test/static/outcome_audit.py` reads every
     `mcpH_*` handler (following `mcpRegister` and helper calls), reports how
-    many mutating tools declare a readable outcome (278/293), and fails if a
+    many mutating tools declare a readable outcome (282/293), and fails if a
     tool used by a standard workflow cannot be read. `outcome_declaration_test.py`
     pins the reading rules, including "message is never evidence".
   - Tests: `workflow_scene_test.py` grew to 22 scenarios (organisation, ungroup

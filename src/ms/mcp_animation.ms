@@ -628,8 +628,13 @@ fn mcpH_anim_goto_frame params =
 (
     local frame = mcpReqInt params "frame"
     sliderTime = frame * ticksPerFrame
+    -- Read the frame back: the timeline clamps at the scene range, and a
+    -- "goto 200" that actually landed on 100 must not look like success.
+    local got = try ( currentTime.frame as integer ) catch ( -1 )
     local p = #()
-    mcpPair p "frame" frame
+    mcpPair p "frame" got
+    mcpPair p "requested" frame
+    mcpPair p "failures" (if got == frame then #() else #("frame=" + (got as string)))
     mcpPair p "message" (mcpMsg "msg.ok")
     mcpObj p
 )

@@ -657,7 +657,9 @@ fn mcpH_render_element_remove params =
     )
     if not removed do mcpFail "err.bad_value" a1:"element"
     local p = #()
-    mcpPair p "removed" removed
+
+    -- Every failure path above mcpFails.
+    mcpPair p "success" true    mcpPair p "removed" removed
     mcpPair p "message" (mcpMsg "msg.ok")
     mcpObj p
 )
@@ -691,7 +693,9 @@ fn mcpH_render_element_set_output params =
     try ( el.outputFilename = output; ok = true ) catch ( ok = false )
     if not ok do mcpFail "err.bad_value" a1:"output"
     local p = #()
-    mcpPair p "element" friendly
+
+    -- Every failure path above mcpFails.
+    mcpPair p "success" true    mcpPair p "element" friendly
     mcpPair p "output" output
     mcpPair p "message" (mcpMsg "msg.ok")
     mcpObj p
@@ -818,6 +822,9 @@ fn mcpH_viewport_set_layout params =
     if not ok do mcpFail "err.bad_value" a1:"layout"
     mcpRedraw()
     local p = #()
+    -- Reaching here means viewport.setLayout accepted the symbol; every failure
+    -- path above mcpFails.
+    mcpPair p "success" true
     mcpPair p "layout" layout
     mcpPair p "message" (mcpMsg "msg.ok")
     mcpObj p
