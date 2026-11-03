@@ -297,6 +297,7 @@ fn mcpH_rig_skin_set_weight params =
 fn mcpH_rig_skin_auto_weight params =
 (
     local nodes = mcpResolveNodes (mcpArr params "objects") fallbackToSelection:true
+    local applied = #()
     local failed = #()
     for node in nodes do
     (
@@ -304,10 +305,16 @@ fn mcpH_rig_skin_auto_weight params =
         if skinMod == undefined then
             append failed (node.name + ": no Skin")
         else
-            try ( skinOps.autoWeight skinMod ) catch ( append failed (node.name + ": " + (getCurrentException())) )
+        (
+            local ok = true
+            try ( skinOps.autoWeight skinMod )
+            catch ( ok = false; append failed (node.name + ": " + (getCurrentException())) )
+            if ok do append applied node.name
+        )
     )
     local p = #()
-    mcpPair p "objects" (for n in nodes collect n.name)
+    -- `objects` is what the weights were recomputed for, not what was asked.
+    mcpPair p "objects" applied
     mcpPair p "failures" failed
     mcpPair p "message" (mcpMsg "msg.ok")
     mcpObj p

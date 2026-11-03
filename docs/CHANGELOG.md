@@ -8,6 +8,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`objects` echoed the request in 29 handlers (Stage 8).** The runtime reads
+  `objects` as an enumeration, so `mcpPair p "objects" (for n in nodes collect n.name)`
+  made a handler report success even when every node was skipped - a missing
+  controller, a frame with no key, a locked constraint target.
+  - Fixed `anim_delete_keys`: a node without a controller, or a frame set that
+    holds no key, is now named in `failures` instead of counted as done.
+  - Fixed `anim_ease`: no controller, no key, and a rejected tangent are three
+    different failures, all reported; `objects` is what actually changed.
+  - Fixed `constraint_link`: the whole loop sat inside one bare `catch`, so any
+    node could fail silently. Now per node, with the exception text.
+  - Fixed `rig_skin_auto_weight`: `objects` listed the request, not the nodes
+    whose weights were recomputed.
+  - `outcome_audit.py` now prints the remaining 27 handlers that echo the request
+    (`objects echo the request (success not proven)`). It is a report, not a
+    gate: each one needs its own rewrite, and failing the build until all 27 are
+    done would only encourage fake `success` flags.
+
 - **False parameter promises and a boolean-outcome blind spot (Stage 6).** A
   catalog entry promises "this argument does something".  When the handler never
   reads it, the agent sends the flag, the call succeeds, and the setting is

@@ -39,6 +39,14 @@ from maxmcp.runtime import _OUTCOME_KEYS, _RECEIPT_KEYS
 #: Keys that decide an outcome, in the order ``declared_outcome`` tries them.
 DECISIVE = {"success", "ok", "failures"} | set(_OUTCOME_KEYS) | set(_RECEIPT_KEYS)
 
+#: ``mcpPair p "objects" (for n in nodes collect n.name)`` echoes the request.
+#: The runtime reads ``objects`` as an enumeration, so such a handler reports
+#: success even when every node was skipped.  Reported, not asserted: the fix is
+#: a per-handler rewrite (collect what was applied, name what was not), and a
+#: gate would just fail until someone did all of them.
+ECHO_OBJECTS = re.compile(
+    r'mcpPair\s+\w+\s+"objects"\s+\(\s*for\s+\w+\s+in\s+\w+\s+collect')
+
 #: ``fn name whatever =`` opens a definition; the block runs to the next one.
 _FN = re.compile(r"^fn\s+(\w+)\s*[^=\n]*=", re.M)
 _PAIR = re.compile(r'mcpPair\s+\w+\s+"(\w+)"')
@@ -126,6 +134,14 @@ def main() -> None:
             print("  %-28s %s" % (name, ", ".join(keys) or "<no mcpPair at all>"))
     if unknown:
         print("unreadable (handler not found statically): " + ", ".join(sorted(unknown)))
+
+    echoes = []
+    for entry in catalog:
+        handler = registered.get(entry.bridge_method, "mcpH_" + entry.bridge_method)
+        if handler in blocks and ECHO_OBJECTS.search("\n".join(blocks[handler])):
+            echoes.append(entry.name)
+    print("objects echo the request (success not proven): %d %s" % (
+        len(echoes), ", ".join(sorted(echoes)) if echoes else ""))
 
     # The standard workflows are the strongest claim the project makes, so the
     # tools they drive must be readable by the runtime - otherwise a working

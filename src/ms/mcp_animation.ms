@@ -294,24 +294,48 @@ fn mcpH_anim_delete_keys params =
     local nodes = mcpResolveNodes (mcpArr params "objects") fallbackToSelection:true
     local propName = mcpReqStr params "property"
     local frames = mcpArr params "frames"
+    -- `objects` used to echo the request, so a node with no controller - or a
+    -- frame that holds no key - still came back as "done".  Report what was
+    -- actually deleted and name the nodes that had nothing to delete.
+    local applied = #()
+    local failures = #()
     for node in nodes do
     (
+        local nm = "?"
+        try ( nm = node.name ) catch ( nm = "?" )
         local ctrl = mcpGetAnimController node propName
-        if ctrl != undefined do
+        if ctrl == undefined then
+            append failures (nm + ": no " + propName + " controller")
+        else
         (
+            local removed = 0
             if frames.count > 0 then
             (
                 for f in frames do
                 (
-                    local k = try ( getKey ctrl (f * ticksPerFrame) ) catch (undefined)
-                    if k != undefined do try ( deleteKey ctrl k ) catch()
+                    local k = try ( getKey ctrl (f * ticksPerFrame) ) catch ( undefined )
+                    if k != undefined do
+                    (
+                        local ok = true
+                        try ( deleteKey ctrl k ) catch ( ok = false )
+                        if ok then removed = removed + 1
+                        else append failures (nm + ": delete failed at frame " + (f as string))
+                    )
                 )
+                if removed == 0 do append failures (nm + ": no key at the requested frames")
             )
-            else try ( deleteKeys ctrl #all ) catch()
+            else
+            (
+                local ok = true
+                try ( deleteKeys ctrl #all ) catch ( ok = false )
+                if ok then removed = 1 else append failures (nm + ": deleteKeys failed")
+            )
+            if removed > 0 do append applied nm
         )
     )
     local p = #()
-    mcpPair p "objects" (for n in nodes collect n.name)
+    mcpPair p "objects" applied
+    mcpPair p "failures" failures
     mcpPair p "property" propName
     mcpPair p "message" (mcpMsg "msg.ok")
     mcpObj p
@@ -444,23 +468,42 @@ fn mcpH_anim_ease params =
     local t = frame * ticksPerFrame
     local inT = mcpStr params "inTangent" default:""
     local outT = mcpStr params "outTangent" default:""
+    -- Same fix as anim_delete_keys: the reply used to echo the request, so a
+    -- node without a controller, or a frame without a key, looked like success.
+    local applied = #()
+    local failures = #()
     for node in nodes do
     (
+        local nm = "?"
+        try ( nm = node.name ) catch ( nm = "?" )
         local ctrl = mcpGetAnimController node propName
-        if ctrl != undefined do
+        if ctrl == undefined then
+            append failures (nm + ": no " + propName + " controller")
+        else
         (
-            local k = try ( getKey ctrl t ) catch (undefined)
-            if k != undefined do
+            local k = try ( getKey ctrl t ) catch ( undefined )
+            if k == undefined then
+                append failures (nm + ": no key at frame " + (frame as string))
+            else
             (
-                if inT != "" do try ( k.inTangentType = (mcpMapTangent inT) ) catch()
-                if outT != "" do try ( k.outTangentType = (mcpMapTangent outT) ) catch()
-                if (mcpGet params "inHandle") != undefined do try ( k.inTangent = (mcpNum params "inHandle") ) catch()
-                if (mcpGet params "outHandle") != undefined do try ( k.outTangent = (mcpNum params "outHandle") ) catch()
+                local changed = false
+                local ok = true
+                if inT != "" do
+                    try ( k.inTangentType = (mcpMapTangent inT); changed = true ) catch ( ok = false )
+                if outT != "" do
+                    try ( k.outTangentType = (mcpMapTangent outT); changed = true ) catch ( ok = false )
+                if (mcpGet params "inHandle") != undefined do
+                    try ( k.inTangent = (mcpNum params "inHandle"); changed = true ) catch ( ok = false )
+                if (mcpGet params "outHandle") != undefined do
+                    try ( k.outTangent = (mcpNum params "outHandle"); changed = true ) catch ( ok = false )
+                if ok and changed then append applied nm
+                else append failures (nm + ": tangent rejected")
             )
         )
     )
     local p = #()
-    mcpPair p "objects" (for n in nodes collect n.name)
+    mcpPair p "objects" applied
+    mcpPair p "failures" failures
     mcpPair p "property" propName
     mcpPair p "frame" frame
     mcpPair p "message" (mcpMsg "msg.ok")
@@ -1007,17 +1050,26 @@ fn mcpH_constraint_link params =
     local nodes = mcpResolveNodes (mcpArr params "objects") fallbackToSelection:true
     local target = mcpResolveNode (mcpReqStr params "target")
     local f = mcpInt params "frame" default:(currentTime.frame as integer)
+    -- The whole loop used to sit inside one bare catch, so a locked controller or
+    -- a bad target produced "objects: [everything]" and no error at all.
+    local applied = #()
+    local failures = #()
     for node in nodes do
     (
+        local nm = "?"
+        try ( nm = node.name ) catch ( nm = "?" )
+        local ok = true
         try
         (
             node.position.controller = link_constraint()
             node.position.controller.addTarget target (f * ticksPerFrame)
         )
-        catch()
+        catch ( ok = false; append failures (nm + ": " + (getCurrentException() as string)) )
+        if ok do append applied nm
     )
     local p = #()
-    mcpPair p "objects" (for n in nodes collect n.name)
+    mcpPair p "objects" applied
+    mcpPair p "failures" failures
     mcpPair p "target" target.name
     mcpPair p "message" (mcpMsg "msg.ok")
     mcpObj p
