@@ -459,6 +459,14 @@ TOOLS.append(tool(
         "folder": s("输出文件夹；省略用上次设置或渲染输出目录。", "Output folder; omit to use the last setting or render output folder."),
         "size": i("贴图边长（像素），默认 512。", "Map edge size in pixels, default 512."),
         "format": s("贴图格式，默认 png。", "Map format, default png."),
+        "template": s("文件名模板，%s=对象名 %e=元素名；默认 %s_%e。",
+                      "Filename template, %s=object name %e=element name; default %s_%e."),
+        "elements": arr("要烘焙的元素，可一次烘多个；省略为 ao。支持 ao / normal / diffuse / "
+                        "lighting / shadows / specular / bump / alpha / mixedao / height / selfillum。",
+                        "Elements to bake, several at once allowed; omit for ao. Accepts ao / "
+                        "normal / diffuse / lighting / shadows / specular / bump / alpha / "
+                        "mixedao / height / selfillum.",
+                        items="string"),
     },
 ))
 
@@ -472,6 +480,14 @@ TOOLS.append(tool(
         "folder": s("输出文件夹；省略用上次设置或渲染输出目录。", "Output folder; omit to use the last setting or render output folder."),
         "size": i("贴图边长（像素），默认 512。", "Map edge size in pixels, default 512."),
         "format": s("贴图格式，默认 png。", "Map format, default png."),
+        "template": s("文件名模板，%s=对象名 %e=元素名；默认 %s_%e。",
+                      "Filename template, %s=object name %e=element name; default %s_%e."),
+        "elements": arr("要烘焙的元素，可一次烘多个；省略为 normal。支持 ao / normal / diffuse / "
+                        "lighting / shadows / specular / bump / alpha / mixedao / height / selfillum。",
+                        "Elements to bake, several at once allowed; omit for normal. Accepts ao / "
+                        "normal / diffuse / lighting / shadows / specular / bump / alpha / "
+                        "mixedao / height / selfillum.",
+                        items="string"),
     },
 ))
 
@@ -485,6 +501,14 @@ TOOLS.append(tool(
         "folder": s("输出文件夹；省略用上次设置或渲染输出目录。", "Output folder; omit to use the last setting or render output folder."),
         "size": i("贴图边长（像素），默认 512。", "Map edge size in pixels, default 512."),
         "format": s("贴图格式，默认 png。", "Map format, default png."),
+        "template": s("文件名模板，%s=对象名 %e=元素名；默认 %s_%e。",
+                      "Filename template, %s=object name %e=element name; default %s_%e."),
+        "elements": arr("要烘焙的元素，可一次烘多个；省略为 lighting。支持 ao / normal / diffuse / "
+                        "lighting / shadows / specular / bump / alpha / mixedao / height / selfillum。",
+                        "Elements to bake, several at once allowed; omit for lighting. Accepts ao / "
+                        "normal / diffuse / lighting / shadows / specular / bump / alpha / "
+                        "mixedao / height / selfillum.",
+                        items="string"),
     },
 ))
 

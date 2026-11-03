@@ -65,6 +65,41 @@ def _collected(body: str, blocks: dict, seen: set) -> tuple:
     return literals, dynamic
 
 
+def report_undeclared(catalog, blocks: dict, registered: dict) -> None:
+    """Print keys a handler reads that the catalog does not declare.
+
+    The opposite direction of the assertion below, and deliberately a report
+    rather than a gate: two legitimate shapes live here.
+
+      * an alias - ``set_language`` accepts ``lang`` when ``language`` is absent,
+        ``execute_maxscript`` accepts ``command`` when ``code`` is absent;
+      * a shared handler - the five ``light_create_*`` wrappers all call
+        ``mcpH_light_create``, so each one declares the subset that makes sense
+        for its light type while the handler still understands the union.
+
+    Printing it keeps a new surprise visible in the test log without failing a
+    build over something that is usually intentional.
+    """
+    lines = []
+    for entry in catalog:
+        if entry.local:
+            continue
+        handler = registered.get(entry.bridge_method, "mcpH_" + entry.bridge_method)
+        if handler not in blocks:
+            continue
+        literals, dynamic = _collected("\n".join(blocks[handler]), blocks, set())
+        if dynamic:
+            continue
+        # A preset supplies the key, so the client never has to.
+        extra = literals - set(entry.schema.get("properties") or {}) - set(entry.preset or {})
+        if extra:
+            lines.append("  %-26s %s" % (entry.name, sorted(extra)))
+    print("undeclared-but-read: %d (alias / shared handler; see PARAMETER_SURFACE.md)"
+          % len(lines))
+    for line in lines:
+        print(line)
+
+
 def main() -> None:
     catalog = build_catalog()
     blocks = outcome_audit._blocks()
@@ -91,6 +126,7 @@ def main() -> None:
 
     print("param contract: checked=%d skipped(dynamic)=%d violations=%d" % (
         checked, skipped, len(fake)))
+    report_undeclared(catalog, blocks, registered)
     for name, missing, handler in fake:
         print("  %-26s declares %s but %s never reads it" % (name, missing, handler))
 

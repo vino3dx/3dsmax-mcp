@@ -28,6 +28,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     only in their list form, so `scene_new` and `delete_file` answered
     `missing_success` after doing exactly what they were asked.  Both forms are
     now read by value, the same way receipt fields already were.
+  - **The other direction is now a report, not a guess.** The same audit prints the
+    keys a handler reads that the catalog does not declare (8 today: two aliases,
+    five shared-handler unions, one false positive), and `docs/PARAMETER_SURFACE.md`
+    explains each one and when to declare or drop it. `bake_ao` / `bake_normals` /
+    `bake_lighting` gained the `elements` and `template` arguments that
+    `bake_texture` already had.
   - `test/static/param_contract_audit.py` (Static) fails when a declared
     parameter is never read, skipping the two handler shapes a static scan
     cannot follow (key lists in the primitive creators, `mcpPairs params`
