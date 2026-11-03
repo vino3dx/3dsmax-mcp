@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import base64
 import copy
+import math
 from pathlib import Path
 import sys
 from typing import Any, Dict, List, Optional
@@ -115,6 +116,9 @@ class FakeScene:
         self.undeletable: set = set()
         #: names the material/modifier handlers will silently skip
         self.skip_assign: set = set()
+        #: names that refuse state changes (locked nodes), so partial success and
+        #: honest failure lists can be exercised offline
+        self.reject_ops: set = set()
         #: set to a transport exception to make the next call fail at that layer
         self.transport_failure: Optional[BaseException] = None
         #: when True, transform_object silently ignores the request (no change)
@@ -450,6 +454,108 @@ class FakeScene:
             self.selection = [new if item == old else item for item in self.selection]
         return {"oldName": old, "newName": node["name"],
                 "renamed": node["name"] == new, "message": "Renamed."}
+
+    # ------------------------------------------- stage 5: visibility and state
+    def _h_hide_objects(self, params):
+        return self._set_flag(params, "isHidden", True, "hidden")
+
+    def _h_unhide_objects(self, params):
+        # Mirrors mcpH_unhide_objects: with no objects the real handler acts on
+        # everything, so the stub must too.
+        return self._set_flag(params, "isHidden", False, "shown", all_when_empty=True)
+
+    def _h_unhide_all(self, params):
+        return self._set_flag(params, "isHidden", False, "shown", everyone=True)
+
+    def _h_freeze_objects(self, params):
+        return self._set_flag(params, "isFrozen", True, "frozen")
+
+    def _h_unfreeze_all(self, params):
+        return self._set_flag(params, "isFrozen", False, "thawed", everyone=True)
+
+    def _set_flag(self, params, field, want, key, all_when_empty=False, everyone=False):
+        """Apply the call, then report the flag the scene actually holds.
+
+        With ``everyone`` the call still touches every object, but only the ones
+        whose state actually changed are reported - "thawed" means it used to be
+        frozen, not "it is not frozen now", otherwise the list is a dump of the
+        whole scene.
+        """
+        if everyone:
+            targets = sorted(self.nodes)
+            report = {name for name in targets
+                      if self.nodes[name][0].get(field) is (not want)}
+        else:
+            targets = [str(n) for n in params.get("objects") or []]
+            if not targets and all_when_empty:
+                targets = sorted(self.nodes)
+            report = None
+        hit: List[str] = []
+        miss: List[str] = []
+        for name in targets:
+            node = self._require(name)
+            counted = report is None or name in report
+            if name in self.reject_ops:
+                if counted:
+                    miss.append(name)
+                continue
+            node[field] = want
+            if counted:
+                hit.append(name)
+        return {key: hit, "failures": miss, "message": "OK"}
+
+    def _h_reset_transform(self, params):
+        applied: List[str] = []
+        failures: List[str] = []
+        for name in self._targets(params):
+            node = self._require(name)
+            if name in self.reject_ops:
+                failures.append(name)
+                continue
+            if params.get("rotation", True) is not False:
+                node["rotation"] = [0.0, 0.0, 0.0]
+            if params.get("scale", True) is not False:
+                node["scale"] = [1.0, 1.0, 1.0]
+            if params.get("position") is True:
+                node["position"] = [0.0, 0.0, 0.0]
+            applied.append(name)
+        return {"applied": applied, "failures": failures, "message": "OK"}
+
+    def _h_snap_objects_to_grid(self, params):
+        spacing = float(params.get("spacing") or 10.0)
+        if spacing <= 0:
+            spacing = 10.0
+        applied: List[str] = []
+        failures: List[str] = []
+        for name in self._targets(params):
+            node = self._require(name)
+            if name in self.reject_ops:
+                failures.append(name)
+                continue
+            pos = list(node.get("position") or [0.0, 0.0, 0.0])
+            # floor(x + 0.5), matching the MAXScript handler; Python's round()
+            # is banker's rounding and would disagree on exact halves.
+            node["position"] = [math.floor(value / spacing + 0.5) * spacing for value in pos]
+            applied.append(name)
+        return {"applied": applied, "failures": failures, "message": "OK"}
+
+    def _h_open_group(self, params):
+        return self._set_group_open(params, True)
+
+    def _h_close_group(self, params):
+        return self._set_group_open(params, False)
+
+    def _set_group_open(self, params, want):
+        applied: List[str] = []
+        failures: List[str] = []
+        for name in self._targets(params):
+            node = self._require(name)
+            if name not in self.groups or name in self.reject_ops:
+                failures.append(name)
+                continue
+            node["groupOpen"] = want
+            applied.append(name)
+        return {"applied": applied, "failures": failures, "message": "OK"}
 
     # ---------------------------------------------- stage 4: layers, groups
     def _h_list_layers(self, params):

@@ -61,11 +61,16 @@ python scripts/verify.py                       # Static  —— 目录/注册/�
 | W35 | 恢复诊断三态：场景可读 / 桥接断开 / 场景读不出 | Static | `check_recovery_diagnosis` |
 | W36 | 结论声明：回执型 payload（`saved`/`written`/`group`/`moved`）判定正确 | Static | `outcome_declaration_test.py`（9 组） |
 | W37 | 结论声明覆盖率：标准工作流用到的工具必须可读；core 档位缺口为 0 | Static | `outcome_audit.py` |
+| W38 | 状态回读：隐藏/冻结/解冻回执反映场景，而非请求 | Offline | `check_hide_reports_the_scene_state`、`check_freeze_and_thaw` |
+| W39 | 单个对象拒绝 -> `failures` 点名、整体不是成功 | Offline | `check_hide_partial_failure_is_not_success` |
+| W40 | 逐对象变换：一个拒绝不影响其余，被拒对象状态不变 | Offline | `check_reset_transform_reports_each_object`、`check_snap_to_grid_moves_and_reports` |
+| W41 | `thawed`/`shown` 只含状态真的变了的对象 | Offline | `check_freeze_and_thaw`、`check_unhide_all_covers_every_object` |
+| W42 | 空目标列表：什么都不做，也不声称做了什么 | Offline | `check_empty_target_list_is_an_honest_no_op` |
 
-级别统计：`Static` 18 类、`Offline` 19 类（其中 6 类两种证据都有，共 37 类），
-`Runtime` 0 类。对应 45 个测试函数：`workflow_engine_test.py` 18 个（Static）、
-`workflow_scene_test.py` 22 个（Offline），外加 `outcome_declaration_test.py`
-8 组与 `outcome_audit.py` 的覆盖率断言。
+级别统计：`Static` 18 类、`Offline` 24 类（其中 6 类两种证据都有，共 42 类），
+`Runtime` 0 类。对应 56 个测试函数：`workflow_engine_test.py` 18 个（Static）、
+`workflow_scene_test.py` 22 个（Offline）、`object_state_test.py` 10 个（Offline），
+外加 `outcome_declaration_test.py` 10 组与 `outcome_audit.py` 的覆盖率断言。
 
 ## 3. Runtime 待执行清单（本轮未做）
 
@@ -84,6 +89,9 @@ python scripts/verify.py                       # Static  —— 目录/注册/�
 | R8 | 中文版 Max 跑 `basic_scene` | 错误与 `note_zh` 是正常中文，不是乱码 |
 | R9 | 视口被遮挡时跑 `basic_scene` | 视觉步骤无图 -> `status:"partial"`、`isError:false` |
 | R10 | `execute_maxscript` 步骤声明 `retry:"transport"` | 桥断后仍只尝试一次（`escape_hatch_never_retried`） |
+| R11 | 重名建层 / 重名重命名 | `create_layer` 报 `err.bad_value`；`rename_object` 返回 `renamed:false` 且对象名未变（与 Max 静默保留旧名的行为一致） |
+| R12 | 锁定或冻结层上的对象做 `hide` / `reset_transform` | `hidden` 不含该对象、`failures` 点名它，工具整体 `isError:true`；其余对象已改 |
+| R13 | `set_units` 设一个会被夹取的 `scale` | `failures` 里带实际生效的值，`systemScale` 字段与之一致 |
 
 R5/R9/R10 是最关键的三个：它们验证的是"失败时不撒谎"，而这一点离线只能证明
 Python 侧的解释，证明不了 Max 侧的行为。

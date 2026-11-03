@@ -113,7 +113,10 @@ fn mcpH_render_set_engine params =
     try ( r = (execute cls)() ) catch ( mcpFail "err.render_engine" a1:cls )
     try ( renderers.production = r ) catch ( mcpFail "err.render_engine" a1:cls )
     local p = #()
-    mcpPair p "engine" (mcpCurrentRendererName())
+
+    -- Every failure path above mcpFails, so reaching here means the change
+    -- was applied.
+    mcpPair p "success" true    mcpPair p "engine" (mcpCurrentRendererName())
     mcpPair p "message" (mcpMsg "msg.ok")
     mcpObj p
 )
@@ -158,7 +161,24 @@ fn mcpH_render_set_resolution params =
     if w > 0 do ( try ( renderWidth = w ) catch() )
     if h > 0 do ( try ( renderHeight = h ) catch() )
     if pa > 0.0 do ( try ( renderPixelAspect = pa ) catch() )
-    mcpH_render_get_settings params
+    -- Max clamps some sizes, so read the values back: "the assignment ran" is not
+    -- "the setting changed", and what matters is the size the renderer will use.
+    local applied = #()
+    local failures = #()
+    local gotW = try ( renderWidth as integer ) catch ( 0 )
+    local gotH = try ( renderHeight as integer ) catch ( 0 )
+    local gotPa = try ( renderPixelAspect as float ) catch ( 1.0 )
+    if w > 0 do ( if gotW == w then append applied "width" else append failures ("width=" + (gotW as string)) )
+    if h > 0 do ( if gotH == h then append applied "height" else append failures ("height=" + (gotH as string)) )
+    if pa > 0.0 do
+    (
+        if (abs (gotPa - pa)) < 0.0001 then append applied "pixelAspect"
+        else append failures ("pixelAspect=" + (gotPa as string))
+    )
+    local out = mcpPairs (mcpH_render_get_settings params)
+    mcpPair out "applied" applied
+    mcpPair out "failures" failures
+    mcpObj out
 )
 
 
@@ -177,9 +197,18 @@ fn mcpH_render_set_output params =
     if (getFilenameType path) == "" do full = path + "." + fmt
     try ( rendOutputFilename = full ) catch()
     try ( rendSaveFile = true ) catch()
+    -- Read back: Max ignores an output path it cannot use, and the frames then
+    -- land somewhere else.  Reporting the request instead of the result would
+    -- hide that until the first frame came out in the wrong place.
+    local gotPath = try ( rendOutputFilename ) catch ( "" )
+    local gotSave = try ( rendSaveFile as boolean ) catch ( false )
+    local failures = #()
+    if gotPath != full do append failures ("outputPath=" + gotPath)
+    if not gotSave do append failures "saveFile=false"
     local p = #()
-    mcpPair p "path" full
+    mcpPair p "path" gotPath
     mcpPair p "format" fmt
+    mcpPair p "failures" failures
     mcpPair p "message" (mcpMsg "msg.ok")
     mcpObj p
 )
@@ -238,7 +267,37 @@ fn mcpH_render_set_frame_range params =
     (
         try ( rendTimeType = 2 ) catch()
     )
-    mcpH_render_get_settings params
+    -- Read the range back: each branch above sets three globals that Max can
+    -- clamp, so echo the state instead of the request.
+    local applied = #()
+    local failures = #()
+    local gotType = try ( rendTimeType as integer ) catch ( 0 )
+    local gotStart = try ( renderStart as integer ) catch ( 0 )
+    local gotEnd = try ( renderEnd as integer ) catch ( 0 )
+    if mode == "single" then
+    (
+        if gotType == 1 and gotStart == startF then append applied "single"
+        else append failures ("timeType=" + (gotType as string) + " frame=" + (gotStart as string))
+    )
+    else if mode == "range" then
+    (
+        if gotType == 3 and gotStart == startF and gotEnd == endF then append applied "range"
+        else append failures ("timeType=" + (gotType as string) + " " + (gotStart as string) + "-" + (gotEnd as string))
+    )
+    else if mode == "frames" then
+    (
+        if gotType == 4 then append applied "frames"
+        else append failures ("timeType=" + (gotType as string))
+    )
+    else
+    (
+        if gotType == 2 then append applied "scene"
+        else append failures ("timeType=" + (gotType as string))
+    )
+    local out = mcpPairs (mcpH_render_get_settings params)
+    mcpPair out "applied" applied
+    mcpPair out "failures" failures
+    mcpObj out
 )
 
 
@@ -250,7 +309,10 @@ fn mcpH_render_save_preset params =
     try ( ok = (renderPresets.SaveAllRenderPresets path) ) catch ( ok = false )
     if not ok do mcpFail "err.file_missing" a1:path
     local p = #()
-    mcpPair p "path" path
+
+    -- Every failure path above mcpFails, so reaching here means the change
+    -- was applied.
+    mcpPair p "success" true    mcpPair p "path" path
     mcpPair p "message" (mcpMsg "msg.saved" a1:path)
     mcpObj p
 )
@@ -264,7 +326,10 @@ fn mcpH_render_load_preset params =
     try ( ok = (renderPresets.LoadAllRenderPresets path) ) catch ( ok = false )
     if not ok do mcpFail "err.file_missing" a1:path
     local p = #()
-    mcpPair p "path" path
+
+    -- Every failure path above mcpFails, so reaching here means the change
+    -- was applied.
+    mcpPair p "success" true    mcpPair p "path" path
     mcpPair p "message" (mcpMsg "msg.loaded" a1:path)
     mcpObj p
 )
@@ -553,7 +618,10 @@ fn mcpH_render_element_add params =
     local out = mcpStr params "output" default:""
     if out != "" do ( try ( el.outputFilename = out ) catch() )
     local p = #()
-    mcpPair p "element" friendly
+
+    -- Every failure path above mcpFails, so reaching here means the change
+    -- was applied.
+    mcpPair p "success" true    mcpPair p "element" friendly
     mcpPair p "output" out
     mcpPair p "message" (mcpMsg "msg.ok")
     mcpObj p
@@ -725,7 +793,10 @@ fn mcpH_viewport_set_view params =
     if not ok do mcpFail "err.bad_value" a1:"view"
     mcpRedraw()
     local p = #()
-    mcpPair p "view" view
+
+    -- Every failure path above mcpFails, so reaching here means the change
+    -- was applied.
+    mcpPair p "success" true    mcpPair p "view" view
     mcpPair p "message" (mcpMsg "msg.ok")
     mcpObj p
 )

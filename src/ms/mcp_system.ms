@@ -388,11 +388,25 @@ fn mcpH_set_units params =
     )
     if scale > 0.0 do ( try ( units.SystemScale = scale ) catch() )
 
-    if displayType == "metric" then ( try ( units.DisplayType = #Metric ) catch() )
-    else if displayType == "us" then ( try ( units.DisplayType = #US ) catch() )
-    else if displayType == "generic" then ( try ( units.DisplayType = #Generic ) catch() )
+    if displayType != "" then
+    (
+        if displayType == "metric" then ( try ( units.DisplayType = #Metric ) catch() )
+        else if displayType == "us" then ( try ( units.DisplayType = #US ) catch() )
+        else if displayType == "generic" then ( try ( units.DisplayType = #Generic ) catch() )
+        else ( mcpFail "err.bad_value" a1:("displayType=" + displayType) )
+    )
 
-    mcpH_get_units params
+    -- Read the scale back: Max clamps it, and a wrong scale makes every later
+    -- dimension wrong without anything looking broken.  Display type has no
+    -- portable read-back across versions, so it is reported as requested but
+    -- unverified rather than assumed to have worked.
+    local failures = #()
+    local gotScale = try ( units.SystemScale as float ) catch ( -1.0 )
+    if scale > 0.0 and (abs (gotScale - scale)) > 0.000001 do
+        append failures ("systemScale=" + (gotScale as string))
+    local out = mcpPairs (mcpH_get_units params)
+    mcpPair out "failures" failures
+    mcpObj out
 )
 
 fn mcpH_get_units params =

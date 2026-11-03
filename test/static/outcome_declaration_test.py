@@ -115,6 +115,33 @@ def check_specific_handlers():
     assert verdict({"success": True, "result": None, "resultText": ""}) == (True, "success")
 
 
+def check_state_readback_shapes():
+    """Shapes produced by the Stage 5 read-back handlers in src/ms."""
+    # hide / freeze report the objects the scene now agrees about, and name the
+    # ones that still disagree.  The failure list decides.
+    assert verdict({"hidden": ["Box001", "Box002"], "failures": []}) == (True, "failures")
+    assert verdict({"hidden": [], "failures": ["Box002"]}) == (False, "failures")
+    assert verdict({"thawed": ["Box001"], "failures": []}) == (True, "failures")
+    assert verdict({"shown": [], "failures": []}) == (True, "failures")
+    # reset_transform / snap / mirror / set_pivot: applied + failures.
+    assert verdict({"applied": ["Box001"], "failures": []}) == (True, "failures")
+    assert verdict({"applied": [], "failures": ["Box001"]}) == (False, "failures")
+    # light_set / cam_set: applied + skipped, and no failures key at all.
+    assert verdict({"applied": ["color"], "skipped": ["iso"], "name": "Light01"}) == (True, "applied")
+    # A call where every property was skipped mcpFails upstream, so the shape
+    # never reaches the runtime - an empty applied with skipped is still a
+    # "nothing was done" answer and must not read as success.
+    assert verdict({"applied": [], "skipped": ["iso"]}) == (False, "applied")
+    # render_set_resolution / frame range / set_units: settings echo + failures.
+    assert verdict({"width": 1920, "height": 1080, "failures": []}) == (True, "failures")
+    assert verdict({"systemType": "Meters", "failures": ["systemScale=2.5"]}) == (False, "failures")
+    # mat_set_pbr / mat_set_emission: whatever landed, plus what did not.
+    assert verdict({"applied": ["baseColor"], "skipped": ["metallic"]}) == (True, "applied")
+    # mat_delete: still referenced anywhere is a failure.
+    assert verdict({"usedBy": [], "inSlots": [], "failures": []}) == (True, "failures")
+    assert verdict({"usedBy": ["Box001"], "failures": ["Box001"]}) == (False, "failures")
+
+
 def check_audit_agrees_with_runtime():
     """The audit decides by key name; it must use exactly the runtime's keys."""
     sys.path.insert(0, str(ROOT / "test" / "static"))
@@ -136,6 +163,7 @@ def main():
     check_message_is_never_evidence()
     check_missing_success_envelope()
     check_specific_handlers()
+    check_state_readback_shapes()
     check_audit_agrees_with_runtime()
     print("outcome declaration: all checks passed")
 

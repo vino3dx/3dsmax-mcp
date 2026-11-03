@@ -167,13 +167,61 @@ fn mcpH_light_get params =
 fn mcpH_light_set params =
 (
   local l = mcpRequireLight (mcpStr params "light" default:"")
-  if (mcpGet params "name") != undefined do ( try ( l.name = mcpStr params "name" ) catch() )
-  if (mcpGet params "color") != undefined do ( try ( l.color = mcpColorFrom (mcpGet params "color") ) catch() )
-  if (mcpGet params "multiplier") != undefined do ( try ( l.multiplier = mcpNum params "multiplier" ) catch ( try ( l.intensity = mcpNum params "multiplier" ) catch() ) )
-  if (mcpGet params "intensity") != undefined do ( try ( l.intensity = mcpNum params "intensity" ) catch ( try ( l.multiplier = mcpNum params "intensity" ) catch() ) )
-  if (mcpGet params "castShadows") != undefined do ( try ( l.castShadows = mcpBool params "castShadows" ) catch() )
-  if (mcpGet params "enabled") != undefined do ( try ( l.enabled = mcpBool params "enabled" ) catch() )
-  if (mcpGet params "coneAngle") != undefined do ( try ( l.hotspot = mcpNum params "coneAngle" ) catch() )
+  -- Light classes disagree about property names (multiplier vs intensity,
+  -- falloff vs spread), so each assignment is its own try.  The bug was that
+  -- every miss was swallowed and the reply still said "ok" - now the misses are
+  -- named, and a call where nothing landed fails outright.
+  local applied = #()
+  local skipped = #()
+  if (mcpGet params "name") != undefined do
+  (
+    local value = mcpStr params "name"
+    local ok = false
+    try ( l.name = value; ok = true ) catch()
+    if ok then append applied "name" else append skipped "name"
+  )
+  if (mcpGet params "color") != undefined do
+  (
+    local value = mcpColorFrom (mcpGet params "color")
+    local ok = false
+    try ( l.color = value; ok = true ) catch()
+    if ok then append applied "color" else append skipped "color"
+  )
+  if (mcpGet params "multiplier") != undefined do
+  (
+    local value = mcpNum params "multiplier"
+    local ok = false
+    try ( l.multiplier = value; ok = true ) catch ( try ( l.intensity = value; ok = true ) catch() )
+    if ok then append applied "multiplier" else append skipped "multiplier"
+  )
+  if (mcpGet params "intensity") != undefined do
+  (
+    local value = mcpNum params "intensity"
+    local ok = false
+    try ( l.intensity = value; ok = true ) catch ( try ( l.multiplier = value; ok = true ) catch() )
+    if ok then append applied "intensity" else append skipped "intensity"
+  )
+  if (mcpGet params "castShadows") != undefined do
+  (
+    local value = mcpBool params "castShadows"
+    local ok = false
+    try ( l.castShadows = value; ok = true ) catch()
+    if ok then append applied "castShadows" else append skipped "castShadows"
+  )
+  if (mcpGet params "enabled") != undefined do
+  (
+    local value = mcpBool params "enabled"
+    local ok = false
+    try ( l.enabled = value; ok = true ) catch()
+    if ok then append applied "enabled" else append skipped "enabled"
+  )
+  if (mcpGet params "coneAngle") != undefined do
+  (
+    local value = mcpNum params "coneAngle"
+    local ok = false
+    try ( l.hotspot = value; ok = true ) catch()
+    if ok then append applied "coneAngle" else append skipped "coneAngle"
+  )
   if (mcpGet params "penumbra") != undefined do
   (
     -- Same rule as light_create: penumbra sits on top of the hotspot, so the
@@ -184,7 +232,10 @@ fn mcpH_light_set params =
       ( base = (mcpNum params "coneAngle") )
     else
       ( try ( base = l.hotspot ) catch ( base = 0.0 ) )
-    try ( l.falloff = (base + (mcpNum params "penumbra")) ) catch ( try ( l.spread = (mcpNum params "penumbra") ) catch() )
+    local value = (mcpNum params "penumbra")
+    local ok = false
+    try ( l.falloff = (base + value); ok = true ) catch ( try ( l.spread = value; ok = true ) catch() )
+    if ok then append applied "penumbra" else append skipped "penumbra"
   )
   if (mcpGet params "decay") != undefined do
   (
@@ -192,10 +243,24 @@ fn mcpH_light_set params =
     local dt = 0
     if d == "inverse" do dt = 1
     if d == "inverse_square" or d == "inversesquare" do dt = 2
-    try ( l.decayType = dt ) catch()
+    local ok = false
+    try ( l.decayType = dt; ok = true ) catch()
+    if ok then append applied "decay" else append skipped "decay"
   )
-  if (mcpGet params "position") != undefined do ( try ( l.position = mcpPoint3From (mcpGet params "position") ) catch() )
+  if (mcpGet params "position") != undefined do
+  (
+    local value = mcpPoint3From (mcpGet params "position")
+    local ok = false
+    try ( l.position = value; ok = true ) catch()
+    if ok then append applied "position" else append skipped "position"
+  )
+  -- Nothing was requested at all is not a failure; something was requested and
+  -- nothing landed is.
+  if applied.count == 0 and skipped.count > 0 do
+    mcpFail "err.invalid_argument" a1:"light" a2:"no requested property exists on this light"
   local p = #()
+  mcpPair p "applied" applied
+  mcpPair p "skipped" skipped
   mcpPair p "name" (try (l.name) catch (""))
   mcpPair p "message" (mcpMsg "msg.ok")
   mcpObj p
@@ -207,7 +272,9 @@ fn mcpH_light_delete params =
   local nm = try (l.name) catch ("")
   try ( delete l ) catch ( mcpFail "err.invalid_argument" a1:"delete" a2:(getCurrentException() as string) )
   local p = #()
-  mcpPair p "name" nm
+
+  -- Reaching here means every failure path above mcpFails.
+  mcpPair p "success" true  mcpPair p "name" nm
   mcpPair p "message" (mcpMsg "msg.ok")
   mcpObj p
 )
@@ -223,7 +290,9 @@ fn mcpH_light_align_to_object params =
   try ( l.position = (tp + [0,0,50]) ) catch()
   try ( if l.target != undefined do l.target.position = tp ) catch()
   local p = #()
-  mcpPair p "light" (try (l.name) catch (""))
+
+  -- Reaching here means every failure path above mcpFails.
+  mcpPair p "success" true  mcpPair p "light" (try (l.name) catch (""))
   mcpPair p "target" (try (tgt.name) catch (""))
   mcpPair p "message" (mcpMsg "msg.ok")
   mcpObj p
@@ -247,7 +316,9 @@ fn mcpH_light_set_sun params =
   if azimuth > -999.0 do ( try ( sys.azimuth = azimuth ) catch ( try ( sys.sun.azimuth = azimuth ) catch() ) )
   if altitude > -999.0 do ( try ( sys.altitude = altitude ) catch ( try ( sys.sun.altitude = altitude ) catch() ) )
   local p = #()
-  mcpPair p "name" (try (sys.name) catch (""))
+
+  -- Reaching here means every failure path above mcpFails.
+  mcpPair p "success" true  mcpPair p "name" (try (sys.name) catch (""))
   mcpPair p "azimuth" azimuth
   mcpPair p "altitude" altitude
   mcpPair p "message" (mcpMsg "msg.ok")
@@ -275,7 +346,9 @@ fn mcpH_cam_create params =
   if fov > 0 do ( try ( c.fov = fov ) catch() )
   if nm != "" do ( try ( c.name = nm ) catch() )
   local p = #()
-  mcpPair p "class" (try ((classof c) as string) catch (""))
+
+  -- Reaching here means every failure path above mcpFails.
+  mcpPair p "success" true  mcpPair p "class" (try ((classof c) as string) catch (""))
   mcpPair p "name" (try (c.name) catch (""))
   mcpPair p "type" typeStr
   mcpPair p "message" (mcpMsg "msg.created" a1:(try (c.name) catch ("")))
@@ -305,7 +378,9 @@ fn mcpH_cam_create_physical params =
   if fov > 0 do ( try ( c.fov = fov ) catch() )
   if nm != "" do ( try ( c.name = nm ) catch() )
   local p = #()
-  mcpPair p "class" (try ((classof c) as string) catch (""))
+
+  -- Reaching here means a failure here throws instead of being ignored.
+  mcpPair p "success" true  mcpPair p "class" (try ((classof c) as string) catch (""))
   mcpPair p "name" (try (c.name) catch (""))
   mcpPair p "message" (mcpMsg "msg.created" a1:(try (c.name) catch ("")))
   mcpObj p
@@ -336,16 +411,70 @@ fn mcpH_cam_get params =
 fn mcpH_cam_set params =
 (
   local c = mcpRequireCam (mcpStr params "camera" default:"")
-  if (mcpGet params "name") != undefined do ( try ( c.name = mcpStr params "name" ) catch() )
-  if (mcpGet params "position") != undefined do ( try ( c.position = mcpPoint3From (mcpGet params "position") ) catch() )
-  if (mcpGet params "target") != undefined do ( try ( if isKindOf c Targetcamera do c.target.position = mcpPoint3From (mcpGet params "target") ) catch() )
-  if (mcpGet params "fov") != undefined do ( try ( c.fov = mcpNum params "fov" ) catch() )
-  if (mcpGet params "focalLength") != undefined do ( try ( c.focal_length = mcpNum params "focalLength" ) catch() )
-  if (mcpGet params "fStop") != undefined do ( try ( c.f_stop = mcpNum params "fStop" ) catch ( try ( c.aperture = mcpNum params "fStop" ) catch() ) )
-  if (mcpGet params "shutterSpeed") != undefined do ( try ( c.shutter_speed = mcpNum params "shutterSpeed" ) catch() )
-  if (mcpGet params "iso") != undefined do ( try ( c.iso = mcpNum params "iso" ) catch() )
-  if (mcpGet params "depthOfField") != undefined do ( try ( c.depth_of_field = mcpBool params "depthOfField" ) catch() )
+  -- Same rule as light_set: a physical camera has f_stop, a free camera has no
+  -- target, and the misses used to vanish into "ok".
+  local applied = #()
+  local skipped = #()
+  if (mcpGet params "name") != undefined do
+  (
+    local ok = false
+    try ( c.name = mcpStr params "name"; ok = true ) catch()
+    if ok then append applied "name" else append skipped "name"
+  )
+  if (mcpGet params "position") != undefined do
+  (
+    local ok = false
+    try ( c.position = mcpPoint3From (mcpGet params "position"); ok = true ) catch()
+    if ok then append applied "position" else append skipped "position"
+  )
+  if (mcpGet params "target") != undefined do
+  (
+    local ok = false
+    try ( if isKindOf c Targetcamera do ( c.target.position = mcpPoint3From (mcpGet params "target") ); ok = true ) catch()
+    if ok then append applied "target" else append skipped "target"
+  )
+  if (mcpGet params "fov") != undefined do
+  (
+    local ok = false
+    try ( c.fov = mcpNum params "fov"; ok = true ) catch()
+    if ok then append applied "fov" else append skipped "fov"
+  )
+  if (mcpGet params "focalLength") != undefined do
+  (
+    local ok = false
+    try ( c.focal_length = mcpNum params "focalLength"; ok = true ) catch()
+    if ok then append applied "focalLength" else append skipped "focalLength"
+  )
+  if (mcpGet params "fStop") != undefined do
+  (
+    local value = mcpNum params "fStop"
+    local ok = false
+    try ( c.f_stop = value; ok = true ) catch ( try ( c.aperture = value; ok = true ) catch() )
+    if ok then append applied "fStop" else append skipped "fStop"
+  )
+  if (mcpGet params "shutterSpeed") != undefined do
+  (
+    local ok = false
+    try ( c.shutter_speed = mcpNum params "shutterSpeed"; ok = true ) catch()
+    if ok then append applied "shutterSpeed" else append skipped "shutterSpeed"
+  )
+  if (mcpGet params "iso") != undefined do
+  (
+    local ok = false
+    try ( c.iso = mcpNum params "iso"; ok = true ) catch()
+    if ok then append applied "iso" else append skipped "iso"
+  )
+  if (mcpGet params "depthOfField") != undefined do
+  (
+    local ok = false
+    try ( c.depth_of_field = mcpBool params "depthOfField"; ok = true ) catch()
+    if ok then append applied "depthOfField" else append skipped "depthOfField"
+  )
+  if applied.count == 0 and skipped.count > 0 do
+    mcpFail "err.invalid_argument" a1:"camera" a2:"no requested property exists on this camera"
   local p = #()
+  mcpPair p "applied" applied
+  mcpPair p "skipped" skipped
   mcpPair p "name" (try (c.name) catch (""))
   mcpPair p "message" (mcpMsg "msg.ok")
   mcpObj p
@@ -356,7 +485,9 @@ fn mcpH_cam_look_through params =
   local c = mcpRequireCam (mcpStr params "camera" default:"")
   try ( viewport.setCamera c ) catch ( mcpFail "err.invalid_argument" a1:"look_through" a2:(getCurrentException() as string) )
   local p = #()
-  mcpPair p "name" (try (c.name) catch (""))
+
+  -- Reaching here means every failure path above mcpFails.
+  mcpPair p "success" true  mcpPair p "name" (try (c.name) catch (""))
   mcpPair p "message" (mcpMsg "msg.ok")
   mcpObj p
 )
@@ -370,7 +501,9 @@ fn mcpH_cam_align_to_view params =
   try ( c.position = tm.pos ) catch()
   try ( if isKindOf c Targetcamera do c.target.position = (tm.pos - (tm.row3 * 100.0)) ) catch()
   local p = #()
-  mcpPair p "name" (try (c.name) catch (""))
+
+  -- Reaching here means every failure path above mcpFails.
+  mcpPair p "success" true  mcpPair p "name" (try (c.name) catch (""))
   mcpPair p "message" (mcpMsg "msg.ok")
   mcpObj p
 )
@@ -382,7 +515,9 @@ fn mcpH_cam_set_viewport params =
   if vp > 0 do ( try ( setActiveViewport vp ) catch() )
   try ( viewport.setCamera c ) catch ( mcpFail "err.invalid_argument" a1:"set_viewport" a2:(getCurrentException() as string) )
   local p = #()
-  mcpPair p "name" (try (c.name) catch (""))
+
+  -- Reaching here means every failure path above mcpFails.
+  mcpPair p "success" true  mcpPair p "name" (try (c.name) catch (""))
   mcpPair p "message" (mcpMsg "msg.ok")
   mcpObj p
 )
@@ -415,7 +550,9 @@ fn mcpH_cam_delete params =
   local nm = try (c.name) catch ("")
   try ( delete c ) catch ( mcpFail "err.invalid_argument" a1:"delete" a2:(getCurrentException() as string) )
   local p = #()
-  mcpPair p "name" nm
+
+  -- Reaching here means every failure path above mcpFails.
+  mcpPair p "success" true  mcpPair p "name" nm
   mcpPair p "message" (mcpMsg "msg.ok")
   mcpObj p
 )
@@ -438,7 +575,9 @@ fn mcpH_env_set_background_color params =
   if rawC == undefined do mcpFail "err.missing_param" a1:"color"
   backgroundColor = mcpColorFrom rawC
   local p = #()
-  mcpPair p "message" (mcpMsg "msg.ok")
+
+  -- Reaching here means every failure path above mcpFails.
+  mcpPair p "success" true  mcpPair p "message" (mcpMsg "msg.ok")
   mcpObj p
 )
 
@@ -450,7 +589,9 @@ fn mcpH_env_set_background_map params =
   if path != "" do ( try ( m.filename = path ) catch() )
   environmentMap = m
   local p = #()
-  mcpPair p "path" path
+
+  -- Reaching here means the assignment above throws instead of ignoring errors.
+  mcpPair p "success" true  mcpPair p "path" path
   mcpPair p "message" (mcpMsg "msg.ok")
   mcpObj p
 )
@@ -461,7 +602,9 @@ fn mcpH_env_set_ambient params =
   if rawC == undefined do mcpFail "err.missing_param" a1:"color"
   ambientColor = mcpColorFrom rawC
   local p = #()
-  mcpPair p "message" (mcpMsg "msg.ok")
+
+  -- Reaching here means every failure path above mcpFails.
+  mcpPair p "success" true  mcpPair p "message" (mcpMsg "msg.ok")
   mcpObj p
 )
 
@@ -483,7 +626,9 @@ fn mcpH_env_set_exposure params =
   if typeStr != "none" do ( try ( exposureControl = ctrl ) catch ( mcpFail "err.invalid_argument" a1:"exposureControl" a2:(getCurrentException() as string) ) )
   if ev > -999.0 and ctrl != undefined do ( try ( ctrl.exposureValue = ev ) catch ( try ( ctrl.brightness = ev ) catch() ) )
   local p = #()
-  mcpPair p "type" typeStr
+
+  -- Reaching here means every failure path above mcpFails.
+  mcpPair p "success" true  mcpPair p "type" typeStr
   mcpPair p "exposureValue" ev
   mcpPair p "message" (mcpMsg "msg.ok")
   mcpObj p

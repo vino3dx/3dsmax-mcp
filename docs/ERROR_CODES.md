@@ -155,6 +155,10 @@ handler 用 `{applied, failures, message}` 声明结果，于是 `convert_to_edi
 
 6. 以上都没有 → 仍然是 `missing_success`（**没有证据不等于成功**）。
 
+状态类操作（`hide_objects` / `freeze_objects` / `reset_transform` …）额外返回
+`hidden` / `frozen` / `thawed` / `shown` / `applied` 这类**回读结果**，供人阅读"到底动了谁"；
+判定仍然只看同一次调用里的 `failures`——两者来自同一次回读，不会互相矛盾。
+
 `message` **永远不参与判定**：每个 handler 都会返回它，包括什么都没做的那些。把它当结论
 就是把“没有证据”读成“成功”，而这正是本函数要防的错误。
 

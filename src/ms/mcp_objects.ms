@@ -36,6 +36,37 @@ fn mcpObjL zh en =
 )
 
 
+/*------------------------------------------------------ read-back state helper
+   "hide nodes" returning without an exception only proves the call ran; it does
+   not prove the objects are hidden (they may sit on a layer that overrides it,
+   or already have been hidden).  Read the flag back and report the two groups,
+   so the tool answers what the scene says instead of what the request asked
+   for.  `miss` doubles as the failure list the runtime reads. */
+fn mcpSplitByFlag nodes flagName want =
+(
+    local hit = #()
+    local miss = #()
+    for n in nodes do
+    (
+        local nm = "?"
+        try ( nm = n.name ) catch ( nm = "?" )
+        local value = undefined
+        try ( value = getProperty n flagName ) catch ( value = undefined )
+        if value == want then append hit nm else append miss nm
+    )
+    #(hit, miss)
+)
+
+
+/*----------------------------------------------- per-object action with failures
+   For operations that have no cheap flag to read back, the same shape is
+   written inline: run the call per object so one bad object cannot take the
+   whole batch down, and name the ones that threw instead of swallowing them.
+   Inline rather than a shared helper because MAXScript has no closures, and a
+   helper would have to switch on an operation name - which hides the one thing
+   that matters here: which call is being made. */
+
+
 /*------------------------------------------------------------------- primitives*/
 -- Generic primitive creator.  `class` arrives via the catalog preset or the
 -- `class` argument of create_primitive.  Dimension params are applied with
@@ -190,8 +221,14 @@ fn mcpH_spline_set_points params =
 (
     local nodes = mcpResolveNodes (mcpArr params "objects") fallbackToSelection:true
     local pts = mcpArr params "points"
+    local applied = #()
+    local failures = #()
     for n in nodes do
     (
+        local nm = "?"
+        try ( nm = n.name ) catch ( nm = "?" )
+        local ok = true
+        local written = 0
         try
         (
             if (numSplines n) == 0 do setNumSplines n 1
@@ -199,18 +236,23 @@ fn mcpH_spline_set_points params =
             local take = min count (pts.count)
             for k = 1 to take do
             (
-                try ( setKnotPoint n 1 k (mcpPoint3From pts[k]) ) catch()
+                try ( setKnotPoint n 1 k (mcpPoint3From pts[k]); written = written + 1 ) catch()
             )
             for k = (take + 1) to (pts.count) do
             (
-                try ( addPoint n (mcpPoint3From pts[k]) ) catch()
+                try ( addPoint n (mcpPoint3From pts[k]); written = written + 1 ) catch()
             )
             updateShape n
         )
-        catch()
+        catch ( ok = false )
+        if not ok then append failures (nm + ": shape rejected the points")
+        else if pts.count > 0 and written == 0 then append failures (nm + ": no point was written")
+        else append applied nm
     )
     mcpRedraw()
     local p = #()
+    mcpPair p "applied" applied
+    mcpPair p "failures" failures
     mcpPair p "message" (mcpMsg "msg.ok")
     mcpObj p
 )
@@ -307,32 +349,46 @@ fn mcpH_mirror_object params =
     local offset = mcpNum params "offset" default:0.0
     local cloneType = mcpStr params "cloneType" default:"none"
 
+    -- Per object, so a locked node cannot abort the rest of the set and the
+    -- caller learns which ones were skipped instead of just "Done.".
+    local applied = #()
+    local failures = #()
     for n in nodes do
     (
-        local mirrored = n
-        if cloneType == "copy" then mirrored = copy n
-        else if cloneType == "instance" then mirrored = instance n
+        local nm = "?"
+        try ( nm = n.name ) catch ( nm = "?" )
+        local ok = true
+        try
+        (
+            local mirrored = n
+            if cloneType == "copy" then mirrored = copy n
+            else if cloneType == "instance" then mirrored = instance n
 
-        local p = mirrored.position
-        if axis == "x" then
-        (
-            p.x = (2.0 * offset) - p.x
-            try ( mirrored.scale = [-mirrored.scale.x, mirrored.scale.y, mirrored.scale.z] ) catch()
+            local mp = mirrored.position
+            if axis == "x" then
+            (
+                mp.x = (2.0 * offset) - mp.x
+                try ( mirrored.scale = [-mirrored.scale.x, mirrored.scale.y, mirrored.scale.z] ) catch()
+            )
+            else if axis == "y" then
+            (
+                mp.y = (2.0 * offset) - mp.y
+                try ( mirrored.scale = [mirrored.scale.x, -mirrored.scale.y, mirrored.scale.z] ) catch()
+            )
+            else
+            (
+                mp.z = (2.0 * offset) - mp.z
+                try ( mirrored.scale = [mirrored.scale.x, mirrored.scale.y, -mirrored.scale.z] ) catch()
+            )
+            mirrored.position = mp
         )
-        else if axis == "y" then
-        (
-            p.y = (2.0 * offset) - p.y
-            try ( mirrored.scale = [mirrored.scale.x, -mirrored.scale.y, mirrored.scale.z] ) catch()
-        )
-        else
-        (
-            p.z = (2.0 * offset) - p.z
-            try ( mirrored.scale = [mirrored.scale.x, mirrored.scale.y, -mirrored.scale.z] ) catch()
-        )
-        mirrored.position = p
+        catch ( ok = false )
+        if ok then append applied nm else append failures nm
     )
     mcpRedraw()
     local p = #()
+    mcpPair p "applied" applied
+    mcpPair p "failures" failures
     mcpPair p "message" (mcpMsg "msg.ok")
     mcpObj p
 )
@@ -343,14 +399,26 @@ fn mcpH_set_pivot params =
     local nodes = mcpResolveNodes (mcpArr params "objects") fallbackToSelection:true
     local mode = mcpStr params "mode" default:"place"
     local pos = mcpPoint3From (mcpGet params "position") default:[0,0,0]
+    local applied = #()
+    local failures = #()
     for n in nodes do
     (
-        if mode == "center" then ( try ( centerPivot n ) catch() )
-        else if mode == "origin" then ( try ( n.pivot = [0,0,0] ) catch() )
-        else ( try ( n.pivot = pos ) catch() )
+        local nm = "?"
+        try ( nm = n.name ) catch ( nm = "?" )
+        local ok = true
+        try
+        (
+            if mode == "center" then centerPivot n
+            else if mode == "origin" then n.pivot = [0,0,0]
+            else n.pivot = pos
+        )
+        catch ( ok = false )
+        if ok then append applied nm else append failures nm
     )
     mcpRedraw()
     local p = #()
+    mcpPair p "applied" applied
+    mcpPair p "failures" failures
     mcpPair p "message" (mcpMsg "msg.ok")
     mcpObj p
 )
@@ -362,14 +430,26 @@ fn mcpH_reset_transform params =
     local rot = mcpBool params "rotation" default:true
     local scl = mcpBool params "scale" default:true
     local pos = mcpBool params "position" default:false
+    local applied = #()
+    local failures = #()
     for n in nodes do
     (
-        if rot do ( try ( n.rotation = (eulerAngles 0 0 0) ) catch() )
-        if scl do ( try ( n.scale = [1,1,1] ) catch() )
-        if pos do ( try ( n.position = [0,0,0] ) catch() )
+        local nm = "?"
+        try ( nm = n.name ) catch ( nm = "?" )
+        local ok = true
+        try
+        (
+            if rot do n.rotation = (eulerAngles 0 0 0)
+            if scl do n.scale = [1,1,1]
+            if pos do n.position = [0,0,0]
+        )
+        catch ( ok = false )
+        if ok then append applied nm else append failures nm
     )
     mcpRedraw()
     local p = #()
+    mcpPair p "applied" applied
+    mcpPair p "failures" failures
     mcpPair p "message" (mcpMsg "msg.ok")
     mcpObj p
 )
@@ -380,18 +460,26 @@ fn mcpH_snap_objects_to_grid params =
     local nodes = mcpResolveNodes (mcpArr params "objects") fallbackToSelection:true
     local spacing = mcpNum params "spacing" default:10.0
     if spacing <= 0 do spacing = 10.0
+    local applied = #()
+    local failures = #()
     for n in nodes do
     (
+        local nm = "?"
+        try ( nm = n.name ) catch ( nm = "?" )
+        local ok = true
         try
         (
             n.position = [ (floor (n.position.x / spacing + 0.5)) * spacing,
                            (floor (n.position.y / spacing + 0.5)) * spacing,
                            (floor (n.position.z / spacing + 0.5)) * spacing ]
         )
-        catch()
+        catch ( ok = false )
+        if ok then append applied nm else append failures nm
     )
     mcpRedraw()
     local p = #()
+    mcpPair p "applied" applied
+    mcpPair p "failures" failures
     mcpPair p "message" (mcpMsg "msg.ok")
     mcpObj p
 )
@@ -493,18 +581,30 @@ fn mcpH_unparent_objects params =
 (
     local nodes = mcpResolveNodes (mcpArr params "objects") fallbackToSelection:true
     local keep = mcpBool params "keepTransform" default:true
+    local applied = #()
+    local failures = #()
     for n in nodes do
     (
-        if keep then
+        local nm = "?"
+        try ( nm = n.name ) catch ( nm = "?" )
+        local ok = true
+        try
         (
-            local w = n.transform
-            n.parent = undefined
-            n.transform = w
+            if keep then
+            (
+                local w = n.transform
+                n.parent = undefined
+                n.transform = w
+            )
+            else n.parent = undefined
         )
-        else n.parent = undefined
+        catch ( ok = false )
+        if ok then append applied nm else append failures nm
     )
     mcpRedraw()
     local p = #()
+    mcpPair p "applied" applied
+    mcpPair p "failures" failures
     mcpPair p "message" (mcpMsg "msg.ok")
     mcpObj p
 )
@@ -587,9 +687,20 @@ fn mcpH_ungroup_objects params =
 fn mcpH_open_group params =
 (
     local nodes = mcpResolveNodes (mcpArr params "objects") fallbackToSelection:true
-    for n in nodes do ( try ( setGroupOpen n true ) catch() )
+    local applied = #()
+    local failures = #()
+    for n in nodes do
+    (
+        local nm = "?"
+        try ( nm = n.name ) catch ( nm = "?" )
+        local ok = true
+        try ( setGroupOpen n true ) catch ( ok = false )
+        if ok then append applied nm else append failures nm
+    )
     mcpRedraw()
     local p = #()
+    mcpPair p "applied" applied
+    mcpPair p "failures" failures
     mcpPair p "message" (mcpMsg "msg.ok")
     mcpObj p
 )
@@ -598,9 +709,20 @@ fn mcpH_open_group params =
 fn mcpH_close_group params =
 (
     local nodes = mcpResolveNodes (mcpArr params "objects") fallbackToSelection:true
-    for n in nodes do ( try ( setGroupOpen n false ) catch() )
+    local applied = #()
+    local failures = #()
+    for n in nodes do
+    (
+        local nm = "?"
+        try ( nm = n.name ) catch ( nm = "?" )
+        local ok = true
+        try ( setGroupOpen n false ) catch ( ok = false )
+        if ok then append applied nm else append failures nm
+    )
     mcpRedraw()
     local p = #()
+    mcpPair p "applied" applied
+    mcpPair p "failures" failures
     mcpPair p "message" (mcpMsg "msg.ok")
     mcpObj p
 )
@@ -739,7 +861,10 @@ fn mcpH_hide_objects params =
     local nodes = mcpResolveNodes (mcpArr params "objects") fallbackToSelection:true
     try ( hide nodes ) catch()
     mcpRedraw()
+    local split = mcpSplitByFlag nodes "isHidden" true
     local p = #()
+    mcpPair p "hidden" split[1]
+    mcpPair p "failures" split[2]
     mcpPair p "message" (mcpMsg "msg.ok")
     mcpObj p
 )
@@ -747,9 +872,23 @@ fn mcpH_hide_objects params =
 
 fn mcpH_unhide_all params =
 (
+    -- Remember who was hidden before the call: "shown" has to mean "this one was
+    -- hidden and is not any more", otherwise every visible object is reported as
+    -- something the call did.
+    local was = #()
+    for i = 1 to objects.count do
+    (
+        local n = objects[i]
+        local h = false
+        try ( h = n.isHidden ) catch ( h = false )
+        if h do append was n
+    )
     try ( unhide objects ) catch()
     mcpRedraw()
+    local split = mcpSplitByFlag was "isHidden" false
     local p = #()
+    mcpPair p "shown" split[1]
+    mcpPair p "failures" split[2]
     mcpPair p "message" (mcpMsg "msg.ok")
     mcpObj p
 )
@@ -758,10 +897,19 @@ fn mcpH_unhide_all params =
 fn mcpH_unhide_objects params =
 (
     local nodes = mcpResolveNodes (mcpArr params "objects") fallbackToSelection:false silent:true
-    if nodes.count == 0 then ( try ( unhide objects ) catch() )
+    local target = nodes
+    if nodes.count == 0 then
+    (
+        try ( unhide objects ) catch()
+        target = #()
+        for i = 1 to objects.count do append target objects[i]
+    )
     else ( try ( unhide nodes ) catch() )
     mcpRedraw()
+    local split = mcpSplitByFlag target "isHidden" false
     local p = #()
+    mcpPair p "shown" split[1]
+    mcpPair p "failures" split[2]
     mcpPair p "message" (mcpMsg "msg.ok")
     mcpObj p
 )
@@ -772,7 +920,10 @@ fn mcpH_freeze_objects params =
     local nodes = mcpResolveNodes (mcpArr params "objects") fallbackToSelection:true
     try ( freeze nodes ) catch()
     mcpRedraw()
+    local split = mcpSplitByFlag nodes "isFrozen" true
     local p = #()
+    mcpPair p "frozen" split[1]
+    mcpPair p "failures" split[2]
     mcpPair p "message" (mcpMsg "msg.ok")
     mcpObj p
 )
@@ -780,9 +931,20 @@ fn mcpH_freeze_objects params =
 
 fn mcpH_unfreeze_all params =
 (
+    local was = #()
+    for i = 1 to objects.count do
+    (
+        local n = objects[i]
+        local f = false
+        try ( f = n.isFrozen ) catch ( f = false )
+        if f do append was n
+    )
     try ( unfreeze objects ) catch()
     mcpRedraw()
+    local split = mcpSplitByFlag was "isFrozen" false
     local p = #()
+    mcpPair p "thawed" split[1]
+    mcpPair p "failures" split[2]
     mcpPair p "message" (mcpMsg "msg.ok")
     mcpObj p
 )

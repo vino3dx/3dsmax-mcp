@@ -8,6 +8,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Honest answers from per-object state operations (Stage 5).** The biggest
+  remaining lie in `src/ms` was structural: a handler wrapped the real call in
+  `try (...) catch()`, returned `{message: "OK"}`, and a batch where every object
+  refused looked exactly like one where every object worked.  This stage
+  replaces that pattern with read-back, in 59 tools.
+  - **Visibility and freeze report the scene, not the request.**
+    `hide_objects` / `unhide_objects` / `unhide_all` / `freeze_objects` /
+    `unfreeze_all` now read `isHidden` / `isFrozen` back through
+    `mcpSplitByFlag`, so `hidden` means "the scene agrees this is hidden" and
+    `failures` names the ones that still disagree.  The `*_all` variants record
+    the state *before* the call, so `thawed` is not a dump of the whole scene.
+  - **Transforms run per object.** `mirror_object`, `set_pivot`,
+    `reset_transform`, `snap_objects_to_grid`, `unparent_objects` and
+    `spline_set_points` apply one object at a time and report `applied` /
+    `failures`: a locked node can no longer abort the rest, and it can no longer
+    hide inside "Done.".
+  - **Group heads say whether they opened.** `open_group` / `close_group` name
+    the objects that refused instead of swallowing `setGroupOpen`.
+  - **Material setters name what landed.** `mat_set_pbr` and `mat_set_emission`
+    return `applied` / `skipped` per property and fail when nothing landed;
+    `mat_delete` reads back whether the material is still referenced by any
+    object or slot; `mat_set_slot`, `mat_set_property`, `mat_set_specular`,
+    `mat_set_opacity`, `mat_set_sub_material`, `mat_rename`, `mat_duplicate`,
+    `mat_set_map_slot`, `map_set_bitmap_path` and `mat_library_*` declare
+    `success` after their own `mcpFail` guards.
+  - **`mcpMapInfo` declares success once** instead of nine map creators each
+    returning an unreadable `{class, filename}`.
+  - **Render settings read themselves back.** `render_set_resolution`,
+    `render_set_output` and `render_set_frame_range` echo the state the renderer
+    will actually use (`renderWidth`, `rendOutputFilename`, `rendTimeType`), so a
+    clamped size or an ignored path is reported now, not at frame 1.
+  - **Lights and cameras report per-property.** `light_set` / `cam_set` return
+    `applied` / `skipped` (light classes disagree about `multiplier` vs
+    `intensity`, cameras about `f_stop`), and fail when nothing landed.
+  - **`set_units` reads the scale back**, because a clamped scale silently
+    makes every later dimension wrong, and rejects an unknown `displayType`
+    instead of ignoring it.
+  - Coverage: readable outcomes went 219 → **278 of 293** mutating tools; the
+    remaining 15 are listed by `test/static/outcome_audit.py` and are either
+    escape hatches (`execute_python`), playback (`anim_play`), or viewport state
+    with no portable read-back.
+  - Tests: `test/static/object_state_test.py` (Offline, 10 scenarios) drives
+    hide/freeze/unhide-all/reset/snap/group operations through the real TCP
+    stub with a `reject_ops` hook, so partial success and "empty receipt is not
+    success" are proven, not assumed.
+
 - **Workflow habits and evidence gaps (Stage 4).** Stage 3 built the machinery;
   this stage makes it the default and closes the two rows of the capability
   matrix that had no offline evidence.
@@ -50,7 +96,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     tool covers the job, and say why".
   - **Audit instead of hope.** `test/static/outcome_audit.py` reads every
     `mcpH_*` handler (following `mcpRegister` and helper calls), reports how
-    many mutating tools declare a readable outcome (219/293), and fails if a
+    many mutating tools declare a readable outcome (278/293), and fails if a
     tool used by a standard workflow cannot be read. `outcome_declaration_test.py`
     pins the reading rules, including "message is never evidence".
   - Tests: `workflow_scene_test.py` grew to 22 scenarios (organisation, ungroup

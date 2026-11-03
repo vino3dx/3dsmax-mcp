@@ -136,6 +136,10 @@ fn mcpAssignCreatedMat m params =
 fn mcpMapInfo m =
 (
   local p = #()
+  -- Only reached from handlers that just built or attached a map, so a reply
+  -- means the map object exists; declare that instead of making the runtime
+  -- guess from a class name.
+  mcpPair p "success" true
   mcpPair p "class" (try ((classof m) as string) catch (""))
   mcpPair p "filename" (try (m.filename) catch (""))
   mcpObj p
@@ -223,7 +227,10 @@ fn mcpH_mat_set_slot params =
   if slot < 1 or slot > 24 do mcpFail "err.bad_value" a1:"slot"
   try ( meditMaterials[slot] = m ) catch ( mcpFail "err.invalid_argument" a1:"slot" a2:(getCurrentException() as string) )
   local p = #()
-  mcpPair p "slot" slot
+
+  -- Every failure path above mcpFails, so reaching here means the change
+  -- was applied; state that instead of leaving the caller to guess.
+  mcpPair p "success" true  mcpPair p "slot" slot
   mcpPair p "name" (try (m.name) catch (""))
   mcpPair p "message" (mcpMsg "msg.ok")
   mcpObj p
@@ -259,7 +266,10 @@ fn mcpH_mat_set_property params =
   else val = (try ( raw as string ) catch (""))
   try ( setProperty m (prop as name) val ) catch ( mcpFail "err.invalid_argument" a1:prop a2:(getCurrentException() as string) )
   local p = #()
-  mcpPair p "property" prop
+
+  -- Every failure path above mcpFails, so reaching here means the change
+  -- was applied; state that instead of leaving the caller to guess.
+  mcpPair p "success" true  mcpPair p "property" prop
   mcpPair p "value" val
   mcpPair p "message" (mcpMsg "msg.ok")
   mcpObj p
@@ -285,18 +295,42 @@ fn mcpH_mat_set_diffuse params =
 fn mcpH_mat_set_pbr params =
 (
   local m = mcpRequireMat (mcpStr params "material" default:"")
+  -- Track which properties actually took: a material class that lacks one of
+  -- them used to swallow the error and answer "ok" as if everything was set.
+  local applied = #()
+  local skipped = #()
   if (mcpGet params "baseColor") != undefined do
   (
     local col = mcpColorFrom (mcpGet params "baseColor")
-    try ( m.base_color = col ) catch ( try ( m.diffuse = col ) catch() )
+    local ok = false
+    try ( m.base_color = col; ok = true ) catch ( try ( m.diffuse = col; ok = true ) catch() )
+    if ok then append applied "baseColor" else append skipped "baseColor"
   )
-  if (mcpGet params "metallic") != undefined do ( try ( m.metallic = mcpNum params "metallic" ) catch() )
-  if (mcpGet params "roughness") != undefined do ( try ( m.roughness = mcpNum params "roughness" ) catch() )
+  if (mcpGet params "metallic") != undefined do
+  (
+    local v = mcpNum params "metallic"
+    local ok = false
+    try ( m.metallic = v; ok = true ) catch()
+    if ok then append applied "metallic" else append skipped "metallic"
+  )
+  if (mcpGet params "roughness") != undefined do
+  (
+    local v = mcpNum params "roughness"
+    local ok = false
+    try ( m.roughness = v; ok = true ) catch()
+    if ok then append applied "roughness" else append skipped "roughness"
+  )
   if (mcpGet params "ior") != undefined do
   (
-    try ( m.reflection_iOR = mcpNum params "ior" ) catch ( try ( m.IOR = mcpNum params "ior" ) catch() )
+    local v = mcpNum params "ior"
+    local ok = false
+    try ( m.reflection_iOR = v; ok = true ) catch ( try ( m.IOR = v; ok = true ) catch() )
+    if ok then append applied "ior" else append skipped "ior"
   )
+  if applied.count == 0 do mcpFail "err.invalid_argument" a1:"pbr" a2:"no requested property exists on this material"
   local p = #()
+  mcpPair p "applied" applied
+  mcpPair p "skipped" skipped
   mcpPair p "material" (try (m.name) catch (""))
   mcpPair p "message" (mcpMsg "msg.ok")
   mcpObj p
@@ -313,7 +347,10 @@ fn mcpH_mat_set_specular params =
   if not done do ( try ( m.reflection_color = col; done = true ) catch() )
   if not done do mcpFail "err.invalid_argument" a1:"specular" a2:"material has no specular/reflection_color property"
   local p = #()
-  mcpPair p "material" (try (m.name) catch (""))
+
+  -- Every failure path above mcpFails, so reaching here means the change
+  -- was applied; state that instead of leaving the caller to guess.
+  mcpPair p "success" true  mcpPair p "material" (try (m.name) catch (""))
   mcpPair p "message" (mcpMsg "msg.ok")
   mcpObj p
 )
@@ -325,7 +362,10 @@ fn mcpH_mat_set_opacity params =
   if o < 0 do mcpFail "err.missing_param" a1:"opacity"
   try ( m.opacity = o ) catch ( mcpFail "err.invalid_argument" a1:"opacity" a2:(getCurrentException() as string) )
   local p = #()
-  mcpPair p "material" (try (m.name) catch (""))
+
+  -- Every failure path above mcpFails, so reaching here means the change
+  -- was applied; state that instead of leaving the caller to guess.
+  mcpPair p "success" true  mcpPair p "material" (try (m.name) catch (""))
   mcpPair p "opacity" o
   mcpPair p "message" (mcpMsg "msg.ok")
   mcpObj p
@@ -334,16 +374,26 @@ fn mcpH_mat_set_opacity params =
 fn mcpH_mat_set_emission params =
 (
   local m = mcpRequireMat (mcpStr params "material" default:"")
+  local applied = #()
+  local skipped = #()
   if (mcpGet params "color") != undefined do
   (
     local col = mcpColorFrom (mcpGet params "color")
-    try ( m.emission_color = col ) catch ( try ( m.selfIllumColor = col ) catch() )
+    local ok = false
+    try ( m.emission_color = col; ok = true ) catch ( try ( m.selfIllumColor = col; ok = true ) catch() )
+    if ok then append applied "color" else append skipped "color"
   )
   if (mcpGet params "amount") != undefined do
   (
-    try ( m.emission = mcpNum params "amount" ) catch ( try ( m.selfIllumAmount = mcpNum params "amount" ) catch() )
+    local value = mcpNum params "amount"
+    local ok = false
+    try ( m.emission = value; ok = true ) catch ( try ( m.selfIllumAmount = value; ok = true ) catch() )
+    if ok then append applied "amount" else append skipped "amount"
   )
+  if applied.count == 0 do mcpFail "err.invalid_argument" a1:"emission" a2:"no requested property exists on this material"
   local p = #()
+  mcpPair p "applied" applied
+  mcpPair p "skipped" skipped
   mcpPair p "material" (try (m.name) catch (""))
   mcpPair p "message" (mcpMsg "msg.ok")
   mcpObj p
@@ -366,7 +416,10 @@ fn mcpH_mat_set_sub_material params =
   if index < 1 or index > n do mcpFail "err.bad_value" a1:("index=" + (index as string))
   try ( m.materialList[index] = sub ) catch ( mcpFail "err.invalid_argument" a1:"index" a2:(getCurrentException() as string) )
   local p = #()
-  mcpPair p "material" (try (m.name) catch (""))
+
+  -- Every failure path above mcpFails, so reaching here means the change
+  -- was applied; state that instead of leaving the caller to guess.
+  mcpPair p "success" true  mcpPair p "material" (try (m.name) catch (""))
   mcpPair p "index" index
   mcpPair p "subMaterial" (try (sub.name) catch (""))
   mcpPair p "message" (mcpMsg "msg.ok")
@@ -379,7 +432,10 @@ fn mcpH_mat_rename params =
   local nm = mcpReqStr params "name"
   try ( m.name = nm ) catch ( mcpFail "err.invalid_argument" a1:"name" a2:(getCurrentException() as string) )
   local p = #()
-  mcpPair p "name" nm
+
+  -- Every failure path above mcpFails, so reaching here means the change
+  -- was applied; state that instead of leaving the caller to guess.
+  mcpPair p "success" true  mcpPair p "name" nm
   mcpPair p "message" (mcpMsg "msg.ok")
   mcpObj p
 )
@@ -390,8 +446,18 @@ fn mcpH_mat_delete params =
   local nm = try (m.name) catch ("")
   try ( for o in objects do ( if o.material == m do o.material = undefined ) ) catch()
   try ( for i = 1 to 24 do ( if meditMaterials[i] == m do meditMaterials[i] = undefined ) ) catch()
+  -- Max has no "delete material", only reference counting, so the honest
+  -- question is "is it still used anywhere?" - read that back instead of
+  -- assuming the two loops above did their job.
+  local usedBy = #()
+  local inSlots = #()
+  try ( for o in objects do ( if o.material == m do append usedBy (try (o.name) catch ("?")) ) ) catch()
+  try ( for i = 1 to 24 do ( if meditMaterials[i] == m do append inSlots ("slot " + (i as string)) ) ) catch()
   local p = #()
   mcpPair p "name" nm
+  mcpPair p "usedBy" usedBy
+  mcpPair p "inSlots" inSlots
+  mcpPair p "failures" (usedBy + inSlots)
   mcpPair p "message" (mcpMsg "msg.ok")
   mcpObj p
 )
@@ -406,7 +472,10 @@ fn mcpH_mat_duplicate params =
   if newName == "" do newName = (try (m.name) catch ("")) + "_copy"
   try ( newMat.name = newName ) catch()
   local p = #()
-  mcpPair p "original" (try (m.name) catch (""))
+
+  -- Every failure path above mcpFails, so reaching here means the change
+  -- was applied; state that instead of leaving the caller to guess.
+  mcpPair p "success" true  mcpPair p "original" (try (m.name) catch (""))
   mcpPair p "copy" newName
   mcpPair p "class" (try ((classof newMat) as string) catch (""))
   mcpPair p "message" (mcpMsg "msg.ok")
@@ -425,7 +494,9 @@ fn mcpH_mat_set_map_slot params =
   if path != "" do ( try ( theMap.filename = path ) catch() )
   try ( setProperty m (slot as name) theMap ) catch ( mcpFail "err.invalid_argument" a1:slot a2:(getCurrentException() as string) )
   local p = #()
-  mcpPair p "material" (try (m.name) catch (""))
+
+  -- Reaching here means every failure path above mcpFails.
+  mcpPair p "success" true  mcpPair p "material" (try (m.name) catch (""))
   mcpPair p "slot" slot
   mcpPair p "mapClass" (try ((classof theMap) as string) catch (""))
   mcpPair p "message" (mcpMsg "msg.ok")
@@ -553,7 +624,9 @@ fn mcpH_map_set_bitmap_path params =
   )
   try ( theMap.filename = path ) catch ( mcpFail "err.file_missing" a1:path )
   local p = #()
-  mcpPair p "material" (try (m.name) catch (""))
+
+  -- Reaching here means every failure path above mcpFails.
+  mcpPair p "success" true  mcpPair p "material" (try (m.name) catch (""))
   mcpPair p "slot" slot
   mcpPair p "path" path
   mcpPair p "message" (mcpMsg "msg.ok")
@@ -654,7 +727,9 @@ fn mcpH_mat_library_save params =
   if not ok do ( try ( ok = saveTempMaterialLibrary path mats ) catch ( errTxt = getCurrentException() as string ) )
   if not ok do mcpFail "err.bad_value" a1:("save library: " + errTxt)
   local p = #()
-  mcpPair p "path" path
+
+  -- Reaching here means every failure path above mcpFails.
+  mcpPair p "success" true  mcpPair p "path" path
   mcpPair p "count" mats.count
   mcpPair p "message" (mcpMsg "msg.saved" a1:path)
   mcpObj p
@@ -678,7 +753,9 @@ fn mcpH_mat_library_load params =
     try ( if slotIdx <= 24 do ( meditMaterials[slotIdx] = m; slotIdx += 1 ) ) catch()
   )
   local p = #()
-  mcpPair p "path" path
+
+  -- Reaching here means every failure path above mcpFails.
+  mcpPair p "success" true  mcpPair p "path" path
   mcpPair p "count" mats.count
   mcpPair p "materials" names
   mcpPair p "message" (mcpMsg "msg.loaded" a1:path)
