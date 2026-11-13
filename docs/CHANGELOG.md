@@ -84,6 +84,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`scene_statistics` reported every object as `other`.** It compared
+  `(superclassof o) as string` against `"Geometry"`, `"Shape"`, `"Light"` and
+  friends, but the running build answers `GeometryClass` and `shape`, `light`,
+  `camera`, `helper` in lower case — so not one comparison ever matched, and on
+  a 65-object scene the tool returned `other: 65`. Classification now goes
+  through `mcpSceneSuperKind`, which prefers the shared `mcpCtxSuperKind` from
+  `mcp_context.ms` and keeps the same rules inline as a degraded path (falling
+  back to `other` would just restore the bug). Same scene now reports
+  geometry 43, shapes 4, lights 7, cameras 2, helpers 6, bones 3, other 0 —
+  which agrees with `context_get`'s `objects` section field for field. Two
+  related miscounts went with it: `systems` was fed from the bone counter (and
+  so was always 0), and bones were counted as systems. `bones`, `particles`
+  and `classification` are now reported separately.
+
 - **The panel rendered as one wrapped paragraph.** MAXScript builds strings
   with `"\n"`, and a WinForms `TextBox` does not break lines on a lone LF — the
   page held character 10 between every row and still displayed as a single

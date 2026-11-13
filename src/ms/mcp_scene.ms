@@ -7,6 +7,9 @@
 -----------------------------------------------------------------------------*/
 
 global mcpH_scene_info, mcpH_scene_statistics, mcpH_scene_new, mcpH_scene_reset
+-- Owned by mcp_context.ms, which loads after this module; declared here so the
+-- lookup in mcpSceneSuperKind reads a real global instead of a new local.
+global mcpCtxSuperKind, mcpSceneSuperKind
 global mcpH_scene_open, mcpH_scene_save, mcpH_scene_save_as, mcpH_scene_merge
 global mcpH_list_layers, mcpH_create_layer, mcpH_delete_layer
 global mcpH_set_layer_properties, mcpH_assign_to_layer, mcpH_move_objects_to_new_layer
@@ -40,6 +43,39 @@ fn mcpH_scene_info params =
     mcpObj p
 )
 
+fn mcpSceneSuperKind o =
+(
+    /* Prefer the shared classifier in mcp_context.ms so statistics and the
+       context layer can never disagree.  It is loaded after this module, so the
+       lookup happens at call time, and the local rules below are the same ones
+       -- kept as a degraded path rather than falling back to "other", which is
+       exactly the bug this replaces. */
+    if mcpCtxSuperKind != undefined do
+    (
+        local k = "other"
+        try ( k = mcpCtxSuperKind o ) catch ( k = "other" )
+        return k
+    )
+
+    local v = ""
+    try ( v = toLower ((superclassof o) as string) ) catch ( v = "" )
+    local cls = ""
+    try ( cls = (classof o) as string ) catch ( cls = "" )
+    if cls == "BoneGeometry" do return "bone"
+    if cls == "Biped_Object" do return "bone"
+    if cls == "CATBone" do return "bone"
+    if (findString v "spacewarp") != undefined do return "spacewarp"
+    if (findString v "geometry") != undefined do return "geometry"
+    if (findString v "shape") != undefined do return "shape"
+    if (findString v "spline") != undefined do return "shape"
+    if (findString v "light") != undefined do return "light"
+    if (findString v "camera") != undefined do return "camera"
+    if (findString v "helper") != undefined do return "helper"
+    if (findString v "system") != undefined do return "system"
+    if (findString v "particle") != undefined do return "particle"
+    "other"
+)
+
 fn mcpH_scene_statistics params =
 (
     local includeHidden = mcpBool params "includeHidden" default:true
@@ -50,7 +86,9 @@ fn mcpH_scene_statistics params =
     local cameraCount = 0
     local helperCount = 0
     local spacewarpCount = 0
+    local systemCount = 0
     local boneCount = 0
+    local particleCount = 0
     local otherCount = 0
     local totalFaces = 0
     local totalVerts = 0
@@ -71,16 +109,19 @@ fn mcpH_scene_statistics params =
 
         if includeHidden or not isHidden then
         (
-            local sc = "Other"
-            try ( sc = (superclassof o) as string ) catch ( sc = "Other" )
-            if sc == "Geometry" then geometryCount += 1
-            else if sc == "Shape" then shapeCount += 1
-            else if sc == "Light" then lightCount += 1
-            else if sc == "Camera" then cameraCount += 1
-            else if sc == "Helper" then helperCount += 1
-            else if sc == "SpacewarpObject" then spacewarpCount += 1
-            else if sc == "System" then boneCount += 1
-            else otherCount += 1
+            case (mcpSceneSuperKind o) of
+            (
+                "geometry":   geometryCount += 1
+                "shape":      shapeCount += 1
+                "light":      lightCount += 1
+                "camera":     cameraCount += 1
+                "helper":     helperCount += 1
+                "spacewarp":  spacewarpCount += 1
+                "system":     systemCount += 1
+                "bone":       boneCount += 1
+                "particle":   particleCount += 1
+                default:      otherCount += 1
+            )
         )
 
         local pc = undefined
@@ -104,7 +145,11 @@ fn mcpH_scene_statistics params =
     mcpPair p "cameras" cameraCount
     mcpPair p "helpers" helperCount
     mcpPair p "spacewarps" spacewarpCount
-    mcpPair p "systems" boneCount
+    -- `systems` used to be fed from the bone counter; systems and bones are
+    -- different things and neither could ever match, so both stayed 0.
+    mcpPair p "systems" systemCount
+    mcpPair p "bones" boneCount
+    mcpPair p "particles" particleCount
     mcpPair p "other" otherCount
     mcpPair p "hidden" hiddenCount
     mcpPair p "frozen" frozenCount
@@ -112,6 +157,7 @@ fn mcpH_scene_statistics params =
     mcpPair p "totalVerts" totalVerts
     mcpPair p "materials" materialCount
     mcpPair p "bitmaps" bitmapCount
+    mcpPair p "classification" "superclassof normalised via mcpSceneSuperKind"
     mcpObj p
 )
 
@@ -836,14 +882,21 @@ fn mcpH_get_file_info params =
 
 
 /*=============================================================== introspection*/
--- MAXScript exposes a per superclass class registry: <superclass>.classes.
--- It is the only reliable way to enumerate what plugins are installed.
+/* MAXScript exposes a per superclass class registry: <SuperClass>.classes.
+   Only the *superclass class values* have it -- the lowercase listener
+   shortcuts ("geometry", "lights", "materials", ...) are node collections and
+   raise "unknown property: classes", which is why the previous bucket list
+   enumerated almost nothing and a search for "Box" came back empty.
+   Measured on 3ds Max 2022: GeometryClass 127, Shape 43, Light 25, Camera 9,
+   Helper 181, System 8, SpacewarpObject 33, Material 53, TextureMap 337,
+   Modifier 151, Filter 13, Atmospheric 9, ReferenceTarget 241.
+   Controller / Renderer / Effect have no .classes on this release. */
 fn mcpClassBuckets =
 (
     #(
-        "geometry", "shape", "light", "camera", "helper", "spacewarp", "system",
-        "material", "textureMap", "modifier", "controller", "renderer", "filter",
-        "effect", "atmospheric"
+        "GeometryClass", "Shape", "Light", "Camera", "Helper", "System",
+        "SpacewarpObject", "Material", "TextureMap", "Modifier", "Filter",
+        "Atmospheric", "ReferenceTarget"
     )
 )
 
@@ -857,7 +910,9 @@ fn mcpH_list_max_classes params =
     local scanned = 0
     local bucketsOk = 0
 
-    for bucketName in mcpClassBuckets do
+    -- mcpClassBuckets is a FUNCTION; iterating the symbol itself made Max
+    -- try to "map" the function value ("no map function for mcpClassBuckets").
+    for bucketName in (mcpClassBuckets()) do
     (
         local bucket = undefined
         try ( bucket = execute bucketName ) catch ( bucket = undefined )
