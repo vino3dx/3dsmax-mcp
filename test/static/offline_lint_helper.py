@@ -110,6 +110,9 @@ JSON_TYPES = ("string", "number", "integer", "boolean", "array", "object")
 KNOWN_CATEGORIES = (
     "system", "scene", "files", "objects",
     "modeling", "shading", "animation", "pipeline",
+    # Added with the scene-context layer: context_get/refresh/stats/events and
+    # the client panel tools.  Kept in step with catalog/schema.BASE_CATEGORIES.
+    "context",
 )
 
 #: Name tokens that make a tool "dangerous" for reporting.  Mirrors

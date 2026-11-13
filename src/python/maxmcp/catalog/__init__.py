@@ -8,6 +8,7 @@ Tool definitions live in per-area modules so the catalog stays readable:
     shading.py    materials, maps, UVW, lights, cameras, environment
     animation.py  keyframes, controllers, constraints, bones, skin, IK
     pipeline.py   rendering, texture baking, export/import to game engines
+    context.py    scene-context snapshot, change ledger, in-Max client panel
 """
 
 from __future__ import annotations
@@ -16,7 +17,7 @@ import importlib
 
 from .schema import Catalog, Tool, arr, b, i, n, num3, s, tool
 
-MODULE_NAMES = ("core", "objects", "modeling", "shading", "animation", "pipeline")
+MODULE_NAMES = ("core", "objects", "modeling", "shading", "animation", "pipeline", "context")
 
 __all__ = ["Catalog", "Tool", "build_catalog", "MODULE_NAMES", "tool", "s", "n", "i", "b", "arr", "num3"]
 

@@ -35,7 +35,7 @@ An MCP (Model Context Protocol) plugin that gives AI agents full control of Auto
 
 | 部分 | 运行位置 | 职责 |
 | --- | --- | --- |
-| **MCP 服务端** | 独立 Python 进程（stdlib-only） | 对 AI 客户端讲 MCP/JSON-RPC，对外暴露 **384 个工具** |
+| **MCP 服务端** | 独立 Python 进程（stdlib-only） | 对 AI 客户端讲 MCP/JSON-RPC，对外暴露 **390 个工具** |
 | **MAXScript 桥接** | 3ds Max 进程内（主线程） | 监听本地 TCP，执行真实场景操作 |
 
 AI 客户端（Cursor / Claude Desktop / 任意 MCP 客户端）→ MCP 服务端 → 本地 TCP → 3ds Max 桥接 → 场景。
@@ -67,7 +67,7 @@ AI 客户端（Cursor / Claude Desktop / 任意 MCP 客户端）→ MCP 服务�
 ```
 ┌────────────────────┐   MCP / JSON-RPC 2.0    ┌──────────────────────────┐
 │  AI client         │  ◀── stdio / HTTP ────▶ │  maxmcp (Python)         │
-│  Cursor / Claude   │                         │  · catalog: 384 tools    │
+│  Cursor / Claude   │                         │  · catalog: 390 tools    │
 │  WorkBuddy / Cline │                         │  · i18n: zh / en / auto  │
 │  国产 AI 客户端     │                         │  · wire codec (ANSI)     │
 └────────────────────┘                         └────────────┬─────────────┘
@@ -126,7 +126,7 @@ python scripts/install.py --yes
 安装器会：
 
 1. 扫描所有 3ds Max 用户脚本目录（`%LOCALAPPDATA%\Autodesk\3dsMax\<年份> - 64bit\<语言>\scripts`）。
-2. 把 19 个 MAXScript 模块复制到 `<scripts>\3dsmax-mcp\`。
+2. 把 22 个 MAXScript 模块复制到 `<scripts>\3dsmax-mcp\`。
 3. 写入启动自动加载器 `<scripts>\startup\3dsmax-mcp-bridge.ms` 与端口/语言配置 `<scripts>\3dsmax-mcp\3dsmax-mcp.ini`。
 4. 把 Python 服务端复制到 `%LOCALAPPDATA%\3dsmax-mcp\maxmcp`。
 5. 注册 MCP 客户端（Cursor / Claude Desktop）。
@@ -156,7 +156,7 @@ python scripts/install.py --uninstall         # 卸载
   Status      : listening
   Address     : 127.0.0.1:8765
   3ds Max     : 2020 (major 22)
-  Commands    : 353
+  Commands    : 359
   Language    : zh
   Pump timer  : true
   ----------------------------------------------------
@@ -180,15 +180,15 @@ python scripts/doctor.py
 -- environment
   [ok]   Python 3.13.14 at ...\python.exe
   [ok]   MCP server package (installed)
-         384 tools (animation=59, files=8, modeling=83, objects=61, pipeline=54, scene=17, shading=69, system=33)
+         390 tools (animation=59, context=6, files=8, modeling=83, objects=61, pipeline=54, scene=17, shading=69, system=33)
 -- 3ds Max side
-  [ok]   3ds Max 2020 [CHS]: 19 bridge modules + autoloader
-  [ok]   3ds Max 2020 [ENU]: 19 bridge modules + autoloader
+  [ok]   3ds Max 2020 [CHS]: 22 bridge modules + autoloader
+  [ok]   3ds Max 2020 [ENU]: 22 bridge modules + autoloader
   [ok]   3ds Max is running
 -- connectivity
   [ok]   Bridge listening on port 8765
   [ok]   Live handshake succeeded
-         handlers=353  language=zh  3ds Max year=2020
+         handlers=359  language=zh  3ds Max year=2020
   [ok]   Language: zh from Max UI 'CHS' (auto)
          The server follows this while its own language is 'auto'.
 -- MCP clients
@@ -224,7 +224,7 @@ Max 未运行时对应的一行是 `[warn] No bridge listening on 8765, 8766, ..
 }
 ```
 
-重启 Cursor，在 **Settings → MCP** 里应看到 `3dsmax-mcp` 已连接、384 个工具。
+重启 Cursor，在 **Settings → MCP** 里应看到 `3dsmax-mcp` 已连接、390 个工具。
 
 ### Claude Desktop
 
@@ -252,7 +252,7 @@ stdio 上的 JSON-RPC 服务端，`initialize` → `tools/list` → `tools/call`
 
 ## 工具一览
 
-共 **384 个工具**，分 8 类：
+共 **390 个工具**，分 9 类：
 
 | 分类 | 数量 | 覆盖内容 |
 | --- | ---: | --- |
@@ -264,6 +264,7 @@ stdio 上的 JSON-RPC 服务端，`initialize` → `tools/list` → `tools/call`
 | `shading` | 69 | 材质读写与赋给、PBR/Arnold/V-Ray/Corona/FStorm 材质、贴图节点、材质库、UVW 贴图与 Unwrap、灯光、相机、环境 |
 | `animation` | 59 | 关键帧与曲线、控制器与表达式、约束、骨骼与 IK、蒙皮权重、Morpher |
 | `pipeline` | 54 | 渲染引擎与设置、单帧/帧序列/批渲染、渲染元素、**视口截图（vision_capture / vision_views / vision_preview，直接返回图像）**、烘焙（AO/法线/光照/贴图）、导入导出（FBX/OBJ/glTF/USD/ABC/STL/3DS）与引擎预设 |
+| `context` | 6 | **场景上下文**（`context_get` / `context_refresh` / `context_stats` / `context_events`）、内置面板（`client_ui` / `client_status`）
 
 查看完整列表：
 
@@ -283,16 +284,16 @@ python -m maxmcp --list-tools
 
 ## 工具档位
 
-384 个工具全塞进上下文会明显占额度。用 `--profile` 按需裁剪：
+390 个工具全塞进上下文会明显占额度。用 `--profile` 按需裁剪：
 
 | 档位 | 工具数 | 包含分类 |
 | --- | ---: | --- |
-| `core` | 56 | field-tested modeling loop and session essentials |
-| `modeling` | 202 | core + modeling |
-| `lookdev` | 188 | core + shading |
-| `animation` | 178 | core + animation |
-| `pipeline` | 173 | core + pipeline |
-| `full` | **384** | 全部（默认） |
+| `core` | 58 | field-tested modeling loop and session essentials |
+| `modeling` | 208 | core + modeling |
+| `lookdev` | 194 | core + shading |
+| `animation` | 184 | core + animation |
+| `pipeline` | 179 | core + pipeline |
+| `full` | **390** | 全部（默认） |
 
 ```bash
 python -m maxmcp --profile modeling
@@ -563,7 +564,7 @@ mcpSelfTest()
 │   │   ├── wire.py            #   ANSI 线编解码（中文往返的关键）
 │   │   ├── i18n.py            #   双语消息层 + Max 语言码映射
 │   │   ├── config.py          #   配置加载
-│   │   └── catalog/           #   384 个工具定义
+│   │   └── catalog/           #   390 个工具定义
 │   │       ├── schema.py      #     Tool 类 + 档位 + DSL
 │   │       ├── core.py        #     system / scene / files
 │   │       ├── objects.py     #     objects
@@ -572,7 +573,7 @@ mcpSelfTest()
 │   │       ├── animation.py   #     animation
 │   │       └── pipeline.py    #     pipeline（渲染/烘焙/导入导出 + vision 截图）
 │   └── ms/                    # MAXScript 桥接（字节级部署到 Max 用户脚本目录）
-│       ├── mcp_bridge.ms      #   入口：加载 18 个模块、启停桥接、语言解析
+│       ├── mcp_bridge.ms      #   入口：加载 21 个模块、启停桥接、语言解析
 │       ├── mcp_json.ms        #   纯 MAXScript JSON 引擎
 │       ├── mcp_core.ms        #   命令注册表、消息表、节点解析、语言探测
 │       ├── mcp_net.ms         #   TCP 监听 + 主线程 Timer 泵 + 调度

@@ -19,6 +19,10 @@ VERSION = "1.0.0"
 PROTOCOL_VERSION = "2025-06-18"
 SUPPORTED_PROTOCOL_VERSIONS = ("2025-06-18", "2025-03-26", "2024-11-05")
 
+# Read-only MCP resource that exposes the same data as the context_get tool.
+# `max://scene/context/<domain>` selects a single domain via the template.
+CONTEXT_RESOURCE_URI = "max://scene/context"
+
 CONFIG_DIR = Path(os.environ.get("MAXMCP_HOME") or (Path.home() / ".3dsmax-mcp"))
 CONFIG_PATH = CONFIG_DIR / "config.json"
 

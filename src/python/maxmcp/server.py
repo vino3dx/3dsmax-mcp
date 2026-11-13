@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import base64
+import difflib
 from pathlib import Path
 import platform
 import sys
@@ -20,7 +21,15 @@ from . import i18n
 from .bridge import BridgeCommandError, BridgeError, MaxBridge
 from .catalog import build_catalog
 from .catalog.schema import Catalog, Tool
-from .config import APP_NAME, PROTOCOL_VERSION, SUPPORTED_PROTOCOL_VERSIONS, VERSION, Config
+from .config import (
+    APP_NAME,
+    CONTEXT_RESOURCE_URI,
+    PROTOCOL_VERSION,
+    SUPPORTED_PROTOCOL_VERSIONS,
+    VERSION,
+    Config,
+)
+from .context import SceneContextCache
 from .http_transport import McpHttpTransport
 from .protocol import (
     INTERNAL_ERROR,
@@ -65,6 +74,22 @@ def _image_bytes(item: Dict[str, Any]) -> Tuple[Optional[str], Optional[str]]:
             return base64.b64encode(stream.read(_IMAGE_MAX_BYTES + 1)).decode("ascii"), None
     except OSError as exc:
         return None, "image file unavailable: %s" % exc
+
+
+def _available_sections(payload: Any) -> List[str]:
+    """The domain list a context_get reply advertises.
+
+    Used as the "expected" set when rebuilding the cached snapshot: without it a
+    cache that had only ever seen one domain would claim to be complete.
+    """
+    if isinstance(payload, dict):
+        names = payload.get("availableSections")
+        if isinstance(names, list) and names:
+            return [name for name in names if isinstance(name, str)]
+        sections = payload.get("sections")
+        if isinstance(sections, dict) and sections:
+            return sorted(sections)
+    return []
 
 
 def _split_images(payload: Any, operation_id: str = "") -> Tuple[List[Dict[str, Any]], Any]:
@@ -137,7 +162,12 @@ class MaxMcpServer:
         self.catalog: Catalog = build_catalog()
         self.bridge = MaxBridge(self.config)
         self.runtime = SceneRuntime(self.bridge.call)
+        # Stitches the incremental context_get replies into a complete snapshot
+        # so the resource endpoint never has to re-read every domain.
+        self.context_cache = SceneContextCache()
         self._initialized = False
+        # Argument corrections produced while preparing the current call.
+        self._param_notes: List[str] = []
 
         # Language handling. "auto" means: mirror the UI language of the running
         # 3ds Max, so a Chinese Max gets Chinese descriptions and an English one
@@ -241,6 +271,7 @@ class MaxMcpServer:
                 "tools/list": self.on_tools_list,
                 "tools/call": self.on_tools_call,
                 "resources/list": self.on_resources_list,
+                "resources/read": self.on_resources_read,
                 "resources/templates/list": self.on_resources_templates_list,
                 "prompts/list": self.on_prompts_list,
                 "logging/setLevel": self.on_logging_set_level,
@@ -296,7 +327,13 @@ class MaxMcpServer:
         )
         return {
             "protocolVersion": negotiated,
-            "capabilities": {"tools": {"listChanged": False}},
+            "capabilities": {
+                "tools": {"listChanged": False},
+                "resources": {
+                    "subscribe": False,
+                    "listChanged": False,
+                },
+            },
             "serverInfo": {"name": APP_NAME, "version": VERSION},
             "instructions": self._instructions(),
         }
@@ -312,6 +349,8 @@ class MaxMcpServer:
                 "what the running Max build supports. Use bridge_selftest when something fails oddly. "
                 "Use set_language to switch the whole bridge between English and Simplified Chinese. "
                 "Prefer the specific modelling tools; fall back to execute_maxscript for anything else. "
+                "To understand the scene before acting, read the max://scene/context resource "
+                "(same data as context_get) instead of issuing several list_* calls. "
                 "Tool categories: {0}.".format(categories)
             )
         return (
@@ -320,6 +359,8 @@ class MaxMcpServer:
             "工具异常失败时用 bridge_selftest 自检。"
             "用 set_language 可在中文和英文之间整体切换。"
             "优先使用专用建模工具，其余情况用 execute_maxscript 兜底。"
+            "动手前若需要了解场景，直接读 max://scene/context 资源（与 context_get 同源），"
+            "不要用多次 list_* 调用拼凑。"
             "工具分类：{0}。".format(categories)
         )
 
@@ -337,10 +378,100 @@ class MaxMcpServer:
         }
 
     def on_resources_list(self, params: Dict[str, Any]) -> Dict[str, Any]:
-        return {"resources": []}
+        return {"resources": self._resource_definitions()}
 
     def on_resources_templates_list(self, params: Dict[str, Any]) -> Dict[str, Any]:
-        return {"resourceTemplates": []}
+        return {"resourceTemplates": [
+            {
+                "uriTemplate": "max://scene/context/{domain}",
+                "name": "scene-context-domain",
+                "description": (
+                    "One scene-context domain: scene, selection, objects, materials, assets, "
+                    "animation, rigging, render or project."
+                    if self.config.language == "en" else
+                    "单个场景上下文域：scene、selection、objects、materials、assets、"
+                    "animation、rigging、render 或 project。"
+                ),
+                "mimeType": "application/json",
+            }
+        ]}
+
+    def _resource_definitions(self) -> List[Dict[str, Any]]:
+        if self.catalog.get("context_get") is None:
+            # The resource is a view onto context_get; without the tool there is
+            # nothing to read, and advertising an unreadable URI is worse than
+            # advertising none.
+            return []
+        return [{
+            "uri": CONTEXT_RESOURCE_URI,
+            "name": "scene-context",
+            "title": "3ds Max scene context",
+            "description": (
+                "Live snapshot of the whole scene: summary, selection, object counts, "
+                "materials, assets, animation, rigging, render setup and project."
+                if self.config.language == "en" else
+                "整个场景的实时快照：概要、选择、对象统计、材质、资源、动画、"
+                "骨骼、渲染设置与工程信息。"
+            ),
+            "mimeType": "application/json",
+        }]
+
+    def on_resources_read(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        uri = params.get("uri")
+        if not isinstance(uri, str) or not uri:
+            raise RpcError(INVALID_PARAMS, "resources/read requires a uri")
+        if self.catalog.get("context_get") is None:
+            raise RpcError(METHOD_NOT_FOUND, "context_get is not enabled in this profile")
+
+        domain = ""
+        if uri.startswith(CONTEXT_RESOURCE_URI + "/"):
+            domain = uri[len(CONTEXT_RESOURCE_URI) + 1:]
+            if not domain:
+                raise RpcError(INVALID_PARAMS, "Unknown resource: {0}".format(uri))
+        elif uri != CONTEXT_RESOURCE_URI:
+            raise RpcError(INVALID_PARAMS, "Unknown resource: {0}".format(uri))
+
+        entry = self.catalog.get("context_get")
+        arguments: Dict[str, Any] = {}
+        if domain:
+            arguments["sections"] = [domain]
+        cursor = self.context_cache.cursor()
+        if cursor > 0:
+            arguments["since"] = cursor
+
+        try:
+            payload = self._build_payload(entry, arguments)
+            raw = from_wire(self.bridge.call(entry.bridge_method, payload))
+        except (BridgeError, ValueError) as exc:
+            # Report the failure inside the resource body instead of raising: an
+            # MCP resource read that fails should say why, not just error out.
+            return {
+                "contents": [{
+                    "uri": uri,
+                    "mimeType": "application/json",
+                    "text": json.dumps(
+                        {
+                            "error": str(exc),
+                            "kind": getattr(exc, "kind", "validation_error"),
+                            "uri": uri,
+                            "note": "the bridge did not answer; nothing was cached",
+                        },
+                        ensure_ascii=False, indent=2,
+                    ),
+                }]
+            }
+
+        report = self.context_cache.merge(raw if isinstance(raw, dict) else {})
+        expected = [domain] if domain else _available_sections(raw)
+        body = self.context_cache.snapshot(expected)
+        body["merge"] = report
+        return {
+            "contents": [{
+                "uri": uri,
+                "mimeType": "application/json",
+                "text": json.dumps(body, ensure_ascii=False, indent=2, default=str),
+            }]
+        }
 
     def on_prompts_list(self, params: Dict[str, Any]) -> Dict[str, Any]:
         return {"prompts": []}
@@ -394,20 +525,41 @@ class MaxMcpServer:
             else:
                 result = self.bridge.call(entry.bridge_method, payload)
         except BridgeError as exc:
-            return make_result(
-                [text_content(self._error_text(
-                    code=getattr(exc, "code", None) or exc.kind,
-                    kind=exc.kind,
-                    tool=name,
-                    message=str(exc),
-                    detail=getattr(exc, "detail", None),
-                    suggestion=self._error_suggestion(exc),
-                ))],
-                is_error=True,
-            )
+            if entry.name in ("bridge_restart", "bridge_stop"):
+                # These two commands tear down the very socket the reply would
+                # travel on, so the failure is the expected outcome, not an
+                # error. Report it as success and drop the stale connection.
+                self.bridge.close()
+                result = {
+                    "ok": True,
+                    "command": entry.name,
+                    "note": i18n.t("bridge.restarted", self.config.language, tool=entry.name),
+                }
+            else:
+                recovered = self._recover_written_file(entry, arguments)
+                if recovered is None:
+                    return make_result(
+                        [text_content(self._error_text(
+                            code=getattr(exc, "code", None) or exc.kind,
+                            kind=exc.kind,
+                            tool=name,
+                            message=str(exc),
+                            detail=getattr(exc, "detail", None),
+                            suggestion=self._error_suggestion(exc),
+                        ))],
+                        is_error=True,
+                    )
+                result = recovered
 
         result = from_wire(result)
         self._apply_side_effects(entry, arguments, result)
+
+        # Surface argument corrections in the payload itself: a renamed or
+        # ignored parameter is invisible in the tool result otherwise, and the
+        # failure it causes shows up one call later.
+        notes = getattr(self, "_param_notes", [])
+        if notes and isinstance(result, dict):
+            result["parameterNotes"] = notes
 
         # Auto-language: now that a call has definitely reached Max, mirror its
         # language. This is what makes an English Max user get English tools
@@ -454,17 +606,65 @@ class MaxMcpServer:
             return "Check bridge/server version alignment and reload the bridge module."
         return "Correct the reported Max-side problem, then retry; verify scene state before continuing."
 
+    def _recover_written_file(self, entry: Tool, arguments: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Treat "file is on disk" as success when Max threw after writing it.
+
+        The ObjExp / FBX exporters can raise a MAXScript *system* exception
+        (EXCEPTION_STACK_OVERFLOW) after they have already flushed the file.
+        MAXScript cannot catch system exceptions, so the bridge reports a
+        failure even though the export is complete and valid -- and callers were
+        left thinking nothing had been written. The contract of these tools is
+        "the file exists and is not empty", so check exactly that.
+
+        Only file-producing tools are considered, and only for a path the caller
+        actually asked for.
+        """
+        if not entry.name.startswith(("export_", "render_still", "viewport_capture", "save_")):
+            return None
+        target = arguments.get("path")
+        if not isinstance(target, str) or not target.strip():
+            return None
+        try:
+            path = Path(target).expanduser()
+            if not path.is_file() or path.stat().st_size <= 0:
+                return None
+        except OSError:
+            return None
+        return {
+            "path": str(path),
+            "written": True,
+            "recovered": True,
+            "sizeBytes": path.stat().st_size,
+            "message": i18n.t("tool.recovered_after_error", self.config.language, path=str(path)),
+        }
+
     def _build_payload(self, entry: Tool, arguments: Dict[str, Any]) -> Dict[str, Any]:
         schema = entry.schema
         properties: Dict[str, Any] = schema.get("properties", {})
         required: List[str] = schema.get("required", [])
 
         payload: Dict[str, Any] = dict(entry.preset)
-        for key, value in arguments.items():
+        resolved, renames = _resolve_argument_names(arguments, properties)
+
+        notes: List[str] = []
+        for source, target in renames:
+            notes.append(i18n.t("tool.param_renamed", self.config.language,
+                                source=source, target=target))
+        for key, value in resolved.items():
             if key not in properties:
                 # Tolerate unknown keys instead of failing: model output drifts.
+                # Silently dropping them was worse though: a caller that spelled
+                # `names` for `objects` got a cheerful "ok" and nothing selected,
+                # and the *next* tool failed with "nothing is selected".
+                notes.append(i18n.t(
+                    "tool.param_ignored",
+                    self.config.language,
+                    name=key,
+                    valid=", ".join(sorted(properties)) or "-",
+                ))
                 continue
             payload[key] = value
+        self._param_notes = notes
 
         missing = [r for r in required if payload.get(r) is None]
         if missing:
@@ -504,6 +704,86 @@ class MaxMcpServer:
             self.bridge.close()
             # A restarted bridge may come back in a different Max language.
             self._language_synced = False
+
+
+# Argument spellings that mean the same thing across the catalog. Tool schemas
+# are not uniform (`objects` on most, `names` on some), and a caller that picks
+# the other one used to get a silent no-op.
+_ALIAS_GROUPS = (
+    ("objects", "names", "objs", "items", "selection", "objectnames", "object"),
+    ("material", "mat", "materials", "materialname"),
+    ("light", "lights", "lightname"),
+    ("camera", "cameras", "cam", "cameraname"),
+    ("path", "filepath", "file", "filename", "output", "outputpath"),
+)
+
+
+def _value_fits(spec: Dict[str, Any], value: Any) -> bool:
+    """True when value has the shape the target parameter declares."""
+    type_name = spec.get("type")
+    if type_name in ("string", "number", "integer", "boolean"):
+        return not isinstance(value, (list, dict))
+    if type_name == "array":
+        return isinstance(value, list)
+    if type_name == "object":
+        return isinstance(value, dict)
+    return True
+
+
+def _resolve_argument_names(
+    arguments: Dict[str, Any], properties: Dict[str, Any]
+) -> Tuple[Dict[str, Any], List[Tuple[str, str]]]:
+    """Map caller spellings onto the declared parameter names.
+
+    Returns the usable arguments plus the (source, target) renames that were
+    applied.  Resolution order: exact, case-insensitive, alias group, then a
+    close spelling match.  Anything still unknown is passed through so the
+    caller can be told exactly what was ignored.
+    """
+    if not arguments:
+        return {}, []
+
+    by_lower = {name.lower(): name for name in properties}
+    resolved: Dict[str, Any] = {}
+    renames: List[Tuple[str, str]] = []
+
+    for key, value in arguments.items():
+        if key in properties:
+            resolved[key] = value
+            continue
+
+        target = by_lower.get(key.lower())
+        if target is None:
+            group = next(
+                (g for g in _ALIAS_GROUPS if key.lower() in g),
+                None,
+            )
+            if group is not None:
+                target = next(
+                    (name for name in properties if name.lower() in group), None
+                )
+        if target is None and len(key) > 2:
+            matches = difflib.get_close_matches(key, list(properties), n=1, cutoff=0.75)
+            target = matches[0] if matches else None
+
+        if target is None:
+            resolved[key] = value
+            continue
+        # A rename must not change the shape of the value: `bones: [...]` is not
+        # a valid `bone: "..."`, and silently passing the list on produced a
+        # confusing "unknown property in undefined" inside 3ds Max.
+        if not _value_fits(properties.get(target, {}), value):
+            resolved[key] = value
+            continue
+        # Never let a corrected spelling overwrite an explicitly passed value.
+        if target in resolved or target in arguments:
+            resolved[key] = value
+            continue
+        resolved[target] = value
+        if target != key:
+            renames.append((key, target))
+
+    return resolved, renames
 
 
 def _coerce(value: Any, spec: Dict[str, Any], key: str) -> Any:

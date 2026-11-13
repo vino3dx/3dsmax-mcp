@@ -27,6 +27,8 @@ global mcpNetStart, mcpNetStop, mcpNetStatus, mcpNetPump, mcpRunLoop
 global mcpRunning, mcpListener, mcpHost, mcpPort, mcpTimer, mcpConns
 global mcpRegistry, mcpLang, mcpMaxYear, mcpMaxMajor, mcpMaxLanguageCode
 global mcpIsLanguagePinned, mcpSetLanguage, mcpSetLanguageAuto
+-- Built-in client layer (mcp_events.ms / mcp_context.ms / mcp_ui.ms).
+global mcpEventsStart, mcpEventsStop, mcpCtxTick, mcpCtxReset, mcpUiOpen, mcpUiClose
 
 MCP_BRIDGE_PORT = 8765
 MCP_BRIDGE_AUTOSTART = true
@@ -110,6 +112,9 @@ mcpBridgeModules = #(
     "mcp_vision.ms",
     "mcp_bake.ms",
     "mcp_export.ms",
+    "mcp_events.ms",
+    "mcp_context.ms",
+    "mcp_ui.ms",
     "mcp_selftest.ms"
 )
 
@@ -267,6 +272,15 @@ fn mcpBridgeStart port:0 =
     (
         mcpBridgeLog ("start: already listening on " + mcpHost + ":" + (mcpPort as string))
         mcpBridgeBanner()
+        -- Modules may have been reloaded while the socket stayed up (fileIn
+        -- during development), which redefines the callbacks that were armed
+        -- earlier.  Re-arm them here too: mcpEventsStart removes its own
+        -- handlers first, so this is safe and idempotent.
+        if mcpEventsStart != undefined do
+        (
+            try ( mcpEventsStart() )
+            catch ( mcpBridgeLog ("start: events raised: " + (getCurrentException() as string)) )
+        )
         return (mcpNetStatus())
     )
 
@@ -303,6 +317,17 @@ fn mcpBridgeStart port:0 =
     MCP_BRIDGE_PORT = p + attempts
     mcpBridgeLog ("start: listening on " + mcpHost + ":" + (mcpPort as string))
     mcpBridgeBanner()
+
+    /* The change ledger is armed only once the socket is actually listening.
+       It registers MAXScript callbacks that live for the rest of the session,
+       so it must not run before the bridge can be talked to.  mcpEventsStart
+       is idempotent (it removes its own handlers first), which makes a manual
+       restart safe. */
+    if mcpEventsStart != undefined do
+    (
+        try ( mcpEventsStart() )
+        catch ( mcpBridgeLog ("start: events raised: " + (getCurrentException() as string)) )
+    )
     started
 )
 

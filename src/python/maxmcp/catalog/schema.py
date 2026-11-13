@@ -115,7 +115,7 @@ def tool(
 # ------------------------------------------------------------------ registry
 #: Categories every profile keeps: connection, scene management, object
 #: handling, file IO and introspection.
-BASE_CATEGORIES = ("system", "scene", "objects", "files")
+BASE_CATEGORIES = ("system", "scene", "objects", "files", "context")
 
 # The default core surface is intentionally explicit.  Category-only profiles
 # still exist for backwards compatibility, while this set keeps the default
@@ -123,6 +123,7 @@ BASE_CATEGORIES = ("system", "scene", "objects", "files")
 CORE_TOOLS = frozenset({
     "bridge_status", "bridge_ping", "bridge_capabilities", "bridge_selftest",
     "get_max_version", "execute_maxscript",
+    "context_get", "context_stats",
     "scene_info", "scene_new", "scene_save", "scene_save_as", "scene_open",
     "create_box", "create_sphere", "create_cylinder", "create_cone",
     "create_torus", "create_teapot", "create_plane", "create_tube",

@@ -8,6 +8,100 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Scene context layer: the bridge now knows what is in the scene before a tool
+  asks.** Until now every question about the scene cost its own round trip, and
+  an agent that wanted "what is selected and what is it made of" had to stitch
+  four tools together and still guess at the rest. Three new modules change
+  that.
+
+  `src/ms/mcp_events.ms` is the listener layer. Notifications are registered
+  through `try` and then *reported*, never assumed: on the 2022 build measured
+  here `callbacks.addScript` accepts 20 of the 55 documented notifications and
+  rejects 35 (including `#nodeAdded`, `#nodeDeleted`, `#preSave`, `#postSave`,
+  `#preOpen`, `#postOpen`, `#preReset`), `id:` must be a `Name` rather than an
+  integer, `NodeEventCallback` requires exactly two parameters or it silently
+  registers and never fires, and `SceneEventCallback` does not exist on this
+  release at all. `context_stats.eventsCapabilities` therefore publishes what
+  actually bound on the running build, and `mcpCtxTick`'s identity check
+  (object count, selection count, file path — every 8th tick, O(1)) covers the
+  changes that have no notification: file > new, reset, merge, and a script
+  editing the scene outside MCP.
+
+  `src/ms/mcp_context.ms` is the data layer: nine domains (scene, selection,
+  objects, materials, assets, animation, rigging, render, project), each built
+  on demand, cached once, and tagged with `domain / revision / builtAt /
+  source / valid / buildMs / error`. Nothing is cached that was not read, and a
+  failed collector reports `valid:false` instead of a zero. Object
+  classification goes through `mcpCtxSuperKind`, which normalises
+  `superclassof` — measured here it answers `GeometryClass` but `shape`,
+  `light`, `camera`, `helper` in lower case, which is why the existing
+  `scene_statistics` had been reporting every one of 65 objects as `other`.
+
+  `src/ms/mcp_ui.ms` is the in-Max panel ("Vino 3dsMax MCP", seven read-only
+  pages over a WinForms `TabControl`), opened through `client_ui` or the
+  `Vino3dsMaxMCP` macroScript.
+
+  Six tools join the catalog (384 -> 390): `context_get`, `context_refresh`,
+  `context_stats`, `context_events`, `client_ui`, `client_status`, plus the
+  `context` category, and an MCP resource `max://scene/context` with a
+  `max://scene/context/{domain}` template, since a resource is the natural
+  shape for "read the scene" and does not consume a tool slot.
+
+- **`since` is a global revision, and the two counters behind it are documented
+  in the code that uses them.** The first draft compared the caller's `since`
+  (a global revision) against each domain's cache key. Those are different
+  counters, so a domain that had changed once — key `1` while the global
+  revision was already `40` — was reported as unchanged and the update was
+  lost. Each domain now keeps `mcpCtxStamp` (the global revision at its last
+  change, which is what `since` compares against) and `mcpCtxSent` (the stamp
+  last delivered, so a domain the caller has never received is never skipped).
+  `context_get` was verified end-to-end against the running scene: a material
+  creation rebuilds `scene` and `materials` and skips the other seven; a
+  selection change rebuilds `scene`, `selection` and `objects`.
+
+- **`context_get`'s per-tool invalidation table is derived from the tool name,
+  not a blanket guess.** `mcpEvAfterWrite` originally marked `scene + objects +
+  selection` for every write, which invalidated three domains on every call and
+  made the incremental path useless for the domains that matter. The catalog
+  names tools `<prefix>_<verb><noun>`, so `mcpEvDomainsForMethod` maps all 55
+  mutating prefixes (`mat` -> materials, `mod`/`poly` -> objects+selection,
+  `rig`/`constraint` -> rigging+objects, and so on) and keeps the broad
+  conservative set only for `execute_maxscript`/`execute_python` and unknown
+  prefixes. `scene` stays unconditional: it holds `objectCount`,
+  `selectionCount`, `currentFrame` and `modified`, and costs 0-1 ms to rebuild.
+
+- **`src/python/maxmcp/context.py` stitches the incremental replies back into a
+  complete snapshot.** `context_get(since=...)` returns deltas by design, which
+  leaves every full-picture caller — the resource endpoint, a panel, an agent
+  that just reconnected — to do the bookkeeping. `SceneContextCache` does it
+  once, server-side: it never fabricates a section it has not read
+  (`complete`/`missing` say which), it reports the bridge's revision rather
+  than a local counter, it drops a stored section when the bridge sends that
+  domain unreadably instead of serving a value just declared out of date, and a
+  revision that moves backwards (Max restarted, bridge reloaded, another scene
+  opened) clears the whole cache instead of mixing two sessions. Covered by
+  `test/static/context_cache_test.py`.
+
+### Fixed
+
+- **The panel rendered as one wrapped paragraph.** MAXScript builds strings
+  with `"\n"`, and a WinForms `TextBox` does not break lines on a lone LF — the
+  page held character 10 between every row and still displayed as a single
+  line. `mcpUiCrlf` normalises to CRLF on the way into the control. Found by
+  screenshotting the open panel, not by reading the return value.
+
+- **`execute_python` did not invalidate the context.** Both escape hatches are
+  registered non-undoable and are the only read-only-path commands that can
+  change anything; the dispatcher hooked `execute_maxscript` only, so Python
+  code that edited the scene left clients serving a stale snapshot.
+
+- **`mcp_events.ms` used backslash line continuations** in a log-message
+  expression, which `scripts/verify.py` forbids. Rewritten as plain statements.
+
+- **`mcp_ui.ms` carried a `…` character.** MAXScript reads `.ms` as ANSI, so a
+  non-ASCII ellipsis in a truncation marker was a decoding risk; replaced with
+  three dots.
+
 - **Seventh static gate: `test/offline_lint_helper.py`.** No gate owned the
   Python source outside the catalog's import graph (`scripts/` and `test/`
   are never imported by the server), so a syntax error, a stray encoding or
@@ -81,6 +175,142 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `mod_collapse` stays the main entry; its behaviour is unchanged.
 
 ### Fixed
+
+- **The MCP pump replayed the request it was already running
+  (`EXCEPTION_STACK_OVERFLOW` in every slow tool).** `mcpProcessBuffer`
+  published the remaining connection buffer only *after* dispatching a line.
+  Commands that pump the Windows message queue -- `exportFile`, render, bake,
+  `completeRedraw` -- let the WinForms pump timer fire while that line was still
+  in `cn[3]`, so the nested tick re-read it, ran the same command again and
+  recursed until the thread ran out of stack. Every exporter appeared broken
+  ("stack overflow AFTER the file was written", which is what the
+  file-exists recovery workaround was papering over), Max sometimes died
+  outright, and the extra responses poisoned the stream ("out-of-order reply").
+  Two independent fixes: the remaining buffer is now published *before* the
+  dispatch, and `mcpNetPump` is a thin re-entrancy guard around
+  `mcpNetPumpInner` (`mcpPumpBusy`, cleared on every path and reset by
+  `bridge_restart`/`bridge_stop`). Measured after the fix: fbx / obj / stl /
+  abc / 3ds all return `written:true` with no `recovered` flag, no log error,
+  Max alive.
+- **`import_*` reported "0 imported" when objects were already in the scene.**
+  The added-object diff compared *names*, but on a name collision the FBX
+  importer keeps the imported name and renames the node that was already there
+  (`sw_box` -> `sw_box001`) -- so the two name sets overlapped completely while
+  21 objects had in fact arrived. The diff now runs on node handles
+  (`getHandleByAnim`), and an import that adds nothing but does not throw
+  reports `updatedInPlace:true` with its own message instead of a bare `0`.
+- **`mat_set_map_slot` / `mat_get_map_slot` wrote the map into the colour.**
+  `"diffuse"` was passed straight to `setProperty`, which on a Standard material
+  resolves to the Diffuse *colour*, and Max answered "unable to convert Checker
+  to Point3". Legacy materials keep their maps in numbered sub-texmap channels,
+  not in `diffuseMap` properties, so resolution is now: real map property ->
+  `slot + "Map"` / `slot + "_map"` -> per-class alias (`base_color_map`, ...) ->
+  sub-texmap channel table (diffuse 2, bump 9, opacity 7, ...). Both handlers now
+  report where the map landed (`"channel 2"` in the result), and an unknown slot
+  fails with the class name instead of a conversion error.
+- **`rig_skin_*` used skinOps entry points that do not exist on 2022.**
+  `getBoneName` wants three arguments (skin, index, useXref) and the two-argument
+  call was swallowed by a `catch()`, so every vertex in `rig_skin_weight_table`
+  had an empty bone name; `getVertexWeightBone` does not exist at all (the real
+  name is `GetVertexWeightBoneID`); `autoWeight` does not exist either, so
+  `rig_skin_auto_weight` was a silent no-op; `setWeight` takes two arguments and
+  works on the panel selection, so `rig_skin_set_weight` never set anything.
+  Auto weights are now computed from the distance of each vertex to every bone
+  segment (`GetStartPoint`/`GetEndPoint`, nearest two bones, inverse square) and
+  applied with `ReplaceVertexWeights`; single weights read-modify-write the same
+  call and treat the requested value as authoritative (1.0 really does clear the
+  other bones). `rig_skin_add_bone` accepts `bone` or `bones`, reports
+  `notFound`, and no longer dies with "unknown property: name in undefined".
+- **`render_preview` called `makePreview`, which 3ds Max 2022 removed.** It now
+  calls `createPreview` (2020/2021 keep using `makePreview`), and because
+  `createPreview` has no output-path argument and always writes
+  `<getDir #preview>\<scene>_preview.avi`, the file that appears in the preview
+  folder is detected and copied to the requested path. Result carries
+  `entry: "createPreview"`.
+- **`viewport_stats` reported 0x0 for every viewport.** `getView <n>` does not
+  exist in 2022, so every size read was swallowed. Sizes now come from
+  `viewport.getViewportDib index:n` (falling back to `getViewSize()` for the
+  active view), plus the per-view `active` flag.
+- **`export_3ds` rejected a working exporter.** The `.3ds` writer is built into
+  Max and its plugin class name is not resolvable from MAXScript
+  (`Max3dsExporter` / `ThreeDSExporter` both report "does not exist" while
+  `exportFile` writes the file), so the class probe is gone; `exportFile` by
+  extension is the only truthful test.
+- **`list_max_classes` enumerated almost nothing.** `geometry.classes` and
+  friends raise "unknown property" (the lowercase listener names are node
+  collections); only superclass *class values* carry `.classes`. Buckets are now
+  `GeometryClass / Shape / Light / Camera / Helper / System / SpacewarpObject /
+  Material / TextureMap / Modifier / Filter / Atmospheric / ReferenceTarget`
+  (measured 1230 classes, a search for "Box" now returns `Box`), and
+  `mcpClassBuckets` is called instead of being iterated as a value.
+- **`rig_create_bone_chain` created `count - 1` bones.** `"count": 3` produced a
+  two-bone chain; the chain is now cut into `count` segments.
+- **Bake paths carried a double separator.** A folder passed with a trailing
+  slash produced `C:/out/\name.png`; `mcpBakeJoinPath` trims before joining.
+- **Unknown parameters were dropped silently.** A caller that spelled `names`
+  for `objects` got a cheerful `ok` and nothing selected, and the *next* tool
+  failed with "nothing is selected". `_resolve_argument_names` now maps the
+  caller's spelling onto the declared parameter (exact, case-insensitive, an
+  alias group `objects/names/objs/items`, then a close match) without changing
+  the value's shape, and every correction or ignored key is reported in the
+  result as `parameterNotes`.
+- **`bridge_restart` / `bridge_stop` reported a failure.** Both close the socket
+  the reply would travel on, so the client saw "connection dropped". They now
+  return `ok:true` with an explanatory note and the next call reconnects.
+
+- **3ds Max 2022 (2020+) compatibility sweep, live-verified.** A full pass over
+  a real 3ds Max 2022 install turned up a class of failures that all shared one
+  shape: an API that no longer exists, plus a `catch()` that hid it. Fixed, each
+  confirmed on the live bridge:
+
+  - **Bake (`bake_texture`/`bake_ao`/`bake_normals`/`bake_lighting`) was
+    silently doing nothing.** It wrote `node.RenderToTexture.*`, a property that
+    does not exist, so every field assignment no-op'd and `rktBatchRender` never
+    produced a file -- while the tool still answered "烘焙完成" with
+    `written: []`. Rewritten with two back ends: the Bake To Texture interface
+    (`BakeToTexture.addMap` / `.bake()`, 3ds Max 2021+, `route: "btt"`) and the
+    classic `iNodeBakeProperties` + `render rendertype:#bakeSelected` path for
+    2020 and older (`route: "legacy"`). The bake now switches to the Scanline
+    renderer for the duration and restores the previous one afterwards, because
+    the standard bake elements are Scanline-only: attaching them while Arnold is
+    active throws in a loop that spawns modal MAXScript error dialogs and wedges
+    the UI thread. Objects without a UV channel get a box-projected UVW Map
+    first (`BakeToTexture.addMap` refuses to run otherwise). Bake maps are always
+    released afterwards -- a stale registration pointing at a deleted node
+    crashes Max on the next `bake()`. Zero written files is now an error
+    (`err.bake_no_output`) that names the route, the folder and the first
+    failure, instead of a success with an empty list.
+
+  - **`import_fbx` could permanently kill the bridge.** The FBX importer ignores
+    `#noPrompt` when no import mode is configured and opens up to three
+    interactive dialogs; they block the main thread the bridge runs on, so every
+    later call hung until Max was killed by hand. The handler now pre-sets the
+    importer options (`FBXImporterSetParam` for Mode/ImportContent/ShowWarnings/
+    FillTimeline/Cameras/Lights/Skin/Shape/Animation, each best-effort because
+    the names differ per release) which makes it import silently. Imports also
+    report what actually arrived (`imported`/`count`) instead of a bare "done",
+    and a throw that added nothing is a real error again.
+
+  - **Modal-dialog watchdog (`maxmcp.dialogs`).** Any modal box -- MAXScript
+    error, FBX prompt, render report, the WinForms "unhandled exception" box --
+    blocks the thread the bridge answers on, so one bad call used to end the
+    session. The client now dismisses known blockers when a request times out,
+    gives the pending command a grace window, and reports which dialogs it
+    closed (`bridge.dialogs_dismissed`). Crash dialogs (`Application Error`) are
+    deliberately left alone: the process is already gone and closing the box
+    would hide it. Windows-only, no-op elsewhere; `python -m maxmcp.dialogs
+    --list` shows what is currently open.
+
+  - **`proboolean` never worked, and `boolean_operation` ran the wrong
+    operation.** The old code called `proBoolean.SetOperation(...)` etc., but
+    the `proboolean` global is not that interface in 2022 -- the real entry point
+    is the PolyBoolean interface on the class:
+    `ProBoolean.createBooleanObjects <A> #(<B...>) op addMethod matMethod`, where
+    op is 0=union 1=intersection **2=subtraction** 3=merge. The old mapping used
+    1 for subtract and 2 for intersect, so "subtract" silently intersected. Both
+    tools now share one implementation, report `engine: proboolean|boolean2`, and
+    fall back to `boolean2` explicitly; the old code wrapped each `boolean2` call
+    in an empty `catch()`, so a failed boolean still reported success.
 
 - **Crash timeline wording in docs (D8 follow-up).** "18 crashes since
   2026-10-15" corrected to "18 within the event-log window (first
