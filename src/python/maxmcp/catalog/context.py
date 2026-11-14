@@ -7,8 +7,11 @@ consistent snapshot plus the revision it was taken at.
 
 Design notes that matter to a caller:
 
-* every section carries `revision`, `builtAt`, `source`, `valid` and, on
-  failure, `error` -- a section is never a fabricated zero;
+* every section carries `revision`, `updatedAt`, `source`, `valid`,
+  `supported` and `stale` plus, on failure, `error` -- never a fabricated zero.
+  The three flags answer different questions: `valid` = this read worked,
+  `supported` = this Max build has the API, `stale` = the payload predates the
+  domain's latest change;
 * `since` is the incremental switch: sections whose revision did not move are
   listed under `unchanged` and are not sent at all;
 * `client_*` drives the in-Max panel ("Vino 3dsMax MCP"), so an agent can open

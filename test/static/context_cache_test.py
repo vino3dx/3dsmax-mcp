@@ -20,9 +20,11 @@ def section(domain, revision, value):
     return {
         "domain": domain,
         "revision": revision,
-        "builtAt": "12:00:00",
+        "updatedAt": "12:00:00",
         "source": "maxscript",
         "valid": True,
+        "supported": True,
+        "stale": False,
         "buildMs": 1,
         "data": {"value": value},
     }

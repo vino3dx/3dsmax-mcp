@@ -45,6 +45,9 @@ global mcpEventsStart, mcpEventsStop, mcpEventsStatus, mcpEventsLog, mcpEventsCa
 global mcpEvFire, mcpEvNodeAdded, mcpEvNodeDeleted, mcpEvAfterWrite
 global mcpEvDomainsFor, mcpEvClockUpdate, mcpEvReset, mcpEvDirty
 global mcpEvRendering, mcpEvRenderStart, mcpEvLastRender
+-- Shared with mcp_json.ms: every error string that reaches the wire or the log
+-- is flattened and capped there, never raw from getCurrentException().
+global mcpErrText
 -- Owned by mcp_context.ms; declared here so the guard below is a real global
 -- read on every release instead of an implicit one.
 global mcpCtxMarkDirty
@@ -136,7 +139,7 @@ fn mcpEvFire kind detail:"" =
     mcpPair row "at" (if mcpEvClock == "" then (mcpEvClockUpdate()) else mcpEvClock)
     mcpPair row "event" (kind as string)
     mcpPair row "domains" domains
-    if detail != "" do mcpPair row "detail" detail
+    if detail != "" do mcpPair row "detail" (mcpErrText detail maxLen:200)
     append mcpEvLog (mcpObj row)
 
     -- Ring buffer: the newest mcpEvLogCap rows only.  Rebuilding the array is
@@ -306,7 +309,7 @@ fn mcpEvAfterWrite method =
     mcpPair row "at" (if mcpEvClock == "" then (mcpEvClockUpdate()) else mcpEvClock)
     mcpPair row "event" "tool"
     mcpPair row "domains" domains
-    mcpPair row "detail" method
+    mcpPair row "detail" (mcpErrText method maxLen:120)
     append mcpEvLog (mcpObj row)
     if mcpEvLog.count > mcpEvLogCap do
     (
@@ -387,7 +390,7 @@ fn mcpEventsStart silent:false =
         local ok = true
         local err = ""
         try ( callbacks.addScript note code id:idName )
-        catch ( ok = false; err = (getCurrentException() as string) )
+        catch ( ok = false; err = (mcpErrText (getCurrentException())) )
 
         if ok then
         (
@@ -405,7 +408,7 @@ fn mcpEventsStart silent:false =
         local err = ""
         local idName = ("mcpEvProbe_" + (note as string)) as name
         try ( callbacks.addScript note "ok" id:idName )
-        catch ( ok = false; err = (getCurrentException() as string) )
+        catch ( ok = false; err = (mcpErrText (getCurrentException())) )
         if ok do ( try ( callbacks.removeScripts id:idName ) catch() )
         append caps #(note as string, ok, "probe", err)
     )
@@ -414,7 +417,7 @@ fn mcpEventsStart silent:false =
     local nodeOk = true
     local nodeErr = ""
     try ( mcpEvNodeCb = NodeEventCallback mouseUp:false delay:50 added:mcpEvNodeAdded deleted:mcpEvNodeDeleted )
-    catch ( nodeOk = false; nodeErr = (getCurrentException() as string) )
+    catch ( nodeOk = false; nodeErr = (mcpErrText (getCurrentException())) )
     append caps #("NodeEventCallback(added,deleted)", nodeOk, "node", nodeErr)
 
     mcpEvCaps = caps

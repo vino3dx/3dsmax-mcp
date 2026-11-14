@@ -29,9 +29,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   `src/ms/mcp_context.ms` is the data layer: nine domains (scene, selection,
   objects, materials, assets, animation, rigging, render, project), each built
-  on demand, cached once, and tagged with `domain / revision / builtAt /
-  source / valid / buildMs / error`. Nothing is cached that was not read, and a
-  failed collector reports `valid:false` instead of a zero. Object
+  on demand, cached once, and tagged with `domain / revision / updatedAt /
+  source / valid / supported / stale / buildMs / error`. `valid`, `supported`
+  and `stale` are deliberately separate: a read that threw is not an API that
+  is missing, and neither is the same thing as data older than the domain's
+  last change. Nothing is cached that was not read, and a failed collector
+  reports `valid:false` instead of a zero. Object
   classification goes through `mcpCtxSuperKind`, which normalises
   `superclassof` — measured here it answers `GeometryClass` but `shape`,
   `light`, `camera`, `helper` in lower case, which is why the existing
@@ -84,6 +87,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Exception text was unbounded.** `getCurrentException()` on a missing
+  `polyop` member dumps the whole struct — about 6 KB — into the JSON response,
+  the panel page and every context section. All four paths now go through
+  `mcpErrText`, which flattens newlines and caps at 400 characters with the
+  dropped length appended, so a truncated message cannot be mistaken for a
+  complete one.
+- **`as boolean` raised on a Boolean.** MAXScript cannot coerce `true` to
+  `boolean`, so `(mcpGet w "valid") as boolean` threw and every "read a flag
+  back" silently became `false`: `context_stats` reported `valid:false` for all
+  nine domains right after a successful `context_get`. Reading booleans now
+  goes through `mcpToBool`, and the same latent cast in the render domain
+  (`rendSaveFile`) is fixed.
 - **`scene_statistics` reported every object as `other`.** It compared
   `(superclassof o) as string` against `"Geometry"`, `"Shape"`, `"Light"` and
   friends, but the running build answers `GeometryClass` and `shape`, `light`,

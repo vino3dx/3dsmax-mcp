@@ -29,21 +29,24 @@
 
    Data honesty rules (project principle 6/7/15)
    --------------------------------------------
-   Every section carries `source`, `valid`, `revision`, `builtAt` and, when a
-   read failed, an `error` string -- never a fabricated zero.  A section whose
-   underlying API is missing on this release says `supported:false` and why.
+   Every section carries `source`, `valid`, `supported`, `stale`, `revision`,
+   `updatedAt` and, when a read failed, an `error` string -- never a fabricated
+   zero.  `valid` is about this read, `supported` is about the API existing on
+   this build, `stale` is about age; three different questions, three fields.
+   A section whose underlying API is missing says `supported:false` and why.
 -----------------------------------------------------------------------------*/
 
 global mcpCtxDomains, mcpCtxRev, mcpCtxCache, mcpCtxBuilds, mcpCtxTickCount
 global mcpCtxStamp, mcpCtxSent
 global mcpCtxIdentity, mcpCtxLastError, mcpCtxLastFullScan, mcpCtxSlowMs
 global mcpCtxMarkDirty, mcpCtxTick, mcpCtxDomainIndex, mcpCtxRevFor, mcpCtxPayload
-global mcpCtxWrap, mcpCtxPayloadFull
+global mcpCtxWrap, mcpCtxPayloadFull, mcpCtxCachedEntry
 global mcpCtxBuildScene, mcpCtxBuildSelection, mcpCtxBuildObjects, mcpCtxBuildMaterials
 global mcpCtxBuildAssets, mcpCtxBuildAnimation, mcpCtxBuildRigging, mcpCtxBuildRender
 global mcpCtxBuildProject, mcpCtxSuperKind, mcpCtxNodeRow, mcpCtxReset
 global mcpH_context_get, mcpH_context_refresh, mcpH_context_stats, mcpH_context_events
 global mcpContextGet, mcpContextRefresh, mcpContextStats, mcpContextSections
+global mcpErrText, mcpToBool
 
 if mcpCtxDomains == undefined do mcpCtxDomains = #(
     "scene", "selection", "objects", "materials", "assets",
@@ -582,7 +585,8 @@ fn mcpCtxBuildRender =
     mcpPair p "height" (try ( renderHeight as integer ) catch ( 0 ))
     mcpPair p "pixelAspect" (try ( renderPixelAspect as float ) catch ( 1.0 ))
     mcpPair p "outputPath" (try ( rendOutputFilename ) catch ( "" ))
-    mcpPair p "saveFile" (try ( rendSaveFile as boolean ) catch ( false ))
+    -- rendSaveFile already returns a Boolean; `as boolean` on it raises.
+    mcpPair p "saveFile" (mcpToBool (try ( rendSaveFile ) catch ( undefined )) fallback:false)
     mcpPair p "timeType" (try ( rendTimeType as integer ) catch ( 0 ))
     mcpPair p "frameStart" (try ( renderStart as integer ) catch ( 0 ))
     mcpPair p "frameEnd" (try ( renderEnd as integer ) catch ( 0 ))
@@ -688,14 +692,54 @@ fn mcpCtxBuild domain =
    for a full selection dump) produces a section with no revision, no source and
    no validity flag, which is exactly the "returned ok but unverifiable" case
    the project forbids. */
-fn mcpCtxWrap domain rev payload ms err =
+/* The cached wrapper for a domain, but only when it was built from the
+   domain's current revision.  Returning an out-of-date copy is the failure
+   mode this whole module exists to avoid, so a miss returns undefined and the
+   caller rebuilds. */
+fn mcpCtxCachedEntry domain =
 (
+    local i = mcpCtxDomainIndex domain
+    if i == 0 then return undefined
+    local rev = mcpCtxRev[i]
+    local found = undefined
+    for e in mcpCtxCache do
+    (
+        if e[1] == mcpCtxDomains[i] and e[2] == rev do found = e
+    )
+    found
+)
+
+/* The provenance block every section carries.  Four fields answer four
+   different questions and must never be collapsed into one boolean:
+
+     valid      - did THIS read produce data without raising?
+     supported  - does this build offer the API this domain needs at all?
+                  (a missing polyop sub-API is "unsupported", not "invalid")
+     stale      - is this payload older than the domain's latest change?
+                  a cache entry is dropped rather than served out of date, so
+                  this is normally false and becomes true only when the domain
+                  moved between the lookup and the wrap.
+     updatedAt  - when the payload was generated (Max side clock string).
+
+   `supported` defaults to whatever the collector itself declared in its
+   payload, so a section that probed an API and found it missing reports
+   supported:false without the wrapper having to know about that API. */
+fn mcpCtxWrap domain rev payload ms err supported:true stale:false =
+(
+    local sup = supported
+    if mcpIsObj payload and (mcpHas payload "supported") do
+    (
+        sup = mcpToBool (mcpGet payload "supported") fallback:supported
+    )
+
     local pairs = #()
     mcpPair pairs "domain" domain
     mcpPair pairs "revision" rev
-    mcpPair pairs "builtAt" (if mcpEvClock == undefined then "" else mcpEvClock)
+    mcpPair pairs "updatedAt" (if mcpEvClock == undefined then "" else mcpEvClock)
     mcpPair pairs "source" "maxscript"
     mcpPair pairs "valid" (err == "")
+    mcpPair pairs "stale" stale
+    mcpPair pairs "supported" sup
     mcpPair pairs "buildMs" ms
     if err != "" do mcpPair pairs "error" err
     -- `data` keeps the payload one level down so provenance can never collide
@@ -710,21 +754,21 @@ fn mcpCtxPayload domain =
     if i == 0 then return #(mcpObj #(#("supported", false), #("error", "unknown domain")), false)
 
     local rev = mcpCtxRev[i]
-    local hit = undefined
-    for e in mcpCtxCache do ( if e[1] == mcpCtxDomains[i] and e[2] == rev do hit = e[3] )
-    if hit != undefined then return #(hit, true)
+    local entry = mcpCtxCachedEntry mcpCtxDomains[i]
+    if entry != undefined then return #(entry[3], true)
 
     local t0 = (timeStamp())
     local payload = undefined
     local err = ""
     try ( payload = mcpCtxBuild mcpCtxDomains[i] )
-    catch ( err = getCurrentException() as string )
+    catch ( err = mcpErrText (getCurrentException()) )
 
     if payload == undefined do
     (
         mcpCtxLastError = err
+        -- No `supported:false` here: the domain exists, this one build threw.
+        -- Conflating the two would make a transient failure look permanent.
         payload = mcpObj #(
-            #("supported", false),
             #("valid", false),
             #("error", "context build failed: " + err)
         )
@@ -735,7 +779,7 @@ fn mcpCtxPayload domain =
     mcpCtxBuilds += 1
 
     -- Wrap with the provenance every section must carry.
-    local wrapped = mcpCtxWrap mcpCtxDomains[i] rev payload ms err
+    local wrapped = mcpCtxWrap mcpCtxDomains[i] rev payload ms err stale:(mcpCtxRev[i] > rev)
 
     -- Replace the entry for this domain (keep at most one per domain).
     local kept = #()
@@ -879,6 +923,8 @@ fn mcpCtxPayloadFull domain detail =
 (
     local d = toLower (domain as string)
     local t0 = (timeStamp())
+    -- Captured before the build so staleness is measured, not assumed.
+    local revAtStart = mcpCtxRevFor d
     local payload = undefined
     local err = ""
     try (
@@ -886,17 +932,17 @@ fn mcpCtxPayloadFull domain detail =
         -- end of the line, so `else` must not start the next one.
         payload = if d == "selection" then ( mcpCtxBuildSelection detail:"full" limit:200 ) else ( (mcpCtxPayload d)[1] )
     )
-    catch ( err = getCurrentException() as string )
+    catch ( err = mcpErrText (getCurrentException()) )
 
     if payload == undefined do
     (
         mcpCtxLastError = err
-        payload = mcpObj #( #("supported", false), #("valid", false), #("error", "context build failed: " + err) )
+        payload = mcpObj #( #("valid", false), #("error", "context build failed: " + err) )
     )
 
     local ms = (timeStamp()) - t0
     if ms > mcpCtxSlowMs do mcpCtxSlowMs = ms
-    mcpCtxWrap d (mcpCtxRevFor d) payload ms err
+    mcpCtxWrap d revAtStart payload ms err stale:(mcpCtxRevFor d > revAtStart)
 )
 
 fn mcpH_context_refresh params =
@@ -933,17 +979,27 @@ fn mcpH_context_refresh params =
 fn mcpH_context_stats params =
 (
     local stale = #()
-    for i = 1 to mcpCtxDomains.count do
-    (
-        local rev = mcpCtxRev[i]
-        local hit = false
-        for e in mcpCtxCache do ( if e[1] == mcpCtxDomains[i] and e[2] == rev do hit = true )
-        if not hit do append stale mcpCtxDomains[i]
-    )
-
     local revs = #()
     for i = 1 to mcpCtxDomains.count do
     (
+        local entry = mcpCtxCachedEntry mcpCtxDomains[i]
+        local cached = entry != undefined
+        if not cached do append stale mcpCtxDomains[i]
+
+        -- The UI reads this row directly, so it carries the same three-state
+        -- provenance a section does instead of a single "cached" flag: an
+        -- unbuilt domain is not the same thing as an invalid one.
+        local valid = cached
+        local supported = true
+        local updatedAt = ""
+        if cached do
+        (
+            local w = entry[3]
+            valid = mcpToBool (mcpGet w "valid") fallback:cached
+            supported = mcpToBool (mcpGet w "supported") fallback:true
+            try ( updatedAt = (mcpGet w "updatedAt") as string ) catch ( updatedAt = "" )
+        )
+
         local row = #()
         mcpPair row "domain" mcpCtxDomains[i]
         mcpPair row "revision" mcpCtxRev[i]
@@ -951,7 +1007,11 @@ fn mcpH_context_stats params =
         -- one of these values, not a per-domain cache key.
         mcpPair row "changedAt" mcpCtxStamp[i]
         mcpPair row "sentAt" mcpCtxSent[i]
-        mcpPair row "cached" ((findItem stale mcpCtxDomains[i]) == 0)
+        mcpPair row "cached" cached
+        mcpPair row "valid" valid
+        mcpPair row "supported" supported
+        mcpPair row "stale" (not cached)
+        mcpPair row "updatedAt" updatedAt
         append revs (mcpObj row)
     )
 
