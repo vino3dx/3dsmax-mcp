@@ -963,6 +963,12 @@ fn mcpCtxPayloadFull domain detail =
 
 fn mcpH_context_refresh params =
 (
+    -- Measured, not sampled: mcpCtxLastFullScan is published as `lastRefreshMs`,
+    -- so it has to be a duration.  It used to hold a bare timeStamp(), which is
+    -- Max's uptime in ms - the stats page reported 32243072 ms for a refresh
+    -- that took about 150.
+    local t0 = (timeStamp())
+
     local domains = mcpArr params "sections"
     local targets = #()
     if domains.count > 0 then
@@ -983,11 +989,12 @@ fn mcpH_context_refresh params =
         local res = mcpCtxPayload d
         append rebuilt d
     )
-    mcpCtxLastFullScan = (timeStamp())
+    mcpCtxLastFullScan = (timeStamp()) - t0
 
     local p = #()
     mcpPair p "revision" (if mcpEvRevision == undefined then 0 else mcpEvRevision)
     mcpPair p "rebuilt" rebuilt
+    mcpPair p "elapsedMs" mcpCtxLastFullScan
     mcpPair p "message" (mcpMsg "msg.ok")
     mcpObj p
 )

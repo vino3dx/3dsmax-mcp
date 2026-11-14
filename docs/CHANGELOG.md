@@ -100,6 +100,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`context_stats.lastRefreshMs` published Max's uptime instead of a
+  duration.** The refresh handler assigned `mcpCtxLastFullScan = (timeStamp())`,
+  and `timeStamp()` is the number of milliseconds since Max started, so the
+  field that means "how long the last refresh took" reported `32243072` after a
+  refresh that took about 150 ms. It now measures `(timeStamp()) - t0` and the
+  refresh response returns the same number as `elapsedMs`, so a caller can see
+  the cost of its own call without a second round trip. Live after the fix: 2 ms
+  for all nine domains on a four-object scene. Covered by
+  `test/static/context_stats_units_test.py`, which also pins the three-way
+  provenance on the stats rows (`valid` / `stale` / `supported`) so a later
+  refactor cannot collapse them back into one flag.
 - **`bridge_stop` was a one-way door.** `mcpNetStop()` stops the 25 ms pump
   timer, closes the listener and sets `mcpRunning = false`; the pump is the
   only code that ever runs in Max, so once it is gone nothing can bring the
