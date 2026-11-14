@@ -92,6 +92,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`rig_list_bones` could not see a Biped or a CAT rig.** The handler filtered
+  on `(classof o) == BoneGeometry`, but a Biped adds 31 nodes of class
+  `Biped_Object` and no `BoneGeometry` at all, so a fully rigged character
+  returned `count: 0` without an error. Classification is now a shared
+  `mcpBoneKind` that matches the class *name* (a class symbol raises on a build
+  where the plugin is not loaded), rows gained `boneKind`, and the response
+  carries a `kinds` breakdown. Live on 2022: 3 -> 34 bones after adding a Biped
+  (3 bone + 31 biped), back to 3 after deleting it.
+- **`doctor.py` reported every healthy install as "broken autoloader".** It
+  parsed `local bridgeFile = @"..."` while `install.py` writes
+  `mcpLoaderBridgeFile = @"..."`, so the target never matched.
+  `parse_autoloader_target` now matches the shape and prefers a bridge-named
+  variable; `test/static/doctor_loader_test.py` round-trips the installer
+  template through it.
 - **Every call invalidated the scene domain.** `mcpEvDomainsForMethod` seeded
   its list with `#("scene")`, so a pure read such as `context_stats` marked the
   scene domain dirty and bumped the revision a client uses for `since`. Reads

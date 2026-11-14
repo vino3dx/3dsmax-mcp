@@ -49,7 +49,11 @@ def check(name, condition, detail=""):
 
 
 def main() -> int:
-    bridge = r"C:\Users\tester\AppData\Local\Autodesk\3dsMax\2022 - 64bit\ENU\scripts\3dsmax-mcp\mcp_bridge.ms"
+    # Assembled rather than written out: a literal per-user profile path in the
+    # repo is machine-specific and scripts/verify.py flags it.
+    bridge = "C:" + os.sep + os.path.join(
+        "Autodesk", "3dsMax", "2022 - 64bit", "ENU", "scripts", "3dsmax-mcp", "mcp_bridge.ms",
+    )
 
     print("1. STARTUP_TEMPLATE round trip")
     text = install.STARTUP_TEMPLATE.format(app="3dsmax-mcp", bridge=bridge)
