@@ -42,7 +42,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   `src/ms/mcp_ui.ms` is the in-Max panel ("Vino 3dsMax MCP", seven read-only
   pages over a WinForms `TabControl`), opened through `client_ui` or the
-  `Vino3dsMaxMCP` macroScript.
+  `Vino3dsMaxMCP` macroScript. Four of the pages are the ones the client
+  contract names -- Connection, Context, Events, Diagnostics -- and they are
+  counters only. Scene / Selection / Assets are detail views backed by the
+  context cache: Refresh never rebuilds, a separate Rebuild button does, and a
+  detail page that has no current snapshot shows the previous one under an
+  explicit `STALE SNAPSHOT` banner rather than an empty pane.
 
   Six tools join the catalog (384 -> 390): `context_get`, `context_refresh`,
   `context_stats`, `context_events`, `client_ui`, `client_status`, plus the
@@ -87,6 +92,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Every call invalidated the scene domain.** `mcpEvDomainsForMethod` seeded
+  its list with `#("scene")`, so a pure read such as `context_stats` marked the
+  scene domain dirty and bumped the revision a client uses for `since`. Reads
+  now map to no domain at all and `mcpEvAfterWrite` records nothing for them;
+  `execute_maxscript` still marks every domain, because a script can change
+  anything and a conservative rebuild is cheaper than serving stale data.
+- **The panel's Events page printed `undefined` in every cell.** `mcpEventsLog`
+  returns an object (`count/total/revision/events`), not a bare array.
+- **The Diagnostics page listed 18 probe rejections as failures.** A probe this
+  build rejects is the probe working; wanted/notification failures, node
+  callback failures and rejected probes are now reported separately.
+- **`(mcpMaxYear())` in a string concatenation threw.** It returns an integer,
+  so the Diagnostics page died half way through Environment on every refresh.
 - **Exception text was unbounded.** `getCurrentException()` on a missing
   `polyop` member dumps the whole struct — about 6 KB — into the JSON response,
   the panel page and every context section. All four paths now go through

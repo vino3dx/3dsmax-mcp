@@ -9,6 +9,11 @@
    sections, event ledger, self test).  If a number is not available, the page
    says so instead of printing a plausible zero.
 
+   Pages: Connection (bridge), Context (per-domain cache state), Events (ring
+   buffer), Diagnostics (capabilities, registration failures, environment), then
+   Scene / Selection / Assets as detail views.  The first four are counters only;
+   the last three read the context cache and rebuild solely on Rebuild.
+
    Deliberately simple
    -------------------
    One dotNet TabControl with read-only text pages, and MAXScript buttons for
@@ -27,6 +32,7 @@
 
 global mcpUiRollout, mcpUiDialog, mcpUiPages, mcpUiTab, mcpUiCurrent, mcpUiCrlf
 global mcpUiOpen, mcpUiClose, mcpUiRefresh, mcpUiPretty, mcpUiPageText, mcpUiLogPath
+global mcpUiPad, mcpUiRow, mcpUiDomainText, mcpUiCrlf, mcpUiPageNames
 global mcpH_client_ui, mcpH_client_status
 
 if mcpUiPages == undefined do mcpUiPages = #()
@@ -110,10 +116,61 @@ fn mcpUiPretty value indent:0 depth:0 =
     out
 )
 
+/*------------------------------ page helpers*/
+/* One list, two consumers (the tab control and client_status), so a rename can
+   never leave the tool reporting a page the panel does not have. */
+fn mcpUiPageNames =
+(
+    -- The four the client contract names come first; the last three are detail
+    -- views backed by the context cache.
+    #("Connection", "Context", "Events", "Diagnostics", "Scene", "Selection", "Assets")
+)
+fn mcpUiPad s width =
+(
+    local t = s as string
+    while t.count < width do t += " "
+    t
+)
+
+fn mcpUiRow cells widths =
+(
+    local line = ""
+    for i = 1 to cells.count do line += (mcpUiPad cells[i] widths[i])
+    line
+)
+
+/* Detail pages read whatever the context cache already holds.  Only an explicit
+   Rebuild is allowed to walk the scene graph, so refreshing the panel while a
+   large scene is open costs nothing: pages 1-4 are counters only, 5-7 are a
+   cache lookup. */
+fn mcpUiDomainText domain force:false =
+(
+    if force then
+    (
+        local res = mcpCtxPayload domain
+        return (mcpUiPretty res[1])
+    )
+
+    local cur = mcpCtxCachedEntry domain
+    if cur != undefined do return (mcpUiPretty cur[3])
+
+    -- Nothing built for the current revision.  Showing the previous snapshot
+    -- beats an empty page, but only with the staleness stated in the first
+    -- line: silent stale data is the failure mode this module exists to avoid.
+    local old = mcpCtxAnyEntry domain
+    if old == undefined then
+        return ("(never built - press Rebuild)" + "\n")
+    local head = "STALE SNAPSHOT  revision " + (old[2] as string)
+    head += ", current " + ((mcpCtxRevFor domain) as string)
+    head += ", built " + ((mcpGet old[3] "updatedAt") as string) + "\n"
+    head += "(the values below describe that snapshot, not the live scene)" + "\n"
+    head + (mcpUiPretty old[3])
+)
+
 /* One page = one live query.  Any failure becomes text in the page: the panel
    is a diagnostic tool, so it must be able to report a broken bridge instead
    of going blank. */
-fn mcpUiPageText index =
+fn mcpUiPageText index force:false =
 (
     local text = ""
     local t0 = (timeStamp())
@@ -151,68 +208,175 @@ fn mcpUiPageText index =
             )
             2:
             (
-                text += "Scene" + "\n"
+                text += "Context" + "\n"
                 text += "----------------------------------------" + "\n"
-                local res = mcpCtxPayload "scene"
-                text += (mcpUiPretty res[1])
-                text += "\n" + "Objects" + "\n"
-                text += (mcpUiPretty (mcpCtxPayload "objects")[1])
-                text += "\n" + "Project" + "\n"
-                text += (mcpUiPretty (mcpCtxPayload "project")[1])
+                local st = mcpH_context_stats #()
+                text += "revision   : " + ((mcpGet st "revision") as string) + "\n"
+                text += "tickCount  : " + ((mcpGet st "tickCount") as string) + "\n"
+                text += "events     : " + ((mcpGet st "events") as string) + "   running=" + ((mcpGet st "eventsRunning") as string) + "\n"
+                text += "builds     : " + ((mcpGet st "builds") as string) + "   slowest=" + ((mcpGet st "slowestBuildMs") as string) + " ms" + "\n"
+                local le = mcpGet st "lastError"
+                local leText = "-"
+                if le != undefined and le != "" do leText = le as string
+                text += "lastError  : " + leText + "\n"
+                text += "\n"
+                text += (mcpUiRow #("domain", "rev", "valid", "stale", "sup", "ms", "updatedAt") #(11, 5, 7, 7, 6, 5, 0)) + "\n"
+                text += "--------------------------------------------------" + "\n"
+                for d in (mcpGet st "domains") do
+                (
+                    local cells = #()
+                    append cells ((mcpGet d "domain") as string)
+                    append cells ((mcpGet d "revision") as string)
+                    append cells ((mcpGet d "valid") as string)
+                    append cells ((mcpGet d "stale") as string)
+                    append cells ((mcpGet d "supported") as string)
+                    append cells ((mcpGet d "buildMs") as string)
+                    append cells ((mcpGet d "updatedAt") as string)
+                    text += (mcpUiRow cells #(11, 5, 7, 7, 6, 5, 0)) + "\n"
+                )
+                text += "\n" + "stale=true: cached copy is older than the domain revision." + "\n"
             )
             3:
             (
-                text += "Selection" + "\n"
+                text += "Events" + "\n"
                 text += "----------------------------------------" + "\n"
-                text += (mcpUiPretty (mcpCtxBuildSelection detail:"full" limit:20))
+                -- mcpEventsLog returns an object (count/total/revision/events),
+                -- not a bare array; the rows live under "events", newest first.
+                local log = mcpEventsLog limit:40
+                local rows = mcpGet log "events"
+                text += "total recorded : " + ((mcpGet log "total") as string) + "   revision: " + ((mcpGet log "revision") as string) + "\n"
+                text += "\n"
+                text += (mcpUiRow #("seq", "at", "event", "domains", "detail") #(5, 10, 12, 26, 0)) + "\n"
+                text += "------------------------------------------------------------" + "\n"
+                if rows.count == 0 do text += "(no events recorded yet)" + "\n"
+                for r in rows do
+                (
+                    local dom = mcpGet r "domains"
+                    local domText = ""
+                    if isKindOf dom Array do ( for x in dom do domText += (x as string) + " " )
+                    local det = mcpGet r "detail"
+                    local cells = #()
+                    append cells ((mcpGet r "seq") as string)
+                    append cells ((mcpGet r "at") as string)
+                    append cells ((mcpGet r "event") as string)
+                    append cells domText
+                    if det != undefined do append cells (det as string)
+                    text += (mcpUiRow cells #(5, 10, 12, 26, 0)) + "\n"
+                )
             )
             4:
             (
-                text += "Materials" + "\n"
+                text += "Diagnostics" + "\n"
                 text += "----------------------------------------" + "\n"
-                text += (mcpUiPretty (mcpCtxPayload "materials")[1])
-                text += "\n" + "Assets" + "\n"
-                text += (mcpUiPretty (mcpCtxPayload "assets")[1])
-            )
-            5:
-            (
-                text += "Monitor" + "\n"
-                text += "----------------------------------------" + "\n"
-                text += (mcpUiPretty (mcpH_context_stats #()))
-                text += "\n" + "Recent events" + "\n"
-                text += (mcpUiPretty (mcpEventsLog limit:20))
-            )
-            6:
-            (
-                text += "Maintenance" + "\n"
-                text += "----------------------------------------" + "\n"
-                text += "bridge log : " + (mcpUiLogPath()) + "\n"
-                text += "bridge dir : " + (try ((MCP_BRIDGE_DIR as string)) catch ("?")) + "\n"
-                text += "modules    : " + (mcpBridgeModules.count as string) + "\n"
-                text += "handlers   : " + (mcpRegistry.count as string) + "\n"
-                text += "port       : " + (mcpPort as string) + "\n"
-                text += "3ds Max    : " + (mcpMaxYear()) + "\n"
-                text += "\n"
-                text += "Install / repair / uninstall are done from a shell:" + "\n"
+                local caps = mcpEventsCaps()
+                local reg = mcpGet caps "registered"
+                local miss = mcpGet caps "unavailableHere"
+                local probe = mcpGet caps "alsoAvailable"
+                text += "notifications registered : " + (reg.count as string) + "\n"
+                local missText = "none"
+                if miss.count > 0 do missText = mcpStringJoin miss ", "
+                text += "unavailable here         : " + missText + "\n"
+                if probe.count > 0 do text += "probe-only available     : " + (mcpStringJoin probe ", ") + "\n"
+
+                -- Split by intent.  A probe that this build rejects is the
+                -- probe working correctly, not a failure; listing 18 of those
+                -- under "failures" would make a healthy bridge look broken.
+                local wantedFail = #()
+                local rejected = #()
+                for c in mcpEvCaps do
+                (
+                    local kind = c[3]
+                    local ok = c[2]
+                    if (not ok) and kind == "wanted" do append wantedFail c
+                    if (not ok) and kind == "probe" do append rejected c[1]
+                )
+                local rejectedCount = 0
+                for c in mcpEvCaps do ( if (not c[2]) and c[3] == "probe" do rejectedCount += 1 )
+                text += "rejected by this build   : " + (rejectedCount as string) + " (probed, then removed)" + "\n"
+
+                text += "\n" + "Registration failures" + "\n"
+                text += "(a wanted notification that did not register is a real gap)" + "\n"
+                local bad = 0
+                for c in wantedFail do
+                (
+                    bad += 1
+                    text += "  " + (c[1] as string) + ": " + (c[4] as string) + "\n"
+                )
+                for c in mcpEvCaps do
+                (
+                    if (not c[2]) and c[3] == "node" do
+                    (
+                        bad += 1
+                        text += "  " + (c[1] as string) + ": " + (c[4] as string) + "\n"
+                    )
+                )
+                if bad == 0 do text += "  none" + "\n"
+
+                text += "\n" + "Rejected probes (expected on this release)" + "\n"
+                if rejected.count == 0 then
+                (
+                    text += "  none" + "\n"
+                )
+                else
+                (
+                    local line = "  "
+                    for n in rejected do line += (n as string) + " "
+                    text += line + "\n"
+                )
+                text += "\n" + "Environment" + "\n"
+                text += "  log        : " + (mcpUiLogPath()) + "\n"
+                text += "  bridge dir : " + (try ((MCP_BRIDGE_DIR as string)) catch ("?")) + "\n"
+                text += "  modules    : " + (mcpBridgeModules.count as string) + "\n"
+                text += "  handlers   : " + (mcpRegistry.count as string) + "\n"
+                text += "  port       : " + (mcpPort as string) + "\n"
+                text += "  3ds Max    : " + ((mcpMaxYear()) as string) + "\n"
+                text += "\n" + "Install / repair / uninstall are shell commands:" + "\n"
                 text += "  python scripts/install.py --list" + "\n"
                 text += "  python scripts/install.py --client cursor" + "\n"
                 text += "  python scripts/doctor.py" + "\n"
-                text += "\n" + "In-Max self test" + "\n"
+                if force and mcpSelfTest != undefined then
+                (
+                    text += "\n" + "In-Max self test" + "\n"
+                    text += "----------------------------------------" + "\n"
+                    text += (mcpUiPretty (mcpSelfTest()))
+                )
+                else if force then
+                (
+                    text += "\n" + "(self test module not loaded)" + "\n"
+                )
+            )
+            5:
+            (
+                text += "Scene" + "\n"
                 text += "----------------------------------------" + "\n"
-                text += (mcpUiPretty (mcpSelfTest()))
+                text += (mcpUiDomainText "scene" force:force)
+                text += "\n" + "Objects" + "\n" + (mcpUiDomainText "objects" force:force)
+                text += "\n" + "Project" + "\n" + (mcpUiDomainText "project" force:force)
+            )
+            6:
+            (
+                text += "Selection" + "\n"
+                text += "----------------------------------------" + "\n"
+                if force then
+                (
+                    text += (mcpUiPretty (mcpCtxBuildSelection detail:"full" limit:20))
+                )
+                else
+                (
+                    text += (mcpUiDomainText "selection" force:false)
+                )
             )
             7:
             (
-                text += "Recent commands and errors" + "\n"
+                text += "Assets" + "\n"
                 text += "----------------------------------------" + "\n"
-                text += (mcpUiPretty (mcpEventsLog limit:60))
-                text += "\n" + "Log file" + "\n"
-                text += (mcpUiLogPath()) + "\n"
+                text += (mcpUiDomainText "materials" force:force)
+                text += "\n" + "Files" + "\n" + (mcpUiDomainText "assets" force:force)
             )
             default: text += "no page" + "\n"
         )
     )
-    catch ( text += "PAGE ERROR: " + (getCurrentException() as string) + "\n" )
+    catch ( text += "PAGE ERROR: " + (mcpErrText (getCurrentException())) + "\n" )
     text += "\n" + "(" + (((timeStamp()) - t0) as string) + " ms)" + "\n"
     text
 )
@@ -239,13 +403,35 @@ fn mcpUiCrlf s =
     out
 )
 
-fn mcpUiRefresh =
+/* force:false is the contract for the Refresh button: read what the context
+   already holds and never rebuild.  Panels that silently re-scan the scene are
+   how a 25 ms pump turns into a stutter. */
+fn mcpUiRefresh force:false =
 (
     if mcpUiDialog == undefined then return false
+
+    -- Rebuild warms the detail domains before the status pages are rendered,
+    -- so the Context table reports the state the rebuild produced instead of
+    -- the state just before it (where every domain reads stale).
+    local detail = #()
+    if force then
+    (
+        -- Rebuild means every domain, not only the ones with a tab: the
+        -- Context table lists nine of them, and leaving four permanently
+        -- "stale" because no page happens to read them would be a lie about
+        -- the cache.  Measured cost on the 65-object scene: ~80 ms.
+        try ( mcpH_context_refresh #() ) catch()
+        for i = 5 to mcpUiPages.count do append detail (mcpUiPageText i force:true)
+    )
+
     for i = 1 to mcpUiPages.count do
     (
-        try ( mcpUiPages[i].Text = (mcpUiCrlf (mcpUiPageText i)) )
-        catch()
+        local src = 0
+        if force do src = i - 4
+        local txt = undefined
+        if src >= 1 and src <= detail.count do txt = detail[src]
+        if txt == undefined do txt = mcpUiPageText i force:false
+        try ( mcpUiPages[i].Text = (mcpUiCrlf txt) ) catch()
     )
     true
 )
@@ -254,15 +440,16 @@ rollout mcpUiRollout "Vino 3dsMax MCP" width:470 height:560
 (
     dotNetControl tab "System.Windows.Forms.TabControl" pos:[6,6] width:458 height:500
 
-    button btnRefresh "Refresh" pos:[6,512] width:96 height:26
-    button btnCopy "Copy page" pos:[108,512] width:96 height:26
-    button btnLog "Open log" pos:[210,512] width:96 height:26
+    button btnRefresh "Refresh" pos:[6,512] width:86 height:26
+    button btnRebuild "Rebuild" pos:[96,512] width:82 height:26
+    button btnCopy "Copy page" pos:[182,512] width:86 height:26
+    button btnLog "Open log" pos:[272,512] width:90 height:26
     button btnClose "Close" pos:[418,512] width:46 height:26
 
     fn buildPages =
     (
         mcpUiPages = #()
-        local names = #("Connection", "Scene", "Selection", "Assets", "Monitor", "Maintenance", "Log")
+        local names = mcpUiPageNames()
         try ( tab.TabPages.Clear() ) catch()
         for n in names do
         (
@@ -288,10 +475,15 @@ rollout mcpUiRollout "Vino 3dsMax MCP" width:470 height:560
     (
         buildPages()
         mcpUiDialog = true
-        mcpUiRefresh()
+        -- Opening the panel is an explicit user action, so the first fill is
+        -- allowed to build the detail domains once.  Every later Refresh reads
+        -- the cache; Rebuild is the only thing that walks the scene again.
+        mcpUiRefresh force:true
     )
 
-    on btnRefresh pressed do ( mcpUiRefresh() )
+    on btnRefresh pressed do ( mcpUiRefresh force:false )
+
+    on btnRebuild pressed do ( mcpUiRefresh force:true )
 
     on btnCopy pressed do
     (
@@ -324,7 +516,7 @@ fn mcpUiOpen =
     )
     try ( createDialog mcpUiRollout ) catch ( return false )
     mcpUiDialog = true
-    mcpUiRefresh()
+    mcpUiRefresh force:true
     true
 )
 
@@ -342,7 +534,9 @@ fn mcpH_client_ui params =
     local action = toLower (mcpStr params "action" default:"open")
     local opened = true
     if action == "close" then opened = mcpUiClose()
-    else if action == "refresh" then opened = mcpUiRefresh()
+    -- Cache only: a refresh driven from a tool call must never make the
+    -- panel re-walk the scene.  context_refresh is the forcing call.
+    else if action == "refresh" then opened = mcpUiRefresh force:false
     else opened = mcpUiOpen()
 
     local p = #()
@@ -359,6 +553,7 @@ fn mcpH_client_status params =
     local p = #()
     mcpPair p "open" (mcpUiDialog == true)
     mcpPair p "pages" mcpUiPages.count
+    mcpPair p "pageNames" (mcpUiPageNames())
     mcpPair p "eventsRunning" (if mcpEvRunning == undefined then false else mcpEvRunning)
     mcpPair p "revision" (if mcpEvRevision == undefined then 0 else mcpEvRevision)
     mcpPair p "logPath" (mcpUiLogPath())

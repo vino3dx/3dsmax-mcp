@@ -190,7 +190,11 @@ fn mcpEvNodeDeleted ev nodes =
 fn mcpEvDomainsForMethod m =
 (
     local n = toLower (m as string)
-    local domains = #("scene")
+    -- Empty, not #("scene"): seeding scene here made every call -- including
+    -- pure reads such as context_stats -- invalidate the scene domain, so a
+    -- polling client never saw a cache hit and the event log filled with rows
+    -- that claimed a change had happened.
+    local domains = #()
     local p = n
     local cut = findString n "_"
     if cut != undefined and cut > 1 do p = substring n 1 (cut - 1)
@@ -258,7 +262,7 @@ fn mcpEvDomainsForMethod m =
         "render":     ( append domains "render"; append domains "project" )
         "import":     ( append domains "project"; append domains "assets"; append domains "objects"; append domains "materials" )
         "export":     ( append domains "project"; append domains "assets" )
-        "file":       ( append domains "project"; append domains "assets" )
+        "file":       ( append domains "project"; append domains "assets"; append domains "scene" )
         "xref":       ( append domains "project"; append domains "assets" )
         "project":    ( append domains "project" )
         "unit":       ( append domains "scene" )
@@ -276,7 +280,7 @@ fn mcpEvDomainsForMethod m =
         "bridge":     ( )
         "client":     ( )
         "context":    ( )
-        "scene":      ( append domains "project"; append domains "objects"; append domains "selection"
+        "scene":      ( append domains "scene"; append domains "project"; append domains "objects"; append domains "selection"
                         append domains "materials"; append domains "assets"; append domains "animation"
                         append domains "rigging"; append domains "render" )
         default:      ( append domains "objects"; append domains "selection"; append domains "materials" )
@@ -300,6 +304,10 @@ fn mcpEvDomainsForMethod m =
 fn mcpEvAfterWrite method =
 (
     local domains = mcpEvDomainsForMethod method
+    -- A read-only method (context_get, client_status, bridge_status ...) maps
+    -- to no domain at all.  Recording it would claim a change that did not
+    -- happen and bump the revision the client uses for `since`.
+    if domains.count == 0 then return mcpEvRevision
 
     mcpEvRevision += 1
     mcpEvSeq += 1

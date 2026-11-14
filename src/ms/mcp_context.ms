@@ -40,7 +40,7 @@ global mcpCtxDomains, mcpCtxRev, mcpCtxCache, mcpCtxBuilds, mcpCtxTickCount
 global mcpCtxStamp, mcpCtxSent
 global mcpCtxIdentity, mcpCtxLastError, mcpCtxLastFullScan, mcpCtxSlowMs
 global mcpCtxMarkDirty, mcpCtxTick, mcpCtxDomainIndex, mcpCtxRevFor, mcpCtxPayload
-global mcpCtxWrap, mcpCtxPayloadFull, mcpCtxCachedEntry
+global mcpCtxWrap, mcpCtxPayloadFull, mcpCtxCachedEntry, mcpCtxAnyEntry
 global mcpCtxBuildScene, mcpCtxBuildSelection, mcpCtxBuildObjects, mcpCtxBuildMaterials
 global mcpCtxBuildAssets, mcpCtxBuildAnimation, mcpCtxBuildRigging, mcpCtxBuildRender
 global mcpCtxBuildProject, mcpCtxSuperKind, mcpCtxNodeRow, mcpCtxReset
@@ -709,6 +709,22 @@ fn mcpCtxCachedEntry domain =
     found
 )
 
+/* The last thing this domain produced, whatever its revision.  Only the panel
+   uses it, to show an out-of-date snapshot with an explicit STALE banner
+   instead of an empty page: serving it silently would be the bug, labelling it
+   is not. */
+fn mcpCtxAnyEntry domain =
+(
+    local i = mcpCtxDomainIndex domain
+    if i == 0 then return undefined
+    local found = undefined
+    for e in mcpCtxCache do
+    (
+        if e[1] == mcpCtxDomains[i] do found = e
+    )
+    found
+)
+
 /* The provenance block every section carries.  Four fields answer four
    different questions and must never be collapsed into one boolean:
 
@@ -992,12 +1008,14 @@ fn mcpH_context_stats params =
         local valid = cached
         local supported = true
         local updatedAt = ""
+        local buildMs = 0
         if cached do
         (
             local w = entry[3]
             valid = mcpToBool (mcpGet w "valid") fallback:cached
             supported = mcpToBool (mcpGet w "supported") fallback:true
             try ( updatedAt = (mcpGet w "updatedAt") as string ) catch ( updatedAt = "" )
+            try ( buildMs = (mcpGet w "buildMs") as integer ) catch ( buildMs = 0 )
         )
 
         local row = #()
@@ -1012,6 +1030,7 @@ fn mcpH_context_stats params =
         mcpPair row "supported" supported
         mcpPair row "stale" (not cached)
         mcpPair row "updatedAt" updatedAt
+        mcpPair row "buildMs" buildMs
         append revs (mcpObj row)
     )
 
