@@ -33,6 +33,8 @@
 global mcpUiRollout, mcpUiDialog, mcpUiPages, mcpUiTab, mcpUiCurrent, mcpUiCrlf
 global mcpUiOpen, mcpUiClose, mcpUiRefresh, mcpUiPretty, mcpUiPageText, mcpUiLogPath
 global mcpUiPad, mcpUiRow, mcpUiDomainText, mcpUiCrlf, mcpUiPageNames
+global mcpUiBridgeUp, mcpUiBridgeStart, mcpUiBridgeNote
+global mcpRunning, mcpListener, mcpTimer, mcpHost, mcpPort, mcpConns
 global mcpH_client_ui, mcpH_client_status
 
 if mcpUiPages == undefined do mcpUiPages = #()
@@ -205,6 +207,10 @@ fn mcpUiPageText index force:false =
                 )
                 text += "\n" + "Events" + "\n"
                 text += (mcpUiPretty (mcpEventsStatus()))
+                -- The bridge cannot be restarted from outside Max, so point at
+                -- the one control inside Max that can do it.
+                text += "\n" + "If running or timerActive reads false, no client can reach Max." + "\n"
+                text += "Press the Start bridge button below to bring the listener back." + "\n"
             )
             2:
             (
@@ -436,7 +442,68 @@ fn mcpUiRefresh force:false =
     true
 )
 
-rollout mcpUiRollout "Vino 3dsMax MCP" width:470 height:560
+/*------------------------------ bridge recovery
+   The bridge is the only channel a client has into Max, so `bridge_stop` is a
+   one-way door: the command that would restart it has to travel over the
+   socket it just closed, and `bridge_restart` therefore never arrives.  The
+   panel lives inside Max, so it is the one place that can still call
+   mcpNetStart after the listener is gone.
+
+   It only ever starts or restarts.  There is deliberately no Stop here: a
+   panel button that can close the last door, one mis-click wide, is how the
+   door got closed in the first place. */
+
+fn mcpUiBridgeUp =
+(
+    (mcpRunning == true) and (mcpListener != undefined) and (mcpTimer != undefined)
+)
+
+fn mcpUiBridgeNote =
+(
+    -- Both branches are parenthesised blocks on purpose.  A bare `then <expr>`
+    -- followed by `else` on the next line does not parse.
+    if not (mcpUiBridgeUp()) then
+    (
+        "bridge is DOWN - no client can reach Max (press Start bridge)"
+    )
+    else
+    (
+        local note = "listening on " + (mcpHost as string) + ":" + (mcpPort as string)
+        local n = 0
+        if mcpConns != undefined do n = mcpConns.count
+        note += "   clients=" + (n as string)
+        note
+    )
+)
+
+/* Returns the note string plus whether the pump came up.  mcpNetStart throws
+   on a bind failure, and a listener without a pump is just as dead as no
+   listener at all, so both are reported rather than treated as success. */
+fn mcpUiBridgeStart =
+(
+    local res = #(false, "")
+    local p = undefined
+    try ( p = mcpNetStart() )
+    catch
+    (
+        res[2] = "start failed: " + (mcpErrText (getCurrentException()))
+        return res
+    )
+    local timerOk = false
+    if p != undefined do timerOk = mcpToBool (mcpGet p "timer") fallback:false
+    res[1] = timerOk
+    if timerOk then
+    (
+        res[2] = mcpUiBridgeNote()
+    )
+    else
+    (
+        res[2] = "listener is up but the 25 ms pump did not start"
+    )
+    res
+)
+
+rollout mcpUiRollout "Vino 3dsMax MCP" width:470 height:582
 (
     dotNetControl tab "System.Windows.Forms.TabControl" pos:[6,6] width:458 height:500
 
@@ -445,6 +512,9 @@ rollout mcpUiRollout "Vino 3dsMax MCP" width:470 height:560
     button btnCopy "Copy page" pos:[182,512] width:86 height:26
     button btnLog "Open log" pos:[272,512] width:90 height:26
     button btnClose "Close" pos:[418,512] width:46 height:26
+
+    button btnBridge "Start bridge" pos:[6,542] width:120 height:26
+    label lblBridge "" pos:[134,546] width:330 height:20
 
     fn buildPages =
     (
@@ -471,14 +541,41 @@ rollout mcpUiRollout "Vino 3dsMax MCP" width:470 height:560
         )
     )
 
+    fn syncBridge =
+    (
+        if mcpUiBridgeUp() then
+        (
+            btnBridge.text = "Restart bridge"
+        )
+        else
+        (
+            btnBridge.text = "Start bridge"
+        )
+        try ( lblBridge.text = mcpUiBridgeNote() ) catch()
+    )
+
     on mcpUiRollout open do
     (
         buildPages()
         mcpUiDialog = true
+        syncBridge()
         -- Opening the panel is an explicit user action, so the first fill is
         -- allowed to build the detail domains once.  Every later Refresh reads
         -- the cache; Rebuild is the only thing that walks the scene again.
         mcpUiRefresh force:true
+    )
+
+    on btnBridge pressed do
+    (
+        local wasUp = mcpUiBridgeUp()
+        local res = mcpUiBridgeStart()
+        -- A restart invalidates every open client socket, so re-read the pages
+        -- rather than leave Connection showing the state from before the click.
+        syncBridge()
+        local note = res[2]
+        if wasUp then note = "restarted - " + note
+        try ( lblBridge.text = note ) catch()
+        mcpUiRefresh force:false
     )
 
     on btnRefresh pressed do ( mcpUiRefresh force:false )

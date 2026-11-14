@@ -90,8 +90,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   opened) clears the whole cache instead of mixing two sessions. Covered by
   `test/static/context_cache_test.py`.
 
+- **The panel can now start the bridge.** The Connection page gains a
+  Start / Restart button that calls `mcpNetStart()` directly from inside Max,
+  with the live address, client count and up/down state on a label beside it.
+  It only ever starts or restarts — there is deliberately no Stop, because the
+  listener is the only channel a client has into Max. `bridge_restart`'s
+  description now says the same thing instead of implying it can rescue a
+  stopped bridge.
+
 ### Fixed
 
+- **`bridge_stop` was a one-way door.** `mcpNetStop()` stops the 25 ms pump
+  timer, closes the listener and sets `mcpRunning = false`; the pump is the
+  only code that ever runs in Max, so once it is gone nothing can bring the
+  listener back. The `bridge_restart` tool exists and `server.py` even treats
+  its failure as expected, but the command has to travel over the socket that
+  was just closed, so it can never arrive — measured here, every call after a
+  stop returned `protocol_error` indefinitely and recovery required typing
+  `mcpNetStart()` into the MAXScript Listener by hand. The panel button above
+  is the in-product way back. Covered by `test/static/bridge_recovery_test.py`.
+  The client half is covered separately by
+  `test/static/bridge_reconnect_test.py`, which kills and restarts a fake peer
+  on the same port and asserts the *same* `MaxBridge` object works again after
+  exactly one new connection — the earlier attempt to test recovery by stopping
+  the pump measured a one-way door, not a reconnect.
+- **The naming-convention audit could not pass on its own new category.**
+  Phase B's `context_get / context_refresh / context_stats / context_events /
+  client_ui / client_status` were filed under category `context`, which
+  `CATEGORY_DOMAIN_PREFIXES` did not declare, so
+  `test/static/catalog_contract_test.py` reported six A1 violations. The
+  category is now declared with both prefixes; violations 6 -> 0.
 - **`rig_list_bones` could not see a Biped or a CAT rig.** The handler filtered
   on `(classof o) == BoneGeometry`, but a Biped adds 31 nodes of class
   `Biped_Object` and no `BoneGeometry` at all, so a fully rigged character

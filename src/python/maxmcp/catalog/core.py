@@ -42,9 +42,13 @@ TOOLS.append(tool(
 
 TOOLS.append(tool(
     "bridge_restart", "system",
-    "重启桥接（默认沿用当前端口）。当 AI 客户端断连后无法恢复时使用。",
-    "Restart the bridge (keeps the current port by default). Use it when an AI client "
-    "lost the connection and cannot recover.",
+    "重启桥接（默认沿用当前端口）。仅适用于客户端侧断连：这条指令本身要通过桥接送达，"
+    "所以 bridge_stop 之后无法用它恢复——那种情况只能在 3ds Max 面板按 Start bridge，"
+    "或在 MAXScript Listener 里运行 mcpNetStart()。",
+    "Restart the bridge (keeps the current port by default). Only useful for a "
+    "client-side disconnect: the command itself has to travel over the bridge, so it "
+    "cannot recover a bridge that bridge_stop already shut down. For that, press "
+    "Start bridge in the Max panel or run mcpNetStart() in the MAXScript Listener.",
     props={"port": i("要绑定的端口；省略则沿用当前端口。", "Port to bind; omit to keep the current one.")},
     mutating=False,
 ))

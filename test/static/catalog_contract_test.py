@@ -80,6 +80,11 @@ CATALOG_GLOB = os.path.join(REPO, "src", "python", "maxmcp", "catalog", "*.py")
 #: Domain prefixes every category uses for its "noun-first" tool names.
 CATEGORY_DOMAIN_PREFIXES: Dict[str, set] = {
     "animation": {"anim", "rig", "constraint", "ctrl"},
+    # Phase B's client/context plane: context_* is the per-domain scene
+    # snapshot cache, client_* is the in-Max panel that reports on it.  Both
+    # are noun-first and belong to one category because a client reading the
+    # context is exactly what the panel does.
+    "context": {"context", "client"},
     "files": {"file"},
     "modeling": {"poly", "mod"},
     "objects": {"create"},
