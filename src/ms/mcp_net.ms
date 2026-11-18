@@ -22,9 +22,11 @@ global mcpListener, mcpConns, mcpTimer, mcpPort, mcpRunning, mcpHost, mcpPumpBus
 global mcpNetStart, mcpNetStop, mcpNetPump, mcpNetPumpInner, mcpOnTick, mcpNetStatus
 global mcpProcessBuffer, mcpHandleLine, mcpHandleLineInner, mcpDispatch, mcpOkJson, mcpErrJson
 global mcpRunLoop, mcpWritePortHint, mcpWriteStream, mcpBridgeLog, mcpIdJson
--- Defined in mcp_context.ms / mcp_events.ms, which load after this file; the
--- names are declared here so the tick and the dispatcher read real globals.
-global mcpCtxTick, mcpEvAfterWrite
+global mcpDispatchDomains, mcpDispatchNotify
+-- Defined in mcp_context.ms / mcp_events.ms / mcp_domains.ms, which load after
+-- this file; the names are declared here so the tick and the dispatcher read
+-- real globals.
+global mcpCtxTick, mcpEvAfterWrite, mcpToolDomains, mcpEvDomainsForMethod
 
 -- A connection is a plain 3 element array: #(tcpClient, networkStream, buffer)
 /* Reloading a module must not kill a live listener: re-running this file from
@@ -102,6 +104,55 @@ fn mcpErrJson id kind message =
 
 
 /*------------------------------------------------------------------- dispatch*/
+/* The domains a command invalidates come from the declared table in
+   mcp_domains.ms, never from the undo flag.  Those are different questions:
+   `render_set_resolution` changes the scene and is registered undoable:false
+   (there is nothing to hold), while `select_objects` is undoable:true and only
+   moves the selection.  Deriving one from the other is what let 49 writes reach
+   the scene without reaching the ledger.
+
+   undefined means "no declaration".  That is a build error -- the static
+   contract test fails on it -- but a partially installed bridge still has to
+   run, so the legacy prefix heuristic answers instead of the ledger going
+   silent. */
+fn mcpDispatchDomains method =
+(
+    local declared = undefined
+    if mcpToolDomains != undefined do
+    (
+        try ( declared = mcpToolDomains method ) catch ( declared = undefined )
+    )
+    if declared == undefined do
+    (
+        try ( declared = mcpEvDomainsForMethod method ) catch ( declared = #() )
+    )
+    declared
+)
+
+/* Tell the ledger about a successful write.  Called only after the handler
+   returned, and skipped when the handler reported failure in its payload
+   (`ok:false`) instead of throwing -- a failed command must not be recorded as
+   a domain change, or `since` moves forward over a scene that did not move. */
+fn mcpDispatchNotify method domains result =
+(
+    if mcpEvAfterWrite == undefined then return undefined
+    if domains == undefined then return undefined
+    -- Declared as touching nothing (a read, a viewport grab, a file write):
+    -- nothing to record, and no need to inspect the result payload.
+    if domains.count == 0 then return undefined
+
+    local flag = undefined
+    try ( flag = mcpGet result "ok" ) catch ( flag = undefined )
+    if ((classof flag) == BooleanClass) and (flag == false) do
+    (
+        try ( mcpBridgeLog ("net: " + (method as string) + " returned ok:false, ledger not updated") ) catch()
+        return undefined
+    )
+
+    try ( mcpEvAfterWrite method domains:domains ) catch()
+    undefined
+)
+
 fn mcpDispatch method params =
 (
     local entry = mcpFindEntry method
@@ -111,17 +162,20 @@ fn mcpDispatch method params =
     -- per request override of the registered undo behaviour
     local wantUndo = entry[3]
     if (mcpGet params "undo") != undefined do wantUndo = mcpBool params "undo" default:wantUndo
+
+    -- Resolved once, before the handler runs, so a handler that reloads a
+    -- module mid-call cannot change which domains get reported.
+    local domains = mcpDispatchDomains method
+
     if not wantUndo do
     (
         local readOnlyResult = handler params
-        /* execute_maxscript and execute_python are registered non-undoable
+        /* execute_maxscript / execute_python are registered non-undoable
            (arbitrary code, a hold around it would be meaningless), yet they are
-           the main escape hatches and can change anything.  Tell the context
-           ledger, or a client would keep serving a snapshot that no longer
-           matches the scene. */
-        local mname = toLower (method as string)
-        if (mname == "execute_maxscript" or mname == "execute_python") and mcpEvAfterWrite != undefined do
-            ( try ( mcpEvAfterWrite method ) catch() )
+           the main escape hatches and can change anything.  They now report
+           through the same path as everything else: their declaration is the
+           full domain set, so the special case that used to live here is gone. */
+        mcpDispatchNotify method domains readOnlyResult
         return readOnlyResult
     )
 
@@ -143,7 +197,7 @@ fn mcpDispatch method params =
     if failure != undefined do throw failure
     -- One place sees every successful write, so the context revision cannot
     -- drift just because a tool forgot to report itself.
-    if mcpEvAfterWrite != undefined do ( try ( mcpEvAfterWrite method ) catch() )
+    mcpDispatchNotify method domains result
     result
 )
 

@@ -97,6 +97,7 @@ fn mcpBridgeLog msg =
 mcpBridgeModules = #(
     "mcp_json.ms",
     "mcp_core.ms",
+    "mcp_domains.ms",
     "mcp_net.ms",
     "mcp_system.ms",
     "mcp_scene.ms",

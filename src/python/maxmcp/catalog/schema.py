@@ -8,9 +8,10 @@ prompted in either language can still resolve the argument correctly.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from .. import i18n
+from . import domains as _domains
 
 
 @dataclass
@@ -25,6 +26,11 @@ class Tool:
     mutating: bool = True
     #: optional preset merged into the arguments before the call
     preset: Dict[str, Any] = field(default_factory=dict)
+    #: context domains this tool invalidates; ``()`` means "nothing the scene
+    #: snapshot describes".  Declared in :mod:`maxmcp.catalog.domains`, never
+    #: inferred from ``mutating`` or from the bridge's undo flag.  ``None``
+    #: means undeclared, which the contract test treats as a build failure.
+    mutates: Optional[Tuple[str, ...]] = None
 
     @property
     def bridge_method(self) -> str:
@@ -94,12 +100,21 @@ def tool(
     bridge: Optional[str] = None,
     mutating: bool = True,
     preset: Optional[Dict[str, Any]] = None,
+    mutates: Optional[Sequence[str]] = None,
 ) -> Tool:
     properties = props or {}
     schema: Dict[str, Any] = {"type": "object", "properties": properties}
     if required:
         schema["required"] = list(required)
     schema["additionalProperties"] = False
+    if mutates is not None:
+        declared: Optional[Tuple[str, ...]] = tuple(mutates)
+    elif not mutating:
+        # A read-only tool is a declaration in itself: it invalidates nothing.
+        declared = ()
+    else:
+        # None here means "no rule matched" and the contract test fails on it.
+        declared = _domains.domains_for(name)
     return Tool(
         name=name,
         category=category,
@@ -109,6 +124,7 @@ def tool(
         bridge=bridge,
         mutating=mutating,
         preset=preset or {},
+        mutates=declared,
     )
 
 
