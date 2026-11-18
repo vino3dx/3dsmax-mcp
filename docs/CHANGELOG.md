@@ -459,6 +459,128 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   never contain underscores); both constructors and their `mcpEnsureClass`
   guards now use them.
 
+### Fixed
+
+- **`scene.selectionCount` was frozen (F1).** `context_get` publishes
+  `selection.count` from two sections, and both change paths invalidated only
+  one of them: `#selectionSetChanged` mapped to `#("selection")` and
+  `mcpCtxTick`'s identity check appended only `"selection"` when the count
+  moved. The cached `scene` section therefore kept serving the count it had
+  when it was first built while the `selection` section next to it reported
+  the new one — two numbers, one scene. Both paths now mark `scene` and
+  `selection`, the `scene` domain is declared by every tool that moves the
+  object or selection count, and `context_get` replies are merged into the same
+  server-side cache `max://scene/context` reads, so the tool and the resource
+  cannot disagree either.
+
+- **`context_stats` could not tell "never built" from "read failed" (F2).**
+  Both states reported `valid:false, stale:true`, so a domain nobody had asked
+  for looked exactly like one whose collector threw. Every section now carries
+  a `state` word — `fresh` / `partial` / `stale` / `unsupported` / `failed`,
+  ranked with the permanent reason first — plus `complete`; the stats row adds
+  `built` and `state` and defaults to `unbuilt`. The old `valid` / `supported`
+  / `stale` flags are unchanged, so nothing that reads them breaks.
+
+- **Unreadable fields were published as `0` (F3).**
+  `try ( renderStart as integer ) catch ( 0 )` cannot be told apart from a real
+  frame 0, and `exposureControl` did the same with `""` — while the live build
+  answered `"UndefinedClass"` for "no exposure control assigned", which is
+  `classof undefined` and means nothing to a caller. Fields routed through the
+  new `mcpCtxField` helper are either read or `null` **and** named in the
+  section's `unreadable` list; `exposureControl` now reports a class name, `""`
+  for "none assigned" or `null` for "the read failed". Applied to
+  `render.frameStart`, `render.frameEnd`, `render.exposureControl`, `width`,
+  `height`, `pixelAspect`, `timeType` and `frames` — not to every `catch` in
+  the module, which would have been a mechanical change with no evidence
+  behind it.
+
+- **Cross-domain fields were declared by prefix, and some were wrong (F4).**
+  `select_*` moved `scene.selectionCount` while declaring only `selection`;
+  `mat_rename` changed the material name a `selection` row prints without
+  declaring `selection`; `anim_goto_frame` moved `scene.currentFrame` without
+  declaring `scene`; `clone_*`, `group_*`, `model_*` and friends changed
+  `scene.objectCount` the same way. `catalog/domains.py` now records those
+  fields explicitly in `CROSS_DOMAIN_FIELDS` (owner domain + writers +
+  readers) and `test/static/tool_domain_contract_test.py` walks the table, so
+  the next tool added to one of those families cannot silently lose the owner.
+
+- **The revision could move with nothing in the event log (F5).**
+  `mcpCtxTick` bumped `mcpEvRevision` directly instead of going through the
+  event layer, so a client polling `revision` saw it advance with no row to
+  explain it — the one thing an audit trail must not do. The tick now reports
+  through `mcpEvFire` with `domains:` and writes a `tick` row carrying the
+  reason ("selection count changed", "2 object(s) changed shape").
+
+- **Interactive geometry edits were invisible (F6).** Dragging vertices or
+  changing topology in a viewport matches no notification this release
+  delivers, and the O(1) identity check only sees counts. `mcpCtxTick` now
+  fingerprints `getPolygonCount` over one eighth of the object list per tick
+  (8 calls per 200 ms, full pass ≈1.6 s), and `#modPanelObjPostChange` is
+  treated as an `objects` change instead of a selection-only one.
+
+- **`bridge_stop` is no longer an MCP tool (F14).** It stops the 25 ms pump,
+  which is the only thing inside Max that can execute bridge code, so the
+  command that would restart it can never be delivered: one call loses the
+  channel for good, and nothing on the MCP side can undo it. The Max panel's
+  Start button (added for the same reason) only helps a human who is sitting
+  in front of Max. The tool is gone from the catalog (389 tools); the
+  MAXScript command stays registered for the panel and the Listener, and now
+  prints `mcpBridgeStart()` recovery instructions to the Listener, because its
+  JSON reply can never be delivered.
+
+- **`test/static/registration_sync_test.py` finds every installed Max year.**
+  It compared the deployed script tree against `src/ms` using a hardcoded
+  `2020 - 64bit` path, so on a machine with only 2022 installed the comparison
+  silently did nothing — a check that cannot fail. It now discovers
+  `Autodesk/3dsMax/*/{ENU,CHS}/scripts/3dsmax-mcp` and reports drift (which is
+  currently real: the deployed 2022 tree predates this round).
+
+### Changed
+
+- **The context ledger is now driven by a declared write->domain table instead
+  of the undo flag.** `mcpDispatch` used `undoable` as a proxy for "did this
+  change the scene?", which is a different question, and 49 registered commands
+  answered it the dangerous way: they changed the scene while being registered
+  `undoable:false` (`render_set_*`, `render_element_*`, `bake_*`, `poly_select`,
+  `set_units`, `set_time_config`, `export_*`, `viewport_*`, `scene_save_as`,
+  `execute_*`), so nothing reached the ledger and `context_get(since:)` kept
+  serving a snapshot that no longer matched Max. Every catalog tool now declares
+  `mutates` (a tuple of domains, `()` meaning "nothing the nine domains
+  describe") in `src/python/maxmcp/catalog/domains.py`; the dispatcher reads the
+  compiled copy in the new `src/ms/mcp_domains.ms` and reports through
+  `mcpEvAfterWrite method domains:` after a handler returned successfully. The
+  undo flag now only decides whether the call is wrapped in `theHold`.
+
+  Two domain rules were wrong as a result of the same shortcut: a `mat_*` write
+  that attaches a bitmap never invalidated `assets` (so the file list could keep
+  reporting the old count until an unrelated node event fired), and every
+  `render_set_*` call invalidated `project` for nothing while
+  `render_element_*` never named `render` explicitly. Both are now declared
+  per command, and `render_element_*` invalidates `render` alone.
+
+  Read-only commands are a declaration too: a `get_*` / `list_*` /
+  `viewport_stats` call returns an empty domain set and therefore does not move
+  the revision a client feeds back as `since`. A handler that reports failure in
+  its payload (`ok:false`) is not recorded as a write, and the revision is
+  bumped *before* the domain stamp is taken so `changedAt` is strictly newer
+  than the caller's cursor.
+
+  `context_get` sections now carry that stamp: `changedAt` (the global revision
+  at which the domain last moved) is what `since` is compared against, and until
+  now it was only visible through `context_stats`. A client could see a domain
+  come back but had no way to tell whether it was newer than the cursor it sent.
+
+  Five tools were reclassified from read-only to writing because they do change
+  state: `deselect_all` (selection), `undo_last` / `redo_last` (undo buffer; they
+  are registered non-undoable only to avoid wrapping an undo in another undo),
+  `fetch_scene` (restores a held snapshot) and `scene_save` (clears
+  `scene.modified`).
+
+  `src/ms/mcp_domains.ms` is generated by `scripts/gen_tool_domains.py` and must
+  not be edited by hand; `test/static/tool_domain_contract_test.py` fails when it
+  is stale, when a registered command has no declaration, or when a non-read-only
+  tool resolves to nothing.
+
 ## [1.2.0] - 2026-10-18
 
 Vision feedback, a modeling/poly extension round, automatic UI language, and a
