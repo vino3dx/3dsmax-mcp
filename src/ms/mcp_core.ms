@@ -63,11 +63,17 @@ mcpMessages = #(
     #("msg.bake_done",            #("烘焙完成：%",                              "Bake finished: %")),
     #("msg.export_done",          #("导出完成：%",                              "Export finished: %")),
     #("msg.import_done",          #("导入完成：%",                              "Import finished: %")),
+    #("msg.import_updated",       #("导入完成，但没有新增对象（原有同名对象已被更新）：%", "Import finished with no new objects (existing nodes were updated): %")),
     #("msg.saved",                #("已保存：%",                                "Saved: %")),
     #("msg.loaded",               #("已打开：%",                                "Opened: %")),
     #("msg.anim_baked",           #("动画已烘焙：%",                            "Animation baked: %")),
     #("msg.skin_added",           #("已添加蒙皮：%",                            "Skin added: %")),
     #("msg.feature_unsupported",  #("当前 3ds Max 版本（%）不支持该功能。",        "This feature is not supported on 3ds Max %.")),
+    #("err.feature_unsupported",  #("当前 3ds Max 版本不支持该功能：%。",          "This 3ds Max version does not provide: %.")),
+    #("err.bake_no_output",       #("烘焙没有生成任何文件（通道 %，目录 %）。请确认对象有 UV 通道，且所选烘焙元素被当前渲染器支持。",
+                                   "Baking produced no files (route %, folder %). Check that the objects have a UV channel and that the active renderer supports the chosen bake elements.")),
+    #("err.import_dialog",        #("导入 % 时 3ds Max 弹出了交互式对话框，已尝试自动关闭。请改用 import_* 的参数预置方式，或手动关闭对话框。",
+                                   "3ds Max raised an interactive dialog while importing %. It was dismissed automatically; pre-set the importer options or close the dialog manually.")),
     #("msg.focal_physical_only",  #("焦距仅 Physical（物理）相机可读，其他相机类 focalLength 为 null。",
                                    "Focal length is only readable on Physical cameras; for other camera classes focalLength is null."))
 )

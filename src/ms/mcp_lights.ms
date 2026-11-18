@@ -81,8 +81,22 @@ fn mcpH_light_create params =
     "fstorm": ( mcpEnsureClass "FStormLight"; l = FStormLight() )
     "vray": ( mcpEnsureClass "VRayLight"; l = VRayLight() )
     "corona": ( mcpEnsureClass "CoronaLight"; l = CoronaLight() )
-    "area": ( mcpEnsureClass "mr_Area_Omni"; l = mr_Area_Omni() )
-    "sun": ( mcpEnsureClass "Daylight"; l = Daylight() )
+    -- mental ray was removed in 3ds Max 2018, so mr_Area_* no longer exists on
+    -- any release this bridge supports.  Photometric Free_Light / Target_Light
+    -- are the built-in area lights from 2018 on; the mr_* branch is kept only
+    -- so an ancient installation still resolves.
+    "area": (
+        if (mcpClassExists "Free_Light") then ( l = Free_Light() )
+        else ( mcpEnsureClass "mr_Area_Omni"; l = mr_Area_Omni() )
+    )
+    -- Sunlight and Daylight are both *System* objects: MAXScript refuses to
+    -- create them ("Cannot create System objects").  SunPositioner is the
+    -- creatable physical sun on 2022+; fall back to a directional light.
+    "sun": (
+        if (mcpClassExists "SunPositioner") then ( l = SunPositioner() )
+        else if (mcpClassExists "Sunlight") then ( l = Sunlight() )
+        else ( mcpEnsureClass "Directionallight"; l = Directionallight() )
+    )
     default: ( mcpFail "err.bad_value" a1:("type=" + typeStr) )
   )
   if l == undefined do mcpFail "err.bad_value" a1:("type=" + typeStr)

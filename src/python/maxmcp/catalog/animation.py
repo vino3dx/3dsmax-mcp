@@ -662,10 +662,12 @@ TOOLS.append(tool(
     "Add a bone to the object's Skin modifier (with an optional rigid / weighted mode).",
     props={
         "objects": arr("带 Skin 的对象名列表；省略则用当前选择。", "Skinned objects; omit for the current selection."),
-        "bone": s("要加入的骨骼名。", "Bone name to add."),
+        "bone": s("要加入的单个骨骼名。", "Single bone name to add."),
+        "bones": arr("要加入的骨骼名列表（与 bone 二选一）。", "Bone names to add (alternative to bone)."),
         "rigid": b("true=刚性蒙皮（每顶点单一骨骼）。", "true=rigid skinning (one bone per vertex)."),
     },
-    required=["bone"],
+    # bone / bones: the handler requires at least one of them
+
 ))
 
 TOOLS.append(tool(
