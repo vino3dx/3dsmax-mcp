@@ -525,10 +525,12 @@ class MaxMcpServer:
             else:
                 result = self.bridge.call(entry.bridge_method, payload)
         except BridgeError as exc:
-            if entry.name in ("bridge_restart", "bridge_stop"):
-                # These two commands tear down the very socket the reply would
-                # travel on, so the failure is the expected outcome, not an
-                # error. Report it as success and drop the stale connection.
+            if entry.name == "bridge_restart":
+                # Rebinding the listener drops every open socket, including the
+                # one this reply would travel on, so a failure here is the
+                # expected outcome rather than an error. Report it as success
+                # and drop the stale connection; the next call reconnects.
+                # (`bridge_stop` is not a tool at all -- see catalog/core.py.)
                 self.bridge.close()
                 result = {
                     "ok": True,

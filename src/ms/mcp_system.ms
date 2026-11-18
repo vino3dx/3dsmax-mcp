@@ -46,11 +46,22 @@ fn mcpH_bridge_ping params =
     mcpObj p
 )
 
+/* Not exposed as an MCP tool any more (see catalog/core.py): the socket the
+   reply would travel on is the one this closes, so an AI client that calls it
+   loses the channel for good.  It stays registered for the panel and for the
+   Listener, and it prints the recovery line to the Listener, because the
+   response body itself can never be delivered. */
 fn mcpH_bridge_stop params =
 (
     mcpNetStop()
+    try
+    (
+        format "3ds Max MCP: bridge stopped. Recover with mcpBridgeStart() in this Listener,\nor press \"Start bridge\" in the Vino 3dsMax MCP panel.\n"
+    )
+    catch()
     local p = #()
     mcpPair p "running" false
+    mcpPair p "recovery" "mcpBridgeStart() in the MAXScript Listener, or Start bridge in the Max panel"
     mcpPair p "message" (mcpMsg "msg.bridge_stopped")
     mcpObj p
 )

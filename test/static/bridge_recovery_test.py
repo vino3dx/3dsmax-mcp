@@ -25,7 +25,10 @@ Checks:
   5. both `if` branches in the new helpers are parenthesised blocks (the
      `then <expr>` / newline / `else` form does not parse);
   6. the catalog says how to recover, and no longer claims bridge_restart can
-     rescue a stopped bridge.
+     rescue a stopped bridge;
+  7. `bridge_stop` is not an MCP tool at all (Phase B F14). The panel button
+     covers a human in Max; it does not cover an AI client that would close the
+     door and then have no way to reopen it, which is what the tool allowed.
 
 Usage:  python test/static/bridge_recovery_test.py
 Exit code 0 when everything matches, 1 otherwise.
@@ -113,16 +116,28 @@ def main() -> int:
               "found {0!r}".format(bare.group(0) if bare else ""))
 
     print("6. catalog tells the truth about recovery")
-    check("bridge_stop and bridge_restart both exist",
-          '"bridge_stop", "system"' in catalog and '"bridge_restart", "system"' in catalog)
+    check("bridge_restart exists as a tool", '"bridge_restart", "system"' in catalog)
     restart = catalog[catalog.find('"bridge_restart", "system"'):]
     restart = restart[:restart.find("mutating=False")]
     check("bridge_restart mentions the in-Max recovery path", "mcpNetStart()" in restart)
     check("bridge_restart does not promise recovery after stop",
           "当 AI 客户端断连后无法恢复时使用" not in restart)
-    stop = catalog[catalog.find('"bridge_stop", "system"'):]
-    stop = stop[:stop.find("mutating=False")]
-    check("bridge_stop warns that MCP tools will fail", "mcpBridgeStart()" in stop)
+
+    print("7. bridge_stop is not reachable from an AI client")
+    # Phase B F14: the panel kept its Start button, but the MCP tool surface
+    # still offered bridge_stop -- so one tool call could still close the last
+    # door with nobody in Max to reopen it. The tool is gone; the command stays.
+    check("bridge_stop is not a catalog tool", '"bridge_stop", "system"' not in catalog,
+          "an AI client must not be able to stop the only channel it has")
+    check("the removal is documented in the catalog", "bridge_stop" in catalog)
+    system_ms = open(os.path.join(REPO, "src", "ms", "mcp_system.ms"), encoding="utf-8").read()
+    check("the MAXScript command still exists for the panel / Listener",
+          'mcpRegister "bridge_stop"' in system_ms)
+    stop_body = function_body(system_ms, "mcpH_bridge_stop")
+    check("stopping prints the recovery line where a human can see it",
+          "mcpBridgeStart()" in stop_body,
+          "the JSON reply cannot be delivered once the pump is gone")
+    check("stopping reports how to recover", '"recovery"' in stop_body)
 
     print()
     if FAILURES:
