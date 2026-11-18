@@ -173,7 +173,9 @@ TOOLS.append(tool(
     "撤销最近一次（或最近 N 次）操作，等价于在 Max 中按 Ctrl+Z。",
     "Undo the last operation (or the last N), equivalent to pressing Ctrl+Z in Max.",
     props={"steps": i("撤销步数，默认 1。", "Number of steps, default 1.", minimum=1, maximum=50)},
-    mutating=False,
+    # Undo mutates the scene; it is registered non-undoable inside Max only to
+    # keep the bridge from wrapping an undo in another undo.
+    mutating=True,
 ))
 
 TOOLS.append(tool(
@@ -181,7 +183,7 @@ TOOLS.append(tool(
     "重做最近一次（或最近 N 次）被撤销的操作。",
     "Redo the last undone operation (or the last N).",
     props={"steps": i("重做步数，默认 1。", "Number of steps, default 1.", minimum=1, maximum=50)},
-    mutating=False,
+    mutating=True,
 ))
 
 TOOLS.append(tool(
@@ -221,7 +223,8 @@ TOOLS.append(tool(
     "fetch_scene", "system",
     "把场景还原到最近一次 hold_scene 的状态。**会丢弃此后的全部改动。**",
     "Restore the scene to the last hold_scene. **Everything done since is discarded.**",
-    mutating=False,
+    # fetchMaxFile() replaces the scene contents, so every domain is stale.
+    mutating=True,
 ))
 
 TOOLS.append(tool(
@@ -327,7 +330,8 @@ TOOLS.append(tool(
     "scene_save", "scene",
     "保存当前场景。若从未保存过则等同于另存为。",
     "Save the current scene. If it has never been saved this behaves like save-as.",
-    mutating=False,
+    # clearNeedSaveFlag:true flips scene.modified, which the scene domain reports.
+    mutating=True,
 ))
 
 TOOLS.append(tool(
