@@ -48,6 +48,8 @@ global mcpEvRendering, mcpEvRenderStart, mcpEvLastRender
 -- Shared with mcp_json.ms: every error string that reaches the wire or the log
 -- is flattened and capped there, never raw from getCurrentException().
 global mcpErrText
+-- Owned by mcp_domains.ms (generated): the names a declared domain may use.
+global mcpDomainNames
 -- Owned by mcp_context.ms; declared here so the guard below is a real global
 -- read on every release instead of an implicit one.
 global mcpCtxMarkDirty
@@ -87,8 +89,11 @@ fn mcpEvDomainsFor kind =
     local k = toLower (kind as string)
     case k of
     (
-        "selectionsetchanged": #("selection")
-        "selectionchanged":    #("selection")
+        -- `scene` travels with every selection change: mcpCtxBuildScene publishes
+        -- selectionCount, so marking only `selection` left scene.selectionCount
+        -- frozen at its first value while selection.count moved (Phase B F1).
+        "selectionsetchanged": #("scene", "selection")
+        "selectionchanged":    #("scene", "selection")
         "noderenamed":         #("scene", "objects", "selection")
         "nodeadded":           #("scene", "objects")
         "nodedeleted":         #("scene", "objects", "selection", "assets")
@@ -112,14 +117,25 @@ fn mcpEvDomainsFor kind =
         "postrenderframe":     #("render")
         "sceneundo":           #("scene", "objects", "selection", "materials", "assets", "animation", "rigging")
         "sceneredo":           #("scene", "objects", "selection", "materials", "assets", "animation", "rigging")
-        "modpanelobjpostchange": #("selection")
+        -- Posted while the Modify panel edits an object: a spinner drag or a
+        -- sub-object edit changes the geometry, which the objects domain
+        -- reports (faces / verts / totals).  This is the only notification this
+        -- release offers for those edits (Phase B F6).
+        "modpanelobjpostchange": #("objects", "selection")
         default:               #("scene")
     )
 )
 
 /* Every change ends up here.  O(1): bump the counter, append one log row,
-   tell the context cache which domains went stale.  Nothing scans the scene. */
-fn mcpEvFire kind detail:"" =
+   tell the context cache which domains went stale.  Nothing scans the scene.
+
+   `domains:` overrides the kind -> domains table.  The tick (mcpCtxTick) needs
+   it: it detects a change that has no notification at all, so there is no kind
+   to look up, yet the revision it moves must still be explainable in the log.
+   Before this, the tick bumped mcpEvRevision directly and the event log had no
+   row for the revision it produced, so a client that polled `revision` saw the
+   number move with nothing to attribute it to (Phase B F5). */
+fn mcpEvFire kind detail:"" domains:undefined =
 (
     mcpEvRevision += 1
     mcpEvSeq += 1
@@ -132,13 +148,14 @@ fn mcpEvFire kind detail:"" =
         mcpEvLastRender = (timeStamp()) - mcpEvRenderStart
     )
 
-    local domains = mcpEvDomainsFor kind
+    local dlist = domains
+    if dlist == undefined do dlist = mcpEvDomainsFor kind
     local row = #()
     mcpPair row "seq" mcpEvSeq
     mcpPair row "revision" mcpEvRevision
     mcpPair row "at" (if mcpEvClock == "" then (mcpEvClockUpdate()) else mcpEvClock)
     mcpPair row "event" (kind as string)
-    mcpPair row "domains" domains
+    mcpPair row "domains" dlist
     if detail != "" do mcpPair row "detail" (mcpErrText detail maxLen:200)
     append mcpEvLog (mcpObj row)
 
@@ -158,7 +175,7 @@ fn mcpEvFire kind detail:"" =
     (
         -- Wrapped: an exception escaping a callback is invisible to the bridge
         -- and would silently disable every later event.
-        try ( mcpCtxMarkDirty domains ) catch()
+        try ( mcpCtxMarkDirty dlist ) catch()
     )
     mcpEvRevision
 )
@@ -186,7 +203,13 @@ fn mcpEvNodeDeleted ev nodes =
    unconditional: it holds objectCount/selectionCount/currentFrame/modified and
    costs 0-1 ms to rebuild.
    `execute_maxscript` and any unknown prefix keep the broad, conservative set
-   because an arbitrary script really can touch anything. */
+   because an arbitrary script really can touch anything.
+
+   This table is a *fallback*: mcp_domains.ms is authoritative and answers for
+   every registered command.  The rows that are known to be approximations are
+   still corrected here (select / deselect carry `scene` because the scene
+   section publishes selectionCount), so a bridge running on a stale table does
+   not reintroduce a bug that was already fixed. */
 fn mcpEvDomainsForMethod m =
 (
     local n = toLower (m as string)
@@ -201,8 +224,8 @@ fn mcpEvDomainsForMethod m =
 
     case p of
     (
-        "select":     ( append domains "selection" )
-        "deselect":   ( append domains "selection" )
+        "select":     ( append domains "scene"; append domains "selection" )
+        "deselect":   ( append domains "scene"; append domains "selection" )
         "obj":        ( append domains "objects"; append domains "selection" )
         "create":     ( append domains "objects"; append domains "selection" )
         "clone":      ( append domains "objects"; append domains "selection" )
@@ -240,7 +263,7 @@ fn mcpEvDomainsForMethod m =
         "unhide":     ( append domains "objects"; append domains "selection" )
         "freeze":     ( append domains "objects"; append domains "selection" )
         "unfreeze":   ( append domains "objects"; append domains "selection" )
-        "mat":        ( append domains "materials" )
+        "mat":        ( append domains "materials"; append domains "assets" )
         "map":        ( append domains "materials"; append domains "assets" )
         "tex":        ( append domains "materials"; append domains "assets" )
         "bake":       ( append domains "materials"; append domains "assets" )
@@ -298,16 +321,45 @@ fn mcpEvDomainsForMethod m =
     uniq
 )
 
-/* Called by mcpDispatch after a mutating command succeeded.  The Max side has
-   no notification for "a script changed something", and every MCP write goes
-   through the dispatcher, so this is the one place that sees them all. */
-fn mcpEvAfterWrite method =
+/* Called by mcpDispatch after a command succeeded.  Pass `domains:` with the
+   declared set from mcp_domains.ms; when the argument is omitted the legacy
+   prefix heuristic answers, which is only correct for commands that predate the
+   declaration table (and those all have a row by now -- the contract test
+   enforces it).
+
+   Two things this must never do: bump the revision for a command that changed
+   nothing (`domains` empty), and claim a domain that the table did not name. */
+fn mcpEvAfterWrite method domains:undefined =
 (
-    local domains = mcpEvDomainsForMethod method
-    -- A read-only method (context_get, client_status, bridge_status ...) maps
-    -- to no domain at all.  Recording it would claim a change that did not
-    -- happen and bump the revision the client uses for `since`.
-    if domains.count == 0 then return mcpEvRevision
+    local declared = (domains != undefined)
+    local wanted = domains
+    if wanted == undefined do wanted = mcpEvDomainsForMethod method
+
+    -- De-duplicate and drop names this build does not know: a typo in the table
+    -- would otherwise mark nothing and look like a successful write.
+    local list = #()
+    for d in wanted do
+    (
+        local name = ""
+        try ( name = toLower (d as string) ) catch ( name = "" )
+        if name != "" do
+        (
+            local known = true
+            if mcpDomainNames != undefined do
+            (
+                known = false
+                for k in mcpDomainNames do ( if k == name do known = true )
+            )
+            local dup = false
+            for u in list while not dup do ( if u == name do dup = true )
+            if known and (not dup) do append list name
+        )
+    )
+
+    -- A read-only command maps to no domain at all.  Recording it would claim a
+    -- change that did not happen and bump the revision the client uses for
+    -- `since`.
+    if list.count == 0 then return mcpEvRevision
 
     mcpEvRevision += 1
     mcpEvSeq += 1
@@ -316,7 +368,8 @@ fn mcpEvAfterWrite method =
     mcpPair row "revision" mcpEvRevision
     mcpPair row "at" (if mcpEvClock == "" then (mcpEvClockUpdate()) else mcpEvClock)
     mcpPair row "event" "tool"
-    mcpPair row "domains" domains
+    mcpPair row "domains" list
+    mcpPair row "source" (if declared then "declared" else "heuristic")
     mcpPair row "detail" (mcpErrText method maxLen:120)
     append mcpEvLog (mcpObj row)
     if mcpEvLog.count > mcpEvLogCap do
@@ -326,7 +379,7 @@ fn mcpEvAfterWrite method =
         for i = first to mcpEvLog.count do append keep mcpEvLog[i]
         mcpEvLog = keep
     )
-    if mcpCtxMarkDirty != undefined do ( try ( mcpCtxMarkDirty domains ) catch() )
+    if mcpCtxMarkDirty != undefined do ( try ( mcpCtxMarkDirty list ) catch() )
     mcpEvRevision
 )
 

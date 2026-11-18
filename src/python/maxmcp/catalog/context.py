@@ -7,13 +7,18 @@ consistent snapshot plus the revision it was taken at.
 
 Design notes that matter to a caller:
 
-* every section carries `revision`, `updatedAt`, `source`, `valid`,
-  `supported` and `stale` plus, on failure, `error` -- never a fabricated zero.
+* every section carries `revision`, `changedAt`, `updatedAt`, `source`,
+  `valid`, `supported`, `stale`, `state` and `complete` plus, on failure,
+  `error` -- never a fabricated zero.  `revision` is the per-domain cache key,
+  `changedAt` is the global revision the domain last moved at;
   The three flags answer different questions: `valid` = this read worked,
   `supported` = this Max build has the API, `stale` = the payload predates the
-  domain's latest change;
-* `since` is the incremental switch: sections whose revision did not move are
-  listed under `unchanged` and are not sent at all;
+  domain's latest change.  `state` folds them into one word a caller can branch
+  on -- `failed` / `unsupported` / `stale` / `partial` / `fresh`;
+* a field this build cannot read is `null` and named in `unreadable`, never a
+  plausible 0 or "".  `complete` is false when the list is non-empty;
+* `since` is the incremental switch: a section is listed under `unchanged`
+  and not sent when its `changedAt` is not newer than `since`;
 * `client_*` drives the in-Max panel ("Vino 3dsMax MCP"), so an agent can open
   it when a user needs to see the same numbers.
 """
@@ -28,20 +33,30 @@ TOOLS = [
         """
         读取场景上下文快照。一次调用返回多个“域”的摘要（scene / selection / objects /
         materials / assets / animation / rigging / render / project），每个域带 revision、
-        采集时间、来源和有效性；失败时带 error，不会用 0 冒充真实值。
+        changedAt（该域最后一次变化时的全局 revision）、采集时间、来源和有效性；
+        失败时带 error，不会用 0 冒充真实值。
+
+        每个域还带 state（fresh / partial / stale / unsupported / failed）和 complete；
+        本机读不到的字段返回 null 并列在 unreadable 里，不会伪装成 0 或空字符串。
 
         用 since=<上次的 revision> 只取变化的域（未变化的列在 unchanged 里，不返回内容）。
         detail:"full" 会让 selection 返回更完整的对象记录（包围盒、修改器列表等）。
+        与 max://scene/context 资源读取的是同一份缓存，两边结果一致。
         """,
         """
         Read a scene-context snapshot. One call returns several domains (scene / selection /
         objects / materials / assets / animation / rigging / render / project); every domain
-        carries its revision, build time, source and validity, and reports `error` instead of
-        inventing zeros.
+        carries its revision, changedAt (the global revision it last moved at), build time,
+        source and validity, and reports `error` instead of inventing zeros.
+
+        Each section also carries `state` (fresh / partial / stale / unsupported / failed) and
+        `complete`; a field this build cannot read comes back as null and is listed in
+        `unreadable`, never as a plausible 0 or "".
 
         Pass since=<revision from the previous call> to receive only the domains that changed;
         unchanged ones are listed and not sent. detail:"full" widens the selection records
-        (bounding box, modifier list, ...).
+        (BBox, modifier list, ...). Reads the same cache as the max://scene/context resource,
+        so the two always agree.
         """,
         props={
             "sections": arr(
@@ -74,11 +89,17 @@ TOOLS = [
         """
         查看上下文系统自身的状态：全局 revision、各域 revision、哪些域已过期、缓存条目数、
         构建次数、最慢构建耗时、最近错误，以及事件回调的可用性（本机实测结果，不是按版本猜的）。
+
+        每个域还带 built 与 state：未构建（unbuilt）和读取失败（failed）不是一回事，
+        不支持（unsupported）又与前两者都不同。
         """,
         """
         Inspect the context system itself: global revision, per-domain revisions, which domains
         are stale, cache entries, build count, slowest build, last error, and which event
         callbacks this build actually offers (measured, not assumed from a version number).
+
+        Each row also carries `built` and `state`: never built (unbuilt) is not the same as a
+        failed read (failed), and neither is the same as an API this build lacks (unsupported).
         """,
         mutating=False,
     ),

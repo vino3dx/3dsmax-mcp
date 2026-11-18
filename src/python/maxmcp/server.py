@@ -704,6 +704,29 @@ class MaxMcpServer:
             self.bridge.close()
             # A restarted bridge may come back in a different Max language.
             self._language_synced = False
+        elif entry.name == "context_get":
+            self._merge_context_reply(result)
+
+    def _merge_context_reply(self, payload: Any) -> None:
+        """Fold a `context_get` tool reply into the snapshot the resource serves.
+
+        The tool and `max://scene/context` used to be two independent views: the
+        tool went straight to the bridge, the resource read from this cache, and
+        the cache was only ever written by a resource read.  So a client could
+        call the tool, see the new selection, then read the resource and get the
+        previous one -- two answers to the same question (Phase B F1).
+
+        A `detail:"full"` reply is skipped on purpose: it carries a 200-row
+        selection dump and the brief snapshot should not keep it.
+        """
+        if not isinstance(payload, dict):
+            return
+        if payload.get("detail") == "full":
+            return
+        try:
+            self.context_cache.merge(payload)
+        except Exception as exc:  # pragma: no cover - defensive
+            self.transport.log("context cache merge failed: {0}".format(exc))
 
 
 # Argument spellings that mean the same thing across the catalog. Tool schemas

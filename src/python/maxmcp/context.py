@@ -21,8 +21,9 @@ to start inventing data:
   or a different scene was opened. The whole cache is dropped rather than
   serving a mixture of two sessions.
 * Every section keeps the provenance the bridge attached to it (domain,
-  revision, updatedAt, source, valid, supported, stale, buildMs). The cache
-  adds `fetchedAt` and `ageMs` only -- it never rewrites the bridge's numbers.
+  revision, changedAt, updatedAt, source, valid, supported, stale, buildMs).
+  The cache adds `fetchedAt` and `ageMs` only -- it never rewrites the bridge's
+  numbers.
 """
 
 from __future__ import annotations

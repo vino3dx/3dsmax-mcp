@@ -47,6 +47,10 @@ global mcpCtxBuildProject, mcpCtxSuperKind, mcpCtxNodeRow, mcpCtxReset
 global mcpH_context_get, mcpH_context_refresh, mcpH_context_stats, mcpH_context_events
 global mcpContextGet, mcpContextRefresh, mcpContextStats, mcpContextSections
 global mcpErrText, mcpToBool
+global mcpCtxGeomFP, mcpCtxGeomCursor, mcpCtxGeomChanged, mcpCtxState
+-- Owned by mcp_events.ms: the tick reports through it so every revision bump
+-- has a log row (Phase B F5).
+global mcpEvFire
 
 if mcpCtxDomains == undefined do mcpCtxDomains = #(
     "scene", "selection", "objects", "materials", "assets",
@@ -66,6 +70,10 @@ if mcpCtxIdentity == undefined do mcpCtxIdentity = #(-1, -1, "")
 if mcpCtxLastError == undefined do mcpCtxLastError = ""
 if mcpCtxLastFullScan == undefined do mcpCtxLastFullScan = 0
 if mcpCtxSlowMs == undefined do mcpCtxSlowMs = 0
+/* Geometry fingerprint, see mcpCtxGeomChanged: one row per object, #(handle,
+   faces, verts).  `mcpCtxGeomCursor` walks the object list a slice at a time. */
+if mcpCtxGeomFP == undefined do mcpCtxGeomFP = #()
+if mcpCtxGeomCursor == undefined do mcpCtxGeomCursor = 0
 
 
 /*---------------------------------------------------------------- revision API*/
@@ -580,20 +588,54 @@ fn mcpCtxBuildRigging =
 fn mcpCtxBuildRender =
 (
     local p = #()
+    -- Field-level provenance, see mcpCtxField: a value this build cannot read
+    -- is published as null and named here, never as a plausible-looking 0.
+    local unreadable = #()
     mcpPair p "renderer" (mcpCurrentRendererName())
-    mcpPair p "width" (try ( renderWidth as integer ) catch ( 0 ))
-    mcpPair p "height" (try ( renderHeight as integer ) catch ( 0 ))
-    mcpPair p "pixelAspect" (try ( renderPixelAspect as float ) catch ( 1.0 ))
+
+    local v = 0
+    local ok = true
+    try ( v = renderWidth as integer ) catch ( ok = false )
+    mcpCtxField p unreadable "width" ok v
+
+    v = 0
+    ok = true
+    try ( v = renderHeight as integer ) catch ( ok = false )
+    mcpCtxField p unreadable "height" ok v
+
+    local fa = 1.0
+    ok = true
+    try ( fa = renderPixelAspect as float ) catch ( ok = false )
+    mcpCtxField p unreadable "pixelAspect" ok fa
+
     mcpPair p "outputPath" (try ( rendOutputFilename ) catch ( "" ))
     -- rendSaveFile already returns a Boolean; `as boolean` on it raises.
     mcpPair p "saveFile" (mcpToBool (try ( rendSaveFile ) catch ( undefined )) fallback:false)
-    mcpPair p "timeType" (try ( rendTimeType as integer ) catch ( 0 ))
-    mcpPair p "frameStart" (try ( renderStart as integer ) catch ( 0 ))
-    mcpPair p "frameEnd" (try ( renderEnd as integer ) catch ( 0 ))
-    mcpPair p "frames" (try ( rendPickupFrames as string ) catch ( "" ))
+
+    local tt = 0
+    ok = true
+    try ( tt = rendTimeType as integer ) catch ( ok = false )
+    mcpCtxField p unreadable "timeType" ok tt
+
+    -- renderStart / renderEnd are the *render output* range, not
+    -- animationRange: a scene with 0/100 keyframes can render frame 0..0.
+    local fs = 0
+    ok = true
+    try ( fs = renderStart as integer ) catch ( ok = false )
+    mcpCtxField p unreadable "frameStart" ok fs
+
+    local fe = 0
+    ok = true
+    try ( fe = renderEnd as integer ) catch ( ok = false )
+    mcpCtxField p unreadable "frameEnd" ok fe
+
+    local fr = ""
+    ok = true
+    try ( fr = rendPickupFrames as string ) catch ( ok = false )
+    mcpCtxField p unreadable "frames" ok fr
 
     local elements = 0
-    local ok = true
+    local okEl = true
     -- MAXScript cannot call a method on a call result
     -- (`maxOps.GetCurRenderElementMgr().NumRenderElements()` is a syntax
     -- error), so the manager is bound first.
@@ -602,14 +644,25 @@ fn mcpCtxBuildRender =
     if mgr != undefined do
     (
         try ( elements = mgr.NumRenderElements() )
-        catch ( ok = false )
+        catch ( okEl = false )
     )
     mcpPair p "renderElementCount" elements
-    mcpPair p "renderElementsSupported" ok
+    mcpPair p "renderElementsSupported" okEl
 
+    -- Three different facts used to collapse into one string: "an exposure
+    -- control is assigned" (a class name), "none is assigned" (the deployed
+    -- build published the literal "UndefinedClass", which is what `classof`
+    -- answers for undefined) and "the read failed" (also "").  Now: class name,
+    -- "" = none assigned, null + `unreadable` = the read failed.
     local expo = ""
-    try ( expo = (classof SceneExposureControl.exposureControl) as string ) catch ( expo = "" )
-    mcpPair p "exposureControl" expo
+    ok = true
+    try
+    (
+        local ec = SceneExposureControl.exposureControl
+        if ec != undefined do expo = (classof ec) as string
+    )
+    catch ( ok = false )
+    mcpCtxField p unreadable "exposureControl" ok expo
 
     -- Bracket state from #preRender / #postRender.  No progress percentage is
     -- reported because this release has no notification for it; saying "no
@@ -617,6 +670,7 @@ fn mcpCtxBuildRender =
     mcpPair p "rendering" (if mcpEvRendering == undefined then false else mcpEvRendering)
     mcpPair p "lastRenderMs" (if mcpEvLastRender == undefined then 0 else mcpEvLastRender)
     mcpPair p "progressAvailable" false
+    mcpPair p "unreadable" unreadable
     mcpObj p
 )
 
@@ -725,6 +779,47 @@ fn mcpCtxAnyEntry domain =
     found
 )
 
+/*------------------------------------------------ specific field provenance*/
+/* Pairs one field with its value, or with null plus an entry in `unreadable`.
+
+   Why this exists (Phase B F3): `try ( renderStart as integer ) catch ( 0 )`
+   publishes 0 when the read failed, and 0 is a *plausible* value for a frame
+   number, so the caller cannot tell "frame 0" from "this build would not tell
+   me".  Every field routed through here either has a real value or is null and
+   named in the section's `unreadable` list. */
+fn mcpCtxField p unreadable key ok value =
+(
+    if ok then ( mcpPair p key value )
+    else
+    (
+        append unreadable key
+        mcpPair p key undefined
+    )
+    p
+)
+
+/* The single word a caller can branch on.  Six states, because six different
+   situations need six different reactions:
+
+     failed      - this read threw; retry, the API is there but unhappy
+     unsupported - this Max build has no such API; retrying will never help
+     stale       - the payload predates the domain's latest change; re-read it
+     partial     - the section is valid but some fields were unreadable (null)
+     fresh       - valid, current, nothing missing
+     unbuilt     - never built at all (context_stats only; a section that was
+                   never requested is not a failed section)
+
+   Precedence is deliberate: a permanent reason outranks a transient one, so
+   `unsupported` wins over `stale` (re-reading cannot fix a missing API). */
+fn mcpCtxState err supported stale unreadable =
+(
+    if err != "" then return "failed"
+    if not supported then return "unsupported"
+    if stale then return "stale"
+    if unreadable.count > 0 then return "partial"
+    "fresh"
+)
+
 /* The provenance block every section carries.  Four fields answer four
    different questions and must never be collapsed into one boolean:
 
@@ -737,6 +832,10 @@ fn mcpCtxAnyEntry domain =
                   moved between the lookup and the wrap.
      updatedAt  - when the payload was generated (Max side clock string).
 
+   `state` folds those three into the one value most callers actually want, and
+   `complete` is false when any field of the section is null because it could
+   not be read.
+
    `supported` defaults to whatever the collector itself declared in its
    payload, so a section that probed an API and found it missing reports
    supported:false without the wrapper having to know about that API. */
@@ -748,16 +847,36 @@ fn mcpCtxWrap domain rev payload ms err supported:true stale:false =
         sup = mcpToBool (mcpGet payload "supported") fallback:supported
     )
 
+    -- Fields the collector could not read, published as null by mcpCtxField.
+    local unreadable = #()
+    if mcpIsObj payload and (mcpHas payload "unreadable") do
+    (
+        local raw = mcpGet payload "unreadable"
+        if isKindOf raw Array do unreadable = raw
+    )
+
     local pairs = #()
     mcpPair pairs "domain" domain
     mcpPair pairs "revision" rev
+    /* The global revision at which this domain last changed -- the same value
+       `since` is compared against, and the same number context_stats reports.
+       Without it a caller can see that a domain came back but not whether it is
+       newer than the cursor it sent, which is the only question that matters
+       for incremental sync. */
+    local stamp = 0
+    local idx = mcpCtxDomainIndex (domain as string)
+    if idx > 0 do stamp = mcpCtxStamp[idx]
+    mcpPair pairs "changedAt" stamp
     mcpPair pairs "updatedAt" (if mcpEvClock == undefined then "" else mcpEvClock)
     mcpPair pairs "source" "maxscript"
     mcpPair pairs "valid" (err == "")
     mcpPair pairs "stale" stale
     mcpPair pairs "supported" sup
+    mcpPair pairs "state" (mcpCtxState err sup stale unreadable)
+    mcpPair pairs "complete" ((err == "") and (unreadable.count == 0))
     mcpPair pairs "buildMs" ms
     if err != "" do mcpPair pairs "error" err
+    if unreadable.count > 0 do mcpPair pairs "unreadable" unreadable
     -- `data` keeps the payload one level down so provenance can never collide
     -- with a field the collector happens to use.
     mcpPair pairs "data" payload
@@ -808,9 +927,100 @@ fn mcpCtxPayload domain =
 
 
 /*--------------------------------------------------------------- the tick*/
-/* Runs on the existing bridge pump.  Budget: one clock string and three
-   integer comparisons, eight times a second.  Anything heavier belongs in a
-   builder, which only runs when a caller asks for that domain. */
+/* Interactive geometry edits are the one class of change this release gives no
+   usable notification for.  Measured on 3ds Max 2022: dragging vertices in a
+   viewport fires neither #selectionSetChanged nor NodeEventCallback
+   (geometryChanged is not delivered for interactive edits), and
+   #modPanelObjPostChange only covers the modifier panel.  So the scene is
+   fingerprinted -- but a full sweep costs ~7 ms on the 65-object reference
+   scene, which is far too much to spend on a 25 ms pump, so the sweep is
+   sliced: OBJECT COUNT / 8 per tick, i.e. a full pass roughly every 1.6 s.
+   Each tick costs 8 getPolygonCount calls (measured well under 1 ms).
+
+   The fingerprint deliberately watches only face/vertex counts.  A transform
+   drag does not change them (and transform edits are reported by the tools, or
+   by #sceneUndo), but a vertex drag, a topology change or a modifier that
+   changes the mesh does -- which is exactly the case that used to go unnoticed
+   until an unrelated event happened to fire. */
+fn mcpCtxGeomSlice start count =
+(
+    local out = #()
+    local total = 0
+    try ( total = objects.count ) catch ( total = 0 )
+    if total == 0 then return out
+
+    for k = 0 to (count - 1) do
+    (
+        local i = (mod (start + k) total) + 1
+        local o = undefined
+        try ( o = objects[i] ) catch ( o = undefined )
+        if o != undefined do
+        (
+            -- -1 means "this node does not report a polygon count" (a light, a
+            -- camera, a helper).  It is compared like any other value, so those
+            -- nodes simply never look changed.
+            local h = 0
+            local f = -1
+            local v = -1
+            try ( h = (getHandleByAnim o) as integer ) catch ( h = 0 )
+            try ( local pc = getPolygonCount o; f = pc[1]; v = pc[2] ) catch ( f = -1 )
+            append out #(h, f, v)
+        )
+    )
+    out
+)
+
+/* Returns how many objects changed since the last pass over their slice.
+   A different object count is already caught by the identity check above, so
+   the fingerprint is rebuilt rather than compared in that case. */
+fn mcpCtxGeomChanged =
+(
+    local total = 0
+    try ( total = objects.count ) catch ( total = 0 )
+    if total == 0 do
+    (
+        mcpCtxGeomFP = #()
+        mcpCtxGeomCursor = 0
+        return 0
+    )
+    if total != mcpCtxGeomFP.count do
+    (
+        mcpCtxGeomFP = mcpCtxGeomSlice 0 total
+        mcpCtxGeomCursor = 0
+        return 0
+    )
+
+    -- `as integer` on purpose: MAXScript `/` yields a float, and a float index
+    -- into `objects` would be rounded rather than truncated.
+    local per = (((total + 7) / 8) as integer)
+    if per < 1 do per = 1
+    local slice = mcpCtxGeomSlice mcpCtxGeomCursor per
+    mcpCtxGeomCursor = mod (mcpCtxGeomCursor + per) total
+
+    local changed = 0
+    for row in slice do
+    (
+        local idx = 0
+        for i = 1 to mcpCtxGeomFP.count while idx == 0 do
+            ( if mcpCtxGeomFP[i][1] == row[1] do idx = i )
+        if idx == 0 then
+        (
+            -- New handle in a same-size list (delete + create): treat as a
+            -- change and record it, so the next pass compares like with like.
+            append mcpCtxGeomFP row
+            changed += 1
+        )
+        else if mcpCtxGeomFP[idx][2] != row[2] or mcpCtxGeomFP[idx][3] != row[3] do
+        (
+            mcpCtxGeomFP[idx] = row
+            changed += 1
+        )
+    )
+    changed
+)
+
+/* Runs on the existing bridge pump.  Budget: one clock string, one identity
+   comparison every 8th tick, plus one eighth of a geometry fingerprint pass. */
 fn mcpCtxTick =
 (
     mcpCtxTickCount += 1
@@ -824,8 +1034,22 @@ fn mcpCtxTick =
     try ( now = #(objects.count, selection.count, (maxFilePath + maxFileName)) ) catch ( now = #(-1, -1, "") )
 
     local changed = #()
-    if now[1] != mcpCtxIdentity[1] do ( append changed "objects"; append changed "scene" )
-    if now[2] != mcpCtxIdentity[2] do append changed "selection"
+    -- `scene` rides along: mcpCtxBuildScene publishes objectCount and
+    -- selectionCount, so a change to either makes the cached scene section
+    -- wrong, not only the objects / selection section (Phase B F1).
+    local why = ""
+    if now[1] != mcpCtxIdentity[1] do
+    (
+        append changed "objects"
+        append changed "scene"
+        why = "object count changed"
+    )
+    if now[2] != mcpCtxIdentity[2] do
+    (
+        append changed "scene"
+        append changed "selection"
+        if why == "" do why = "selection count changed"
+    )
     if now[3] != mcpCtxIdentity[3] do
     (
         append changed "scene"
@@ -834,8 +1058,21 @@ fn mcpCtxTick =
         append changed "selection"
         append changed "materials"
         append changed "assets"
+        why = "scene file changed"
     )
     mcpCtxIdentity = now
+
+    -- Sliced geometry sweep, see mcpCtxGeomChanged.  A shape edit changes the
+    -- objects domain (faces / verts / totals) and, through it, whatever the
+    -- panel shows for the selection.
+    local geomChanged = 0
+    try ( geomChanged = mcpCtxGeomChanged() ) catch ( geomChanged = 0 )
+    if geomChanged > 0 do
+    (
+        append changed "objects"
+        append changed "selection"
+        why = (geomChanged as string) + " object(s) changed shape"
+    )
 
     if changed.count > 0 do
     (
@@ -847,10 +1084,20 @@ fn mcpCtxTick =
             for u in uniq while not dup do ( if u == d do dup = true )
             if not dup do append uniq d
         )
-        -- Bump first: mcpCtxMarkDirty stamps each domain with the current
-        -- global revision, so the stamp has to be the new one.
-        if mcpEvRevision != undefined do mcpEvRevision += 1
-        mcpCtxMarkDirty uniq
+        -- Report through mcpEvFire instead of bumping mcpEvRevision here.  The
+        -- bump used to happen with no event row at all, so a client watching
+        -- `revision` saw it move with nothing to explain it (Phase B F5).
+        -- mcpEvFire bumps first and stamps the domains with the new revision,
+        -- which is the order mcpCtxMarkDirty requires.
+        try ( mcpEvFire "tick" detail:why domains:uniq )
+        catch
+        (
+            -- mcp_events.ms missing or its handler raised: still move the
+            -- revision forward, or the caller's `since` cursor would skip a
+            -- change that really happened.
+            if mcpEvRevision != undefined do mcpEvRevision += 1
+            mcpCtxMarkDirty uniq
+        )
     )
     changed.count
 )
@@ -1006,23 +1253,49 @@ fn mcpH_context_stats params =
     for i = 1 to mcpCtxDomains.count do
     (
         local entry = mcpCtxCachedEntry mcpCtxDomains[i]
+        local anyEntry = mcpCtxAnyEntry mcpCtxDomains[i]
         local cached = entry != undefined
+        -- `built` answers "has this domain ever been collected?", `cached`
+        -- answers "is there a copy at the current revision?".  Conflating them
+        -- was the other half of F2: a domain with an older snapshot reported
+        -- the same thing as a domain nobody had ever asked for.
+        local built = anyEntry != undefined
         if not cached do append stale mcpCtxDomains[i]
 
-        -- The UI reads this row directly, so it carries the same three-state
-        -- provenance a section does instead of a single "cached" flag: an
-        -- unbuilt domain is not the same thing as an invalid one.
+        -- The UI reads this row directly, so it carries the same provenance a
+        -- section does instead of a single "cached" flag: an unbuilt domain is
+        -- not the same thing as an invalid one, and neither is the same as one
+        -- whose snapshot simply predates the latest change.
         local valid = cached
         local supported = true
         local updatedAt = ""
         local buildMs = 0
-        if cached do
+        local state = "unbuilt"
+        local unreadable = #()
+        if built do
         (
             local w = entry[3]
-            valid = mcpToBool (mcpGet w "valid") fallback:cached
+            if w == undefined do w = anyEntry[3]
+            valid = mcpToBool (mcpGet w "valid") fallback:true
             supported = mcpToBool (mcpGet w "supported") fallback:true
             try ( updatedAt = (mcpGet w "updatedAt") as string ) catch ( updatedAt = "" )
             try ( buildMs = (mcpGet w "buildMs") as integer ) catch ( buildMs = 0 )
+            try
+            (
+                local raw = mcpGet w "unreadable"
+                if isKindOf raw Array do unreadable = raw
+            )
+            catch()
+            try ( state = (mcpGet w "state") as string ) catch ( state = "" )
+            if state == "" do
+            (
+                -- Bridge older than the state field: derive the same word so a
+                -- mixed install still reports one vocabulary.
+                local staleFlag = mcpToBool (mcpGet w "stale") fallback:false
+                state = mcpCtxState "" supported staleFlag unreadable
+            )
+            -- An older snapshot is stale whatever it said when it was built.
+            if not cached do state = "stale"
         )
 
         local row = #()
@@ -1032,10 +1305,13 @@ fn mcpH_context_stats params =
         -- one of these values, not a per-domain cache key.
         mcpPair row "changedAt" mcpCtxStamp[i]
         mcpPair row "sentAt" mcpCtxSent[i]
+        mcpPair row "built" built
         mcpPair row "cached" cached
         mcpPair row "valid" valid
         mcpPair row "supported" supported
         mcpPair row "stale" (not cached)
+        mcpPair row "state" state
+        mcpPair row "unreadable" unreadable
         mcpPair row "updatedAt" updatedAt
         mcpPair row "buildMs" buildMs
         append revs (mcpObj row)

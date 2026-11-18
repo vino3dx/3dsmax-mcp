@@ -226,21 +226,29 @@ fn mcpUiPageText index force:false =
                 if le != undefined and le != "" do leText = le as string
                 text += "lastError  : " + leText + "\n"
                 text += "\n"
-                text += (mcpUiRow #("domain", "rev", "valid", "stale", "sup", "ms", "updatedAt") #(11, 5, 7, 7, 6, 5, 0)) + "\n"
+                text += (mcpUiRow #("domain", "rev", "state", "valid", "stale", "sup", "ms", "updatedAt") #(11, 5, 11, 7, 7, 6, 5, 0)) + "\n"
                 text += "--------------------------------------------------" + "\n"
                 for d in (mcpGet st "domains") do
                 (
+                    -- `state` is the word that separates "never built" from
+                    -- "the read failed"; reading an absent field would raise on
+                    -- an older bridge, so it is fetched defensively.
+                    local stText = ""
+                    local rawState = mcpGet d "state"
+                    if rawState != undefined do ( try ( stText = rawState as string ) catch ( stText = "" ) )
                     local cells = #()
                     append cells ((mcpGet d "domain") as string)
                     append cells ((mcpGet d "revision") as string)
+                    append cells stText
                     append cells ((mcpGet d "valid") as string)
                     append cells ((mcpGet d "stale") as string)
                     append cells ((mcpGet d "supported") as string)
                     append cells ((mcpGet d "buildMs") as string)
                     append cells ((mcpGet d "updatedAt") as string)
-                    text += (mcpUiRow cells #(11, 5, 7, 7, 6, 5, 0)) + "\n"
+                    text += (mcpUiRow cells #(11, 5, 11, 7, 7, 6, 5, 0)) + "\n"
                 )
-                text += "\n" + "stale=true: cached copy is older than the domain revision." + "\n"
+                text += "\n" + "state: fresh / partial / stale / unsupported / failed / unbuilt." + "\n"
+                text += "stale=true: cached copy is older than the domain revision." + "\n"
             )
             3:
             (
