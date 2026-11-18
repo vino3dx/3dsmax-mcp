@@ -30,7 +30,7 @@ from .config import (
     Config,
 )
 from .context import SceneContextCache
-from .http_transport import McpHttpTransport
+from .http_transport import McpHttpTransport, UnsafeExposureError
 from .protocol import (
     INTERNAL_ERROR,
     INVALID_PARAMS,
@@ -1022,6 +1022,9 @@ def _start_http(server: "MaxMcpServer", config: Config) -> Optional["McpHttpTran
     )
     try:
         transport.start()
+    except UnsafeExposureError as exc:
+        print("REFUSED to start the MCP HTTP endpoint: {0}".format(exc), file=sys.stderr)
+        return None
     except OSError as exc:
         print("could not start the MCP HTTP listener on {0}:{1}: {2}".format(
             config.http_host, config.http_port, exc), file=sys.stderr)

@@ -21,9 +21,11 @@ HTTP and SSE unchanged.
 
 from __future__ import annotations
 
+import ipaddress
 import json
 import queue
 import secrets
+import socket
 import sys
 import threading
 import time
@@ -37,6 +39,39 @@ LogFn = Callable[[str], None]
 SSE_KEEPALIVE_SECONDS = 15.0
 SESSION_TTL_SECONDS = 30 * 60.0
 MAX_BODY_BYTES = 64 * 1024 * 1024
+
+# Bind addresses that can only be reached from the local machine. Everything
+# else (0.0.0.0, ::, a LAN IP, a hostname that resolves to one) is "exposed".
+_LOOPBACK_NAMES = frozenset(("localhost", "ip6-localhost", "ip6-loopback"))
+
+
+class UnsafeExposureError(RuntimeError):
+    """Raised when the HTTP listener would be reachable without a token."""
+
+
+def is_loopback_host(host: str) -> bool:
+    """True only for addresses the local machine itself can reach.
+
+    We deliberately resolve the *actual bind address* before deciding, because
+    a hostname like "localhost" may resolve to either 127.0.0.1 or ::1, and
+    "" / "0.0.0.0" / "::" all mean "every interface" (i.e. exposed). Unknown
+    names fail closed (treated as exposed) rather than being trusted.
+    """
+    text = (host or "").strip()
+    if text.lower() in _LOOPBACK_NAMES:
+        return True
+    try:
+        return ipaddress.ip_address(text).is_loopback
+    except ValueError:
+        pass
+    try:
+        resolved = socket.getaddrinfo(text or None, None, type=socket.SOCK_STREAM)
+    except OSError:
+        return False
+    if not resolved:
+        return False
+    # Every resolved address must be loopback; a split-horizon name is exposed.
+    return all(ipaddress.ip_address(item[4][0]).is_loopback for item in resolved)
 
 
 class _Session:
@@ -72,14 +107,38 @@ class McpHttpTransport:
         self._httpd: Optional[ThreadingHTTPServer] = None
         self._thread: Optional[threading.Thread] = None
         self.requests_served = 0
+        # Set from the *actually bound* address in start(). Fail closed until then.
+        self.bound_host: str = host
+        self.is_loopback: bool = is_loopback_host(host)
+        self.require_token: bool = not self.is_loopback
 
     # ------------------------------------------------------------------ server
     def start(self) -> "McpHttpTransport":
+        # Fail closed: a non-loopback listener with no token is a remote-RCE
+        # surface (the MCP dispatch can run arbitrary MAXScript). Refuse to bind.
+        if self.require_token and not self.token:
+            raise UnsafeExposureError(
+                "refusing to start the MCP HTTP endpoint on non-loopback address "
+                "{0!r} without --http-token. Anyone who could reach this port "
+                "could run arbitrary MAXScript in 3ds Max. Bind to 127.0.0.1 "
+                "or set a token (see README security section).".format(self.host)
+            )
+
         handler = _make_handler(self)
         httpd = ThreadingHTTPServer((self.host, self.port), handler)
         httpd.daemon_threads = True
-        # The bound port matters when port 0 was requested (tests pick a free one).
+        # Use the real bound address, not the configured string: "" / "::" /
+        # "0.0.0.0" and hostnames all need verification after the socket binds.
+        self.bound_host = httpd.server_address[0]
         self.port = httpd.server_address[1]
+        self.is_loopback = is_loopback_host(self.bound_host)
+        self.require_token = not self.is_loopback
+        if self.require_token and not self.token:
+            httpd.server_close()
+            raise UnsafeExposureError(
+                "refusing to serve: address {0!r} resolved to non-loopback "
+                "{1!r} without --http-token.".format(self.host, self.bound_host)
+            )
         self._httpd = httpd
         self._thread = threading.Thread(target=httpd.serve_forever, name="mcp-http", daemon=True)
         self._thread.start()
@@ -112,17 +171,16 @@ class McpHttpTransport:
         self.requests_served += 1
 
     def warn_if_exposed(self) -> Optional[str]:
-        """Return a loud message when the bind address is not loopback."""
-        loopback = ("127.0.0.1", "localhost", "::1")
-        if self.host in loopback:
+        """Return a loud message when the effective bind address is not loopback."""
+        if self.is_loopback:
             return None
         return (
             "--------------------------------------------------------------\n"
-            " WARNING: the MCP HTTP endpoint is bound to {0}, not localhost.\n"
-            " Anyone who can reach this port can run arbitrary MAXScript in your\n"
-            " 3ds Max scene. Only do this on a trusted network, and set\n"
-            " --http-token to require a bearer token.\n"
-            "--------------------------------------------------------------".format(self.host)
+            " WARNING: the MCP HTTP endpoint is reachable from the network at {0}.\n"
+            " A bearer token is REQUIRED and was supplied. Anyone with the token\n"
+            " can run arbitrary MAXScript in your 3ds Max scene. Restrict access\n"
+            " to a trusted network; a token is not a substitute for a firewall.\n"
+            "--------------------------------------------------------------".format(self.bound_host)
         )
 
     # ---------------------------------------------------------------- sessions
@@ -173,7 +231,17 @@ def _make_handler(transport: McpHttpTransport) -> type:
             self.wfile.write(body)
 
         def _cors(self) -> None:
-            self.send_header("Access-Control-Allow-Origin", "*")
+            # Loopback listener: keep the permissive origin so local browser-based
+            # clients (MCP Inspector etc.) work unchanged. Exposed listener: never
+            # emit "*" - reflect only an explicit Origin, so a random website
+            # cannot silently drive the endpoint through the victim's browser.
+            if transport.is_loopback:
+                self.send_header("Access-Control-Allow-Origin", "*")
+            else:
+                origin = self.headers.get("Origin")
+                if origin:
+                    self.send_header("Access-Control-Allow-Origin", origin)
+                    self.send_header("Vary", "Origin")
             self.send_header("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
             self.send_header(
                 "Access-Control-Allow-Headers",
@@ -181,10 +249,29 @@ def _make_handler(transport: McpHttpTransport) -> type:
             )
             self.send_header("Access-Control-Expose-Headers", "Mcp-Session-Id")
 
+        # --------------------------------------------------------------- host guard
+        def _host_allowed(self) -> bool:
+            """Reject DNS-rebinding: Host must name a loopback address on a
+            loopback listener. Legit local clients use 127.0.0.1 / localhost, so
+            this is transparent to them. Skipped when a token is configured
+            (the token is then the authority)."""
+            if not transport.is_loopback or transport.token:
+                return True
+            host = self.headers.get("Host", "")
+            # Strip an optional port; IPv6 literals are [::1]:port.
+            name = host.strip()
+            if name.startswith("["):
+                name = name[1:].split("]", 1)[0]
+            elif ":" in name:
+                name = name.rsplit(":", 1)[0]
+            return is_loopback_host(name)
+
         # ----------------------------------------------------------------- auth
         def _authorized(self, query: Dict[str, List[str]]) -> bool:
             if not transport.token:
-                return True
+                # Loopback with no token is the supported local-client default.
+                # An exposed listener must never reach here: start() refuses it.
+                return transport.is_loopback
             header = self.headers.get("Authorization", "")
             if header.startswith("Bearer ") and secrets.compare_digest(header[7:].strip(), transport.token):
                 return True
@@ -263,6 +350,9 @@ def _make_handler(transport: McpHttpTransport) -> type:
             parsed = urlparse(self.path)
             query = parse_qs(parsed.query)
 
+            if not self._host_allowed():
+                self._send_json(403, {"error": "forbidden: Host header is not a loopback address"})
+                return
             if not self._authorized(query):
                 self._send_json(401, {"error": "unauthorized: supply Authorization: Bearer <token>"})
                 return
@@ -326,6 +416,9 @@ def _make_handler(transport: McpHttpTransport) -> type:
 
         # --------------------------------------------------- legacy SSE transport
         def _serve_legacy_sse(self, query: Dict[str, List[str]]) -> None:
+            if not self._host_allowed():
+                self._send_json(403, {"error": "forbidden: Host header is not a loopback address"})
+                return
             if not self._authorized(query):
                 self._send_json(401, {"error": "unauthorized"})
                 return

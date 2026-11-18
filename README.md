@@ -439,17 +439,51 @@ python scripts/install.py --client print --http-port 8770
 python -m maxmcp --transport http --http-port 8770
 python -m maxmcp --transport both                      # stdio + http 同进程
 
-# 需要暴露到局域网/公网时，务必加令牌
+# 需要暴露到局域网/公网时，务必加令牌（否则启动会被拒绝）
 python -m maxmcp --transport http --http-host 0.0.0.0 --http-token 你的密钥
 ```
 
-> ⚠️ **安全**：HTTP 端点默认只绑 `127.0.0.1`。一旦改绑到其他地址，
-> **任何能访问该端口的人都能在你的 Max 里执行任意 MAXScript**。
-> 只在可信网络这么做，并且一定设置 `--http-token`（客户端用
-> `Authorization: Bearer <token>`）。绑到非回环地址时服务端会打印醒目警告。
+> ⚠️ **安全**：HTTP 端点默认只绑 `127.0.0.1`（回环）。**改绑到非回环地址
+> （`0.0.0.0`、`::`、局域网 IP）时必须同时提供 `--http-token`，否则服务端
+> 会直接拒绝启动**（exit 2），不会因为疏忽而把接口暴露出去。客户端用
+> `Authorization: Bearer <token>` 携带令牌。绑到非回环且带令牌时会打印醒目警告。
 
 > 云端平台要访问你本机的 `127.0.0.1`，需要自己做端口转发（frp / ngrok / 反向代理）。
 > 这属于网络暴露，风险自负 —— 建议只在内网使用。
+
+### 安全边界（发布部署前必读）
+
+这个 MCP 服务把 3ds Max 的**场景操作能力**暴露给 AI 客户端。理解下面几类工具的权限边界，
+只在**你信任的客户端与环境**中使用：
+
+| 工具 / 通道 | 能力 | 风险含义 |
+| --- | --- | --- |
+| `execute_maxscript` | 执行**任意 MAXScript** | 等价于在 Max 里手敲脚本：可读写场景、调用文件 I/O、改配置。仅在可信 Agent 下启用 |
+| `execute_python` | 执行**任意 Python**（经 Max 内 pymxs） | 同上，且能访问本机 Python 可见资源 |
+| `write_text_file` / `delete_file` / `copy_file` | 读写/删除**本机任意路径** | 参数里的路径没有沙箱白名单，AI 可写到任意可访问位置 |
+| `scene_open` / `scene_save_as` | 打开/覆盖 `.max` 文件 | 覆盖已有工程前请自行备份；不要让不可信输入决定路径 |
+| 导出类工具（`export_*` / `bake_render`） | 写文件到指定路径 | 同上，路径由调用方给出 |
+
+**网络暴露**：TCP 桥接（`8765`）默认只监听 `127.0.0.1`，**没有认证**，且工具参数无法把它
+改成非回环地址 —— 不要把该端口做端口转发或暴露到局域网/公网。比桥接更敏感的是 HTTP 端点：
+能访问它且持有令牌的人即可远程执行上面的任意代码工具。令牌**不是**防火墙的替代品，
+暴露部署时请同时用系统防火墙 / 安全组限制来源 IP。回环监听带有 Host 头校验（防 DNS rebinding），
+非回环监听不发 `Access-Control-Allow-Origin: *`。
+
+**降低权限面**：用工具档位和分类禁用收敛暴露给 AI 的能力：
+
+```bash
+python -m maxmcp --profile core          # 只暴露核心只读 + 常用工具子集
+```
+
+```json
+// config.json —— 禁用整类高危工具（例如禁止脚本执行）
+{ "disabled_categories": ["system"] }
+```
+
+`execute_maxscript` / `execute_python` 属于 `system` 类；在多人共享或生产机上建议禁用。
+注意：档位与分类过滤只影响**工具列表的呈现**，网关/传输层本身不按此鉴权 —— 它不是安全沙箱，
+真正的边界是"只连本机 + 可信客户端"。
 
 ### 工具名长度
 
@@ -540,6 +574,8 @@ python scripts/doctor.py
 | 工具太多、上下文爆 | 换小档位 `--profile lookdev` 等。 |
 | HTTP 客户端连不上（`Connection refused`） | HTTP 端点不是常驻服务，得先跑 `start-http.bat` 或 `python -m maxmcp --transport http`。 |
 | HTTP 返回 401 | 服务端设了 `--http-token`，客户端要带 `Authorization: Bearer <token>`。 |
+| HTTP 启动报 `REFUSED to start` | 绑定了非回环地址却没给 `--http-token`。改回 `--http-host 127.0.0.1`，或补上令牌。 |
+| HTTP 返回 403（Host forbidden） | 回环无令牌模式下，请求的 `Host` 头不是本机地址（可能是 DNS rebinding）。用 `127.0.0.1` / `localhost` 访问。 |
 | 国产平台（智谱/百炼）加不上 | 它们按 URL 注册，只吃 HTTP/SSE，且**访问不到你本机的 127.0.0.1**。需要端口转发把端点暴露出去。 |
 | Max 重启后语言变了 | 若 `3dsmax-mcp.ini` 里是 `auto`，这是预期行为（跟随 Max）。想固定就重装带 `--language zh`。 |
 

@@ -92,11 +92,12 @@ def copy_tree(src: Path, dst: Path, pattern: str = "*") -> int:
 
 
 # ------------------------------------------------------------------ discovery
-def detect_max_installs() -> List[Dict[str, Any]]:
+def detect_max_installs(extra_scripts: Optional[List[str]] = None) -> List[Dict[str, Any]]:
     """Find every 3ds Max user configuration folder that has a scripts dir.
 
     This is exactly what ``getDir #userScripts`` resolves to, so anything found
-    here will be scanned by Max on the next launch.
+    here will be scanned by Max on the next launch. ``extra_scripts`` lets a user
+    point at a non-standard user-scripts folder when auto-detection fails.
     """
     found: List[Dict[str, Any]] = []
     roots: List[Path] = []
@@ -107,6 +108,23 @@ def detect_max_installs() -> List[Dict[str, Any]]:
     appdata = os.environ.get("APPDATA")
     if appdata:
         roots.append(Path(appdata) / "Autodesk" / "3dsMax")
+
+    # Explicit paths from --max-scripts are treated like a detected scripts dir.
+    for raw in extra_scripts or []:
+        scripts = Path(raw).expanduser()
+        if not scripts.is_dir():
+            say("! --max-scripts path does not exist: {0}".format(scripts))
+            continue
+        found.append(
+            {
+                "year": "",
+                "language": "auto",
+                "user_scripts": scripts,
+                "startup": scripts / "startup",
+                "bridge_dir": scripts / APP,
+                "product_dir": None,
+            }
+        )
 
     for root in roots:
         if not root.is_dir():
@@ -599,6 +617,10 @@ def main(argv: Optional[List[str]] = None) -> int:
                         choices=sorted(CLIENTS) + ["claude-desktop", "roo", "roocode", "wb", "print", "none"],
                         help="which MCP clients to configure (default: prompt)")
     parser.add_argument("--port", type=int, default=8765, help="bridge port (default 8765)")
+    parser.add_argument("--max-scripts", nargs="*", default=None, metavar="PATH",
+                        help="user scripts folder of a 3ds Max installed in a non-standard location. "
+                             "Use when auto-detection finds nothing; e.g. "
+                             "'C:\\Users\\me\\AppData\\Local\\Autodesk\\3dsMax\\2024 - 64bit\\ENU\\scripts'")
     parser.add_argument("--language", choices=["auto", "zh", "en"], default="auto",
                         help="bridge language: auto follows the 3ds Max UI language (default auto)")
     parser.add_argument("--profile", default="full",
@@ -614,7 +636,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument("--yes", action="store_true", help="do not ask anything")
     args = parser.parse_args(argv)
 
-    installs = detect_max_installs()
+    installs = detect_max_installs(args.max_scripts)
     python = find_python()
     manifest = load_manifest()
 
@@ -661,13 +683,23 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     # ------------------------------------------------------------- detection
     if not installs:
-        say("! No 3ds Max user configuration folder was found.")
-        say("  Launch 3ds Max once so it creates one, then run this again.")
-        say("  You can still install the server only, with --client.")
+        say("!")
+        say("! WARNING: no installed 3ds Max was detected on this machine.")
+        say("! The MAXScript bridge was NOT installed. Installing only the server")
+        say("! is not enough - MCP tools will not be able to reach 3ds Max.")
+        say("!")
+        say("! To fix, either:")
+        say("!   1. Launch 3ds Max once (so it creates its user scripts folder),")
+        say("!      then re-run THIS SAME installer. It will add the bridge then; or")
+        say("!   2. If 3ds Max is installed in a non-standard folder, re-run with")
+        say("!      --max-scripts <path> pointing at its user scripts directory.")
+        say("!")
     else:
         say("Found {0} 3ds Max installation(s):".format(len(installs)))
         for item in installs:
-            say("  - 3ds Max {0} [{1}]".format(item["year"], item["language"]))
+            year = item["year"]
+            support = "" if (not year or year in SUPPORTED_YEARS) else "  (untested version)"
+            say("  - 3ds Max {0} [{1}]{2}".format(year or "?", item["language"], support))
     say("Python for the server: {0}".format(python or sys.executable))
 
     clients = args.client
