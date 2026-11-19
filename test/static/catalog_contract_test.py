@@ -197,9 +197,32 @@ def registrations() -> Dict[str, Dict[str, Any]]:
     return out
 
 
+def declared_types(spec: Dict[str, Any]) -> List[str]:
+    """The declared type(s) of one property, always as a list.
+
+    A property may declare a union of scalar types (``mod_set_param.value``
+    accepts integer/number/string/boolean so the value keeps its JSON type
+    instead of being stringified on the way to MAXScript).  Every element still
+    has to be a type this catalog understands.
+    """
+    declared = spec.get("type")
+    if isinstance(declared, (list, tuple)):
+        return [str(t) for t in declared]
+    return [declared]
+
+
 def minimal_argument(spec: Dict[str, Any]) -> Any:
     """Smallest legal value for one property, per the contract rules."""
     type_name = spec.get("type")
+    if isinstance(type_name, (list, tuple)):
+        # The author lists the narrowest type first; use its representative.
+        for candidate in type_name:
+            narrower = dict(spec)
+            narrower["type"] = candidate
+            value = minimal_argument(narrower)
+            if value is not None:
+                return value
+        return None
     if type_name == "string":
         enum = spec.get("enum")
         return enum[0] if enum else "x"
@@ -284,14 +307,16 @@ def static_contract(catalog, locations, regs, repo_cmds) -> Dict[str, Any]:
         props = entry.schema.get("properties", {})
         required = entry.schema.get("required", [])
         for key, spec in props.items():
-            type_name = spec.get("type")
-            if type_name not in ALLOWED_PROP_TYPES:
+            type_names = declared_types(spec)
+            unknown = [t for t in type_names if t not in ALLOWED_PROP_TYPES]
+            if unknown:
                 violations.append({
                     "check": "A3", "tool": entry.name, "where": where(entry.name),
                     "detail": "property %s has type %r (allowed: %s)"
-                              % (key, type_name, sorted(ALLOWED_PROP_TYPES)),
+                              % (key, spec.get("type"), sorted(ALLOWED_PROP_TYPES)),
                 })
                 continue
+            type_name = type_names[0]
             enum = spec.get("enum")
             if enum is not None:
                 if type_name == "string" and not all(isinstance(v, str) for v in enum):
@@ -304,7 +329,7 @@ def static_contract(catalog, locations, regs, repo_cmds) -> Dict[str, Any]:
                                        "where": where(entry.name),
                                        "detail": "property %s: enum has non-numeric values" % key})
             default = spec.get("default")
-            if default is not None:
+            if default is not None and len(type_names) == 1:
                 expected = {"string": str, "number": (int, float),
                             "integer": int, "boolean": bool,
                             "array": (list, tuple), "object": dict}[type_name]

@@ -512,12 +512,24 @@ def check_tool_schema(entry: Any, where: str, report: Report) -> None:
         if type_name is None:
             report.failures.append("%s: parameter '%s' has no type" % (where, key))
             continue
-        if type_name not in JSON_TYPES:
+        # A parameter may declare a union of types (mod_set_param.value accepts
+        # integer/number/string/boolean so the argument keeps its JSON type
+        # instead of being stringified before MAXScript sees it).  Each member
+        # still has to be a type this project understands.
+        if isinstance(type_name, (list, tuple)):
+            unknown = [t for t in type_name if t not in JSON_TYPES]
+            if not type_name or unknown:
+                report.failures.append(
+                    "%s: parameter '%s' has unknown type '%s' (typo?)"
+                    % (where, key, type_name))
+                continue
+        elif type_name not in JSON_TYPES:
             report.failures.append(
                 "%s: parameter '%s' has unknown type '%s' (typo?)"
                 % (where, key, type_name))
             continue
-        if spec.get("default") is not None and not _json_type_ok(spec["default"], type_name):
+        if spec.get("default") is not None and not isinstance(type_name, (list, tuple)) \
+                and not _json_type_ok(spec["default"], type_name):
             report.failures.append(
                 "%s: parameter '%s' default %r does not match type '%s'"
                 % (where, key, spec["default"], type_name))

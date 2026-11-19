@@ -15,7 +15,7 @@ import sys
 import time
 import traceback
 import uuid
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from . import i18n
 from .bridge import BridgeCommandError, BridgeError, MaxBridge
@@ -811,11 +811,37 @@ def _resolve_argument_names(
     return resolved, renames
 
 
+def _check_scalar(value: Any, types: Sequence[str], key: str) -> Any:
+    """Validate (and pass through) a value declared with a union of scalar types.
+
+    Nothing is converted here on purpose.  The point of a union-typed parameter
+    is that ``3`` stays an integer and ``"3"`` stays a string, so MAXScript can
+    turn it into the type the property actually wants; stringifying it here was
+    the whole of the ``mod_set_param`` numeric defect.
+    """
+    allowed = [str(t) for t in types]
+    accepted = False
+    if isinstance(value, bool):
+        accepted = "boolean" in allowed
+    elif isinstance(value, int):
+        accepted = "integer" in allowed or "number" in allowed
+    elif isinstance(value, float):
+        accepted = "number" in allowed
+    elif isinstance(value, str):
+        accepted = "string" in allowed
+    if not accepted:
+        raise ValueError("{0} must be one of {1}, got {2}".format(
+            key, "/".join(allowed) or "any", type(value).__name__))
+    return value
+
+
 def _coerce(value: Any, spec: Dict[str, Any], key: str) -> Any:
     """Best effort coercion; the MAXScript side is tolerant but typed values help."""
     type_name = spec.get("type")
     if value is None:
         return None
+    if isinstance(type_name, (list, tuple)):
+        return _check_scalar(value, type_name, key)
     if type_name == "integer":
         try:
             return int(value)
@@ -850,6 +876,23 @@ def _coerce(value: Any, spec: Dict[str, Any], key: str) -> Any:
                 return []
             return [part.strip() for part in text.split(",") if part.strip()]
         return [value]
+    if type_name == "object":
+        # A name -> value map travels as a JSON object, never as a list.  An
+        # array-typed declaration here used to wrap the caller's object in a
+        # one-element array, which MAXScript sees as "not an object": mcpPairs
+        # returned #() and every parameter was silently dropped.
+        if isinstance(value, dict):
+            return value
+        if isinstance(value, str):
+            text = value.strip()
+            if text.startswith("{"):
+                try:
+                    parsed = json.loads(text)
+                except ValueError:
+                    parsed = None
+                if isinstance(parsed, dict):
+                    return parsed
+        raise ValueError("{0} must be an object of name -> value pairs".format(key))
     return value
 
 

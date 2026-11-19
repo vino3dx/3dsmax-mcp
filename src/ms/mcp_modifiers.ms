@@ -16,7 +16,8 @@ global mcpH_mod_add, mcpH_mod_remove, mcpH_mod_list, mcpH_mod_get_params
 global mcpH_mod_set_param, mcpH_mod_set_params, mcpH_mod_enable, mcpH_mod_disable
 global mcpH_mod_reorder, mcpH_mod_rename, mcpH_mod_get_gizmo_info
 global mcpH_mod_set_sub_object_selection
-global mcpSetOneModParam, mcpApplyModParams
+global mcpSetOneModParam, mcpApplyModParams, mcpModCoerceValue, mcpModValueMatches
+global mcpModNumFrom, mcpModIntFrom, mcpModFailureDetail
 global mcpH_model_extrude_spline, mcpH_model_lathe_spline, mcpH_model_loft, mcpH_model_sweep
 
 
@@ -51,24 +52,196 @@ fn mcpFindModifier node spec =
     undefined
 )
 
+/*------------------------------------------------ modification value coercion*/
+/* A modifier property has a type; a JSON argument only has whatever type the
+   caller sent, and `setProperty` refuses anything that is not already
+   compatible ("Unable to convert ... to ...").  Everything below converts the
+   incoming value to the class the property already holds, so `bend.angle = 45`
+   works whether the caller sent 45, 45.0 or "45" -- and a value that genuinely
+   cannot be represented is refused with a reason instead of being handed to
+   setProperty and hoped for.
+
+   Before this existed the handler passed the raw argument straight to
+   setProperty with no conversion at all, which is why the catalog had to
+   advertise `value` as a string and why a number arriving as "3" failed on
+   every numeric property. */
+
+/* Number or undefined: booleans are not numbers here, and a string has to be
+   a number on its own rather than something MAXScript guesses at. */
+fn mcpModNumFrom v =
+(
+    if v == undefined then return undefined
+    if isKindOf v BooleanClass then return undefined
+    if isKindOf v Number then return (v as float)
+    if isKindOf v String then
+    (
+        local t = trimLeft (trimRight v)
+        if t == "" then return undefined
+        try ( return (t as float) ) catch ( return undefined )
+    )
+    undefined
+)
+
+fn mcpModIntFrom v =
+(
+    local f = mcpModNumFrom v
+    if f == undefined then return undefined
+    -- 2.7 is not 2: truncating would silently apply a different value than the
+    -- caller asked for.
+    if (f != (floor f)) then return undefined
+    f as integer
+)
+
+/* Returns #(ok, value, reason).  `current` is the property's present value,
+   read with getProperty; when it is undefined the property is write-only or
+   unreadable and the raw value is passed through unchanged. */
+fn mcpModCoerceValue current rawValue =
+(
+    if current == undefined then return #(true, rawValue, "")
+
+    local cls = classof current
+    if cls == BooleanClass then
+    (
+        if isKindOf rawValue BooleanClass then return #(true, rawValue, "")
+        if isKindOf rawValue Number then return #(true, (rawValue != 0), "")
+        if isKindOf rawValue String then
+        (
+            local t = toLower (trimLeft (trimRight rawValue))
+            if t == "true" or t == "1" or t == "yes" or t == "on" then return #(true, true, "")
+            if t == "false" or t == "0" or t == "no" or t == "off" then return #(true, false, "")
+            return #(false, rawValue, "not a boolean: " + rawValue)
+        )
+        return #(false, rawValue, "not a boolean: " + (rawValue as string))
+    )
+    if isKindOf current Integer then
+    (
+        if isKindOf rawValue BooleanClass then
+            return #(false, rawValue, "integer property cannot take a boolean")
+        local iv = mcpModIntFrom rawValue
+        if iv == undefined then return #(false, rawValue, "not an integer: " + (rawValue as string))
+        return #(true, iv, "")
+    )
+    if isKindOf current Number then
+    (
+        if isKindOf rawValue BooleanClass then
+            return #(false, rawValue, "number property cannot take a boolean")
+        local fv = mcpModNumFrom rawValue
+        if fv == undefined then return #(false, rawValue, "not a number: " + (rawValue as string))
+        return #(true, fv, "")
+    )
+    if isKindOf current String then return #(true, (rawValue as string), "")
+    if isKindOf current Name then
+    (
+        try ( return #(true, ((rawValue as string) as name), "") )
+        catch ( return #(false, rawValue, "not a name: " + (rawValue as string)) )
+    )
+    if isKindOf current Point3 then
+    (
+        if isKindOf rawValue Point3 then return #(true, rawValue, "")
+        local nums = #()
+        if isKindOf rawValue Array then
+        (
+            for x in rawValue do
+            (
+                local f = mcpModNumFrom x
+                if f == undefined then
+                    return #(false, rawValue, "expected [x,y,z] for a Point3 property")
+                append nums f
+            )
+        )
+        else if isKindOf rawValue String then
+        (
+            for s2 in (mcpStringSplit rawValue ",") do
+            (
+                local f = mcpModNumFrom s2
+                if f == undefined then
+                    return #(false, rawValue, "expected [x,y,z] for a Point3 property")
+                append nums f
+            )
+        )
+        else return #(false, rawValue, "expected [x,y,z] for a Point3 property")
+        -- Deliberately not delegating to mcpPoint3From: it fills unparseable
+        -- components with 0, which would make a typo look like a successful
+        -- write of (0,0,0).
+        if nums.count != 3 then
+            return #(false, rawValue, "expected 3 numbers for a Point3 property")
+        return #(true, (point3 nums[1] nums[2] nums[3]), "")
+    )
+    if isKindOf current Color then
+    (
+        local nums = #()
+        if isKindOf rawValue Array then
+        (
+            for x in rawValue do
+            (
+                local f = mcpModNumFrom x
+                if f == undefined then
+                    return #(false, rawValue, "expected [r,g,b] (0-255) for a Color property")
+                append nums f
+            )
+        )
+        if nums.count == 3 then
+            return #(true, (color (nums[1] as integer) (nums[2] as integer) (nums[3] as integer)), "")
+        if isKindOf rawValue String then
+        (
+            local h = rawValue
+            if (substring h 1 1) == "#" do h = substring h 2 (h.count - 1)
+            if h.count == 6 then return #(true, (mcpColorFrom rawValue default:current), "")
+        )
+        return #(false, rawValue, "expected [r,g,b] or #rrggbb for a Color property")
+    )
+    -- Intervals, matrices, textures and other object-valued properties: send the
+    -- raw argument and let setProperty decide, since guessing here is worse.
+    #(true, rawValue, "")
+)
+
+/* Did the property really take the value we set?  Compared per class, with a
+   tolerance for floats: a property that stores a float32 will not always read
+   back bit-identical to the double we assigned. */
+fn mcpModValueMatches a b =
+(
+    if a == undefined or b == undefined then return false
+    if isKindOf a BooleanClass or isKindOf b BooleanClass then
+        return ((a as string) == (b as string))
+    if isKindOf a Point3 and isKindOf b Point3 then
+        return ((abs (a.x - b.x) <= 0.000001) and (abs (a.y - b.y) <= 0.000001) and (abs (a.z - b.z) <= 0.000001))
+    if isKindOf a Color and isKindOf b Color then
+        return (a.r == b.r and a.g == b.g and a.b == b.b)
+    if isKindOf a Number and isKindOf b Number then
+    (
+        local fa = a as float
+        local fb = b as float
+        local tol = 0.000001
+        if (abs fb) > 1.0 do tol = tol * (abs fb)
+        return ((abs (fa - fb)) <= tol)
+    )
+    ((a as string) == (b as string))
+)
+
 /* Apply a name->value object to a modifier and report every parameter.
-   Returns #(applied, rejected, failures):
-     applied  - array of property names that were set successfully
-     rejected - array of "name: reason" strings for names the modifier does not
-                expose (unknown / unsupported property), checked via getPropNames
-     failures - array of "name: reason" strings for properties that exist but
-                whose assignment threw (invalid value, type mismatch, read-only)
-   No exception is ever treated as success: a name ends up in exactly one bucket.
-   getPropNames is the authoritative list of settable names for a MAXScript
-   modifier; setProperty on an unknown name raises, which used to be swallowed
-   by an empty catch() and reported as success. */
+   Returns #(applied, rejected, failures, unverified, readback):
+     applied    - properties that took the value AND read back as assigned
+     rejected   - "name: reason" for names the modifier does not expose
+                  (unknown / unsupported property), checked via getPropNames
+     failures   - "name: reason" for properties that exist but could not be
+                  written: unconvertible value, setProperty threw, read-only,
+                  or the read-back disagreed with what was assigned
+     unverified - names that were assigned but whose property cannot be read
+                  back (write-only), so the write is plausible but unproven
+     readback   - object of name -> the value the property actually holds now
+   No exception is ever treated as success: a name ends up in exactly one
+   bucket.  getPropNames is the authoritative list of settable names for a
+   MAXScript modifier; setProperty on an unknown name raises, which used to be
+   swallowed by an empty catch() and reported as success. */
 fn mcpApplyModParams mod paramsObj =
 (
     local applied = #()
     local rejected = #()
     local failures = #()
-    if paramsObj == undefined do return #(applied, rejected, failures)
-    if not (mcpIsObj paramsObj) do return #(applied, rejected, failures)
+    local unverified = #()
+    local readback = mcpObj #()
+    if paramsObj == undefined do return #(applied, rejected, failures, unverified, readback)
+    if not (mcpIsObj paramsObj) do return #(applied, rejected, failures, unverified, readback)
 
     local known = #()
     try ( known = getPropNames mod ) catch ( known = #() )
@@ -88,14 +261,67 @@ fn mcpApplyModParams mod paramsObj =
         )
         else
         (
-            local err = ""
-            try ( setProperty mod k v )
-            catch ( err = (getCurrentException() as string) )
-            if err == "" then append applied ks
-            else append failures (ks + ": " + err)
+            -- The property's current value is the only reliable statement of
+            -- its type, so the conversion target is read from the instance.
+            local current = undefined
+            try ( current = getProperty mod k ) catch ( current = undefined )
+            local coerced = mcpModCoerceValue current v
+            if not coerced[1] then
+            (
+                append failures (ks + ": " + coerced[3])
+            )
+            else
+            (
+                local err = ""
+                try ( setProperty mod k coerced[2] )
+                catch ( err = (getCurrentException() as string) )
+                if err != "" then
+                (
+                    append failures (ks + ": " + err)
+                )
+                else
+                (
+                    local after = undefined
+                    local verifiable = true
+                    try ( after = getProperty mod k ) catch ( verifiable = false )
+                    if not verifiable then
+                    (
+                        append applied ks
+                        append unverified ks
+                    )
+                    else if (mcpModValueMatches after coerced[2]) then
+                    (
+                        append applied ks
+                        mcpPair readback ks after
+                    )
+                    else
+                    (
+                        local want = coerced[2] as string
+                        local got = after as string
+                        append failures (ks + ": read-back mismatch (set " + want + ", property reports " + got + ")")
+                    )
+                )
+            )
         )
     )
-    #(applied, rejected, failures)
+    #(applied, rejected, failures, unverified, readback)
+)
+
+/* One line of "why nothing applied", so a thrown error names the real cause
+   instead of only counting rejections.  Bounded: the transport caps messages. */
+fn mcpModFailureDetail rejected failures limit:4 =
+(
+    local parts = #()
+    for x in rejected do append parts (x as string)
+    for x in failures do append parts (x as string)
+    local out = ""
+    local n = 0
+    for x in parts do
+    (
+        if n < limit do out = out + (if n == 0 then "" else "; ") + x
+        n += 1
+    )
+    out
 )
 
 
@@ -122,6 +348,11 @@ fn mcpH_mod_add params =
 
     local applied = #()
     local failures = #()
+    local rejected = #()
+    local paramFailures = #()
+    local unverified = #()
+    local readback = mcpObj #()
+    local appliedParams = 0
     for n in nodes do
     (
         local ok = true
@@ -133,7 +364,15 @@ fn mcpH_mod_add params =
             newMod = modClass()
             addModifier n newMod
             if customName != "" and n.modifiers.count > before do newMod.name = customName
-            mcpApplyModParams newMod extra
+            -- The modifier is added either way; its parameters are reported
+            -- separately so an unsupported name is visible instead of silently
+            -- dropped the way it was while `params` was declared as an array.
+            local res = mcpApplyModParams newMod extra
+            appliedParams += res[1].count
+            for x in res[2] do append rejected (n.name + ": " + x)
+            for x in res[3] do append paramFailures (n.name + ": " + x)
+            for x in res[4] do append unverified (n.name + ": " + x)
+            for e in (mcpPairs res[5]) do mcpPair readback (n.name + "." + (e[1] as string)) (e[2])
         )
         catch ( ok = false; append failures (n.name + ": " + (getCurrentException())) )
         if ok do append applied n.name
@@ -141,7 +380,14 @@ fn mcpH_mod_add params =
     local p = #()
     mcpPair p "applied" applied
     mcpPair p "failures" failures
-    mcpPair p "message" (mcpMsg "msg.ok")
+    mcpPair p "rejected" rejected
+    mcpPair p "paramFailures" paramFailures
+    mcpPair p "unverified" unverified
+    mcpPair p "readback" readback
+    local partial = (rejected.count > 0 or paramFailures.count > 0)
+    mcpPair p "partial" partial
+    mcpPair p "success" (failures.count == 0 and not partial)
+    mcpPair p "message" (if partial then (mcpMsg "msg.mod_params_partial" a1:(appliedParams as string) a2:(rejected.count as string) a3:(paramFailures.count as string)) else (mcpMsg "msg.ok"))
     mcpObj p
 )
 
@@ -255,6 +501,8 @@ fn mcpH_mod_set_param params =
     local appliedParams = #()
     local rejected = #()
     local failures = #()
+    local unverified = #()
+    local readback = mcpObj #()
     for n in nodes do
     (
         local res = undefined
@@ -279,6 +527,8 @@ fn mcpH_mod_set_param params =
             )
             for x in res[2] do append rejected (n.name + ": " + x)
             for x in res[3] do append failures (n.name + ": " + x)
+            for x in res[4] do append unverified (n.name + ": " + x)
+            for e in (mcpPairs res[5]) do mcpPair readback (n.name + "." + (e[1] as string)) (e[2])
         )
     )
 
@@ -287,9 +537,15 @@ fn mcpH_mod_set_param params =
     mcpPair p "appliedParams" appliedParams
     mcpPair p "rejected" rejected
     mcpPair p "failures" failures
+    mcpPair p "unverified" unverified
+    mcpPair p "readback" readback
     if applied.count == 0 do
-        mcpFail "err.mod_params_failed" a1:(rejected.count as string) a2:(failures.count as string)
-    local partial = (rejected.count > 0 or failures.count > 0)
+    (
+        local detail = mcpModFailureDetail rejected failures
+        local base = mcpMsg "err.mod_params_failed" a1:(rejected.count as string) a2:(failures.count as string)
+        throw (base + (if detail == "" then "" else " " + detail))
+    )
+    local partial = (rejected.count > 0 or failures.count > 0 or unverified.count > 0)
     mcpPair p "partial" partial
     mcpPair p "success" (not partial)
     mcpPair p "message" (if partial then (mcpMsg "msg.mod_params_partial" a1:(applied.count as string) a2:(rejected.count as string) a3:(failures.count as string)) else (mcpMsg "msg.ok"))
@@ -313,6 +569,8 @@ fn mcpH_mod_set_params params =
     local appliedParams = #()
     local rejected = #()
     local failures = #()
+    local unverified = #()
+    local readback = mcpObj #()
     for n in nodes do
     (
         local res = undefined
@@ -334,6 +592,8 @@ fn mcpH_mod_set_params params =
             for x in res[1] do append appliedParams (n.name + "." + x)
             for x in res[2] do append rejected (n.name + ": " + x)
             for x in res[3] do append failures (n.name + ": " + x)
+            for x in res[4] do append unverified (n.name + ": " + x)
+            for e in (mcpPairs res[5]) do mcpPair readback (n.name + "." + (e[1] as string)) (e[2])
         )
     )
 
@@ -342,9 +602,15 @@ fn mcpH_mod_set_params params =
     mcpPair p "appliedParams" appliedParams
     mcpPair p "rejected" rejected
     mcpPair p "failures" failures
+    mcpPair p "unverified" unverified
+    mcpPair p "readback" readback
     if appliedParams.count == 0 do
-        mcpFail "err.mod_params_failed" a1:(rejected.count as string) a2:(failures.count as string)
-    local partial = (rejected.count > 0 or failures.count > 0)
+    (
+        local detail = mcpModFailureDetail rejected failures
+        local base = mcpMsg "err.mod_params_failed" a1:(rejected.count as string) a2:(failures.count as string)
+        throw (base + (if detail == "" then "" else " " + detail))
+    )
+    local partial = (rejected.count > 0 or failures.count > 0 or unverified.count > 0)
     mcpPair p "partial" partial
     mcpPair p "success" (not partial)
     mcpPair p "message" (if partial then (mcpMsg "msg.mod_params_partial" a1:(appliedParams.count as string) a2:(rejected.count as string) a3:(failures.count as string)) else (mcpMsg "msg.ok"))

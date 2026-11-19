@@ -86,8 +86,30 @@ def num3(zh: str, en: str, default: Any = None) -> Dict[str, Any]:
     return _prop("array", zh, en, items={"type": "number"}, minItems=3, maxItems=3, default=default)
 
 
-def obj_schema(name: str = "object", desc_zh: str = "", desc_en: str = "") -> Dict[str, Any]:
-    return _prop("object", desc_zh, desc_en)
+def obj_schema(name: str = "object", desc_zh: str = "", desc_en: str = "",
+               additional: bool = True) -> Dict[str, Any]:
+    """A free-form name -> value object; the caller decides the keys.
+
+    ``additional`` has to stay True for map-like parameters.  ``mod_add`` and
+    ``mod_set_params`` take an object whose property names are whatever the
+    modifier exposes, so a closed schema would let a client-side validator drop
+    every entry before the request is ever sent.
+    """
+    return _prop("object", desc_zh, desc_en, additionalProperties=additional)
+
+
+def any_scalar(zh: str, en: str,
+               types: Sequence[str] = ("integer", "number", "string", "boolean"),
+               examples: Optional[Sequence[Any]] = None) -> Dict[str, Any]:
+    """One JSON scalar whose original type must survive the trip to MAXScript.
+
+    Declaring such a parameter as ``string`` (which is what ``mod_set_param``'s
+    ``value`` used to be) makes the server stringify every argument: the handler
+    then receives ``"3"`` for the number 3 and a typed MAXScript property refuses
+    it.  A union of scalar types is valid JSON Schema, says exactly what is
+    accepted, and leaves the value alone.
+    """
+    return _prop(list(types), zh, en, examples=list(examples) if examples else None)
 
 
 def tool(

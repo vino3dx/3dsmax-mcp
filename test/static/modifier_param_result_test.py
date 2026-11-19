@@ -65,7 +65,7 @@ def main() -> int:
     print("1. mcpApplyModParams classifies every parameter")
     check("mcpApplyModParams is defined", bool(apply_body))
     check("uses getPropNames as supported-name authority", "getPropNames" in apply_body)
-    check("returns three buckets", "#(applied, rejected, failures)" in apply_body)
+    check("returns five buckets", "#(applied, rejected, failures, unverified, readback)" in apply_body)
     check("no empty catch() left in applier",
           re.search(r"catch\s*\(\s*\)", apply_body) is None,
           "an empty catch still swallows errors")
@@ -74,6 +74,24 @@ def main() -> int:
     check("applied only appended after clean setProperty", "append applied ks" in apply_body)
     check("rejected and failures are populated",
           "append rejected" in apply_body and "append failures" in apply_body)
+    check("value is converted before assignment", "mcpModCoerceValue" in apply_body)
+    check("raw argument is never handed to setProperty",
+          re.search(r"setProperty\s+mod\s+k\s+v\b", apply_body) is None,
+          "setProperty mod k v assigns the unconverted JSON value")
+    check("assigned value is read back", "getProperty mod k" in apply_body)
+    check("read-back mismatch is a failure", "read-back mismatch" in apply_body)
+    check("unreadable property is reported, not assumed",
+          "append unverified ks" in apply_body)
+
+    print("1b. value coercion keeps the property's type")
+    coerce_body = function_body(text, "mcpModCoerceValue")
+    check("mcpModCoerceValue is defined", bool(coerce_body))
+    for cls in ("BooleanClass", "Integer", "Number", "String", "Point3", "Color"):
+        check("handles {0} properties".format(cls), cls in coerce_body)
+    check("integer rejects a non-integral float", "f != (floor f)" in function_body(text, "mcpModIntFrom"))
+    check("returns #(ok, value, reason)", "#(true, rawValue, \"\")" in coerce_body)
+    check("matches read-back with a float tolerance",
+          "0.000001" in function_body(text, "mcpModValueMatches"))
 
     print("2. mcpH_mod_set_param (single) honest result")
     check("mcpH_mod_set_param is defined", bool(single_body))
