@@ -194,7 +194,12 @@ def main(argv: List[str]) -> int:
         # -- 5. multi-domain write -------------------------------------------
         _, before_box = bridge.call("context_get", {"sections": ["scene", "objects", "selection"]})
         r5 = before_box.get("revision")
-        ok_box, created = bridge.call("create_box", {"name": PROBE_BOX, "length": 10, "width": 10, "height": 10})
+        # `class` is injected by the MCP server from the tool's catalog preset
+        # (`preset={"class": "Box"}` in catalog/objects.py).  This script talks to
+        # the bridge directly, so it has to supply the preset itself or the
+        # handler fails with err.missing_param:class before it creates anything.
+        ok_box, created = bridge.call("create_box", {"class": "Box", "name": PROBE_BOX,
+                                                     "length": 10, "width": 10, "height": 10})
         if ok_box:
             box_created = True
         _, after_box = bridge.call(

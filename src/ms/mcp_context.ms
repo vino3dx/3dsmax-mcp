@@ -1274,27 +1274,38 @@ fn mcpH_context_stats params =
         local unreadable = #()
         if built do
         (
-            local w = entry[3]
-            if w == undefined do w = anyEntry[3]
-            valid = mcpToBool (mcpGet w "valid") fallback:true
-            supported = mcpToBool (mcpGet w "supported") fallback:true
-            try ( updatedAt = (mcpGet w "updatedAt") as string ) catch ( updatedAt = "" )
-            try ( buildMs = (mcpGet w "buildMs") as integer ) catch ( buildMs = 0 )
-            try
+            -- `cached` false means there is no cache entry at the current
+            -- revision, so `entry` is undefined here and `entry[3]` was an
+            -- index into undefined: context_stats threw "Unknown property or
+            -- index" on exactly the state it exists to describe (built once,
+            -- then invalidated).  The fallback to the last snapshot was already
+            -- written below, one line too late to be reached.
+            local w = undefined
+            if entry != undefined and (isKindOf entry Array) and entry.count >= 3 do w = entry[3]
+            if w == undefined and anyEntry != undefined and (isKindOf anyEntry Array) and anyEntry.count >= 3 do w = anyEntry[3]
+            if w != undefined do
             (
-                local raw = mcpGet w "unreadable"
-                if isKindOf raw Array do unreadable = raw
+                valid = mcpToBool (mcpGet w "valid") fallback:true
+                supported = mcpToBool (mcpGet w "supported") fallback:true
+                try ( updatedAt = (mcpGet w "updatedAt") as string ) catch ( updatedAt = "" )
+                try ( buildMs = (mcpGet w "buildMs") as integer ) catch ( buildMs = 0 )
+                try
+                (
+                    local raw = mcpGet w "unreadable"
+                    if isKindOf raw Array do unreadable = raw
+                )
+                catch()
+                try ( state = (mcpGet w "state") as string ) catch ( state = "" )
+                if state == "" do
+                (
+                    -- Bridge older than the state field: derive the same word so
+                    -- a mixed install still reports one vocabulary.
+                    local staleFlag = mcpToBool (mcpGet w "stale") fallback:false
+                    state = mcpCtxState "" supported staleFlag unreadable
+                )
             )
-            catch()
-            try ( state = (mcpGet w "state") as string ) catch ( state = "" )
-            if state == "" do
-            (
-                -- Bridge older than the state field: derive the same word so a
-                -- mixed install still reports one vocabulary.
-                local staleFlag = mcpToBool (mcpGet w "stale") fallback:false
-                state = mcpCtxState "" supported staleFlag unreadable
-            )
-            -- An older snapshot is stale whatever it said when it was built.
+            -- An older snapshot is stale whatever it said when it was built, and
+            -- a built domain with nothing to read is still not a fresh one.
             if not cached do state = "stale"
         )
 
