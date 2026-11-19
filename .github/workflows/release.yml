@@ -1,0 +1,202 @@
+name: Release
+
+# 两种触发方式：
+#   1) push 一个 v*.*.* 标签（例如 git push origin v0.1.0）→ 自动创建 GitHub Release
+#   2) Actions 页面手动运行（workflow_dispatch）→ 自动创建并推送标签，再创建 Release
+#
+# Release 标题规则：<RELEASE_TITLE_PREFIX>-<tag>，当前为 3dsmax-map-v0.1.0
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "要发布的版本号，不带 v 前缀（例如 0.1.0）"
+        required: true
+        type: string
+      prerelease:
+        description: "标记为 pre-release"
+        required: false
+        type: boolean
+        default: false
+      draft:
+        description: "创建为草稿（不立即公开）"
+        required: false
+        type: boolean
+        default: false
+
+# 创建 Release / 推送标签都需要 contents: write
+permissions:
+  contents: write
+
+# 同一个标签不并发发布，且不取消正在进行的发布
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  RELEASE_TITLE_PREFIX: "3dsmax-map"
+
+jobs:
+  release:
+    name: Tag + Release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Resolve version, tag and title
+        id: meta
+        shell: bash
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
+            RAW="${INPUT_VERSION}"
+          else
+            RAW="${GITHUB_REF_NAME}"
+          fi
+          # 统一去掉可能手写的 v 前缀
+          VERSION="${RAW#v}"
+          if ! printf '%s' "${VERSION}" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?$'; then
+            echo "::error::版本号格式非法：'${RAW}'，期望形如 0.1.0 / 0.1.0-rc.1"
+            exit 1
+          fi
+          TAG="v${VERSION}"
+          TITLE="${RELEASE_TITLE_PREFIX}-${TAG}"
+          {
+            echo "version=${VERSION}"
+            echo "tag=${TAG}"
+            echo "title=${TITLE}"
+          } >> "${GITHUB_OUTPUT}"
+          echo "版本：${VERSION} | 标签：${TAG} | 标题：${TITLE}"
+
+      - name: Verify version consistency
+        shell: bash
+        env:
+          VERSION: ${{ steps.meta.outputs.version }}
+        run: |
+          set -euo pipefail
+          # 发布版本的唯一来源：pyproject.toml / maxmcp.config.VERSION，两者必须与标签一致
+          PYPROJECT_VERSION="$(grep -m1 -E '^version[[:space:]]*=' pyproject.toml | sed -E 's/.*"([^"]+)".*/\1/')"
+          CONFIG_VERSION="$(grep -m1 -E '^VERSION[[:space:]]*=' src/python/maxmcp/config.py | sed -E 's/.*"([^"]+)".*/\1/')"
+          echo "标签版本=${VERSION} pyproject=${PYPROJECT_VERSION} config.VERSION=${CONFIG_VERSION}"
+          FAIL=0
+          if [ "${PYPROJECT_VERSION}" != "${VERSION}" ]; then
+            echo "::error::pyproject.toml 版本 ${PYPROJECT_VERSION} 与标签版本 ${VERSION} 不一致"
+            FAIL=1
+          fi
+          if [ "${CONFIG_VERSION}" != "${VERSION}" ]; then
+            echo "::error::src/python/maxmcp/config.py VERSION ${CONFIG_VERSION} 与标签版本 ${VERSION} 不一致"
+            FAIL=1
+          fi
+          exit "${FAIL}"
+
+      - name: Check whether release already exists
+        id: check
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.meta.outputs.tag }}
+        run: |
+          set -euo pipefail
+          if gh release view "${TAG}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            echo "exists=true" >> "${GITHUB_OUTPUT}"
+            echo "::notice::Release ${TAG} 已存在，跳过创建"
+          else
+            echo "exists=false" >> "${GITHUB_OUTPUT}"
+          fi
+
+      - name: Create and push tag
+        # 只有手动触发时才需要自己打标签；标签触发时标签已经存在
+        if: steps.check.outputs.exists == 'false' && github.event_name == 'workflow_dispatch'
+        shell: bash
+        env:
+          TAG: ${{ steps.meta.outputs.tag }}
+          VERSION: ${{ steps.meta.outputs.version }}
+        run: |
+          set -euo pipefail
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git rev-parse -q --verify "refs/tags/${TAG}" >/dev/null; then
+            echo "本地已存在标签 ${TAG}"
+          else
+            git tag -a "${TAG}" -m "3dsmax-mcp ${TAG}"
+          fi
+          git push origin "refs/tags/${TAG}"
+          echo "已推送标签 ${TAG}（指向 ${GITHUB_SHA}）"
+
+      - name: Extract release notes from CHANGELOG
+        id: notes
+        shell: bash
+        env:
+          VERSION: ${{ steps.meta.outputs.version }}
+        run: |
+          set -euo pipefail
+          NOTES_FILE="${RUNNER_TEMP}/release-notes.md"
+          if [ -f docs/CHANGELOG.md ]; then
+            # 取 "## [x.y.z]" 到下一个 "## [" 之间的内容
+            awk -v ver="${VERSION}" '
+              $0 ~ "^## \\[" ver "\\]" { capture = 1; next }
+              capture && /^## \[/ { exit }
+              capture { print }
+            ' docs/CHANGELOG.md > "${NOTES_FILE}"
+          fi
+          if [ -s "${NOTES_FILE}" ] && grep -q '[^[:space:]]' "${NOTES_FILE}"; then
+            echo "notes_file=${NOTES_FILE}" >> "${GITHUB_OUTPUT}"
+            echo "from_changelog=true" >> "${GITHUB_OUTPUT}"
+            echo "已从 CHANGELOG 提取 ${VERSION} 段落（$(wc -l < "${NOTES_FILE}") 行）"
+          else
+            echo "from_changelog=false" >> "${GITHUB_OUTPUT}"
+            echo "::warning::CHANGELOG 中没有 ${VERSION} 段落，改用 GitHub 自动生成说明"
+          fi
+
+      - name: Create GitHub Release
+        if: steps.check.outputs.exists == 'false'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.meta.outputs.tag }}
+          TITLE: ${{ steps.meta.outputs.title }}
+          NOTES_FILE: ${{ steps.notes.outputs.notes_file }}
+          FROM_CHANGELOG: ${{ steps.notes.outputs.from_changelog }}
+          PRERELEASE: ${{ inputs.prerelease }}
+          DRAFT: ${{ inputs.draft }}
+        run: |
+          set -euo pipefail
+          ARGS=(--repo "${GITHUB_REPOSITORY}" --title "${TITLE}" --verify-tag)
+          if [ "${FROM_CHANGELOG}" = "true" ] && [ -f "${NOTES_FILE}" ]; then
+            ARGS+=(--notes-file "${NOTES_FILE}")
+          else
+            ARGS+=(--generate-notes)
+          fi
+          if [ "${PRERELEASE}" = "true" ]; then ARGS+=(--prerelease); fi
+          if [ "${DRAFT}" = "true" ]; then ARGS+=(--draft); fi
+
+          gh release create "${TAG}" "${ARGS[@]}"
+          echo "已创建 Release：${TITLE}"
+
+      - name: Summary
+        if: steps.check.outputs.exists == 'false'
+        shell: bash
+        env:
+          TAG: ${{ steps.meta.outputs.tag }}
+          TITLE: ${{ steps.meta.outputs.title }}
+        run: |
+          set -euo pipefail
+          {
+            echo "## 发布完成"
+            echo ""
+            echo "| 项目 | 值 |"
+            echo "|---|---|"
+            echo "| 标签 | \`${TAG}\` |"
+            echo "| Release 标题 | ${TITLE} |"
+            echo "| 提交 | \`${GITHUB_SHA}\` |"
+            echo "| 页面 | ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/releases/tag/${TAG} |"
+          } >> "${GITHUB_STEP_SUMMARY}"
