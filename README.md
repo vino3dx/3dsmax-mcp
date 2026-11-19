@@ -18,6 +18,7 @@ An MCP (Model Context Protocol) plugin that gives AI agents full control of Auto
 - [在 AI 客户端中使用](#在-ai-客户端中使用)
 - [接入国产 AI 客户端](#接入国产-ai-客户端)
 - [工具一览](#工具一览)
+- [视觉反馈：让 AI 看到场景](#视觉反馈让-ai-看到场景)
 - [工具档位](#工具档位)
 - [中英双语切换](#中英双语切换)
 - [配置](#配置)
@@ -279,6 +280,103 @@ python -m maxmcp --list-tools
 - **`undo_last` / `begin_undo` / `end_undo` / `cancel_undo`** —— 显式事务，方便让 AI 把"一整套建模操作"合成**一步**撤销。
 - **`bridge_capabilities`** —— 运行时报告桥接模块、命令数、当前语言、Max 版本，AI 可以自己发现能力边界。
 - **`find_missing_assets` / `relink_assets`** —— 换机器打开工程时的贴图重链。
+
+---
+
+## 视觉反馈：让 AI 看到场景
+
+纯文本的工具结果只能告诉 AI「命令执行了」，不能告诉它「这一步到底做成了什么样」——
+对象有没有翻面、材质是不是白的一片、模型有没有跑出画面，JSON 里都看不出来。
+`pipeline` 类目下的三个视觉工具把画面**直接作为 MCP 图片内容块返回**给 AI，形成
+「修改 → 截图 → 检查 → 再修改」的闭环。它们都是只读工具（不写场景）。
+
+> **返回的是图片本身，不是本地路径。** 桥接端只能传 JSON 文本，所以 MAXScript 把
+> 图片的 base64 放在结果的 `_images` 数组里；服务端收到后把每一项转成真正的 MCP
+> `image` content block，文本部分只留下 `images` 描述（label / mimeType /
+> base64Chars）。能显示图片的客户端会直接看到画面；不能显示图片的客户端至少保留
+> 元数据，不会把像素弄丢。`vision_capture` 额外支持用 `path` 参数把图片另存一份到
+> 本机磁盘，方便人自己打开看。
+
+### vision_capture —— 当前视口截图
+
+抓当前活动视口的一帧。参数（均为可选）：
+
+| 参数 | 类型 | 默认 | 说明 |
+| --- | --- | --- | --- |
+| `max_edge` | integer | 800 | 图片长边像素上限，代码钳制在 64–2048 |
+| `format` | string | `jpeg` | `jpeg`（默认，体积小）或 `png`（无损） |
+| `redraw` | boolean | `true` | 抓图前强制重绘；关掉会拿到上一帧的旧画面 |
+| `path` | string | 空 | 可选：同时把图片写到该绝对路径（会自动建目录） |
+
+返回文本含 `width` / `height` / `mime` / `bytes`，图片块的 label 为 `active`；
+写了 `path` 时还会带 `path`。抓图失败（视口无帧缓冲）返回错误，不会假装成功。
+
+### vision_views —— 多视角截图
+
+依次切到多个标准视图各抓一张，**每张都是独立图片块**，不拼成网格图（拼图会被整体
+降采样，每格细节损失数倍）。参数（均为可选）：
+
+| 参数 | 类型 | 默认 | 说明 |
+| --- | --- | --- | --- |
+| `views` | string[] | `["perspective","front","left","top"]` | 可选视角：`perspective` / `front` / `back` / `left` / `right` / `top` / `bottom` / `orthographic` / `user`；代码最多取前 6 个 |
+| `max_edge` | integer | 800 | 每张长边像素，钳制 64–2048 |
+| `format` | string | `jpeg` | `jpeg` 或 `png` |
+| `fit` | boolean | `true` | 抓图前缩放视图到场景（有选择时缩放到选择） |
+| `restore` | boolean | `true` | 抓完后恢复原视图类型与视角 |
+
+返回文本含 `count`、`max_edge` 和 `views`（每张的 view / width / height），每张图片的
+label 就是视角名。有选择集但没抓到任何一张时返回错误。
+
+### vision_preview —— 渲染预览
+
+低分辨率渲染一张预览图，**唯一一个参数**是 `max_edge`（integer，默认 640，钳制
+64–1600，越大越慢）。视口截图不反映真实材质和灯光，确认灯光、材质、最终外观时用这个。
+输出固定为 `image/jpeg`，图片块 label 为 `render`。场景改动后第一次渲染可能要几十秒
+（着色器编译），这不是卡死。
+
+### Agent 怎么用截图
+
+AI 在一个操作回合里的典型闭环：
+
+1. **动手前**先看一眼：`vision_capture` 确认当前状态，避免基于臆测修改。
+2. **每步改动后**抓一张：改完几何体 / 材质 / 灯光就 `vision_capture`，看这一步实际
+   做成了什么，而不是只信工具返回的 `ok`。
+3. **看全貌**用 `vision_views`：判断比例、朝向、空间关系，或检查背面 / 顶部有没有问题。
+4. **验收外观**用 `vision_preview`：材质和灯光的最终效果只有渲染图能确认。
+5. **发现问题就回到第 2 步**：把截图发现的问题和预期对比，继续修改并重新截图，直到
+   画面符合预期。
+
+这样能发现纯文本工具发现不了的问题：模型翻面、材质丢失变白、对象出画、灯光过曝、
+比例失真等。截图回灌不新增工具，只是把已有的三个视觉工具用进验证环节。
+
+### 可复制的调用示例
+
+```jsonc
+// 当前视口截图，长边压到 640，另存一份到本机
+{ "name": "vision_capture",
+  "arguments": { "max_edge": 640, "format": "jpeg", "redraw": true,
+                 "path": "D:/renders/check.png" } }
+
+// 一次抓透视 + 前 + 顶三个独立视角
+{ "name": "vision_views",
+  "arguments": { "views": ["perspective", "front", "top"],
+                 "max_edge": 800, "fit": true, "restore": true } }
+
+// 渲染一张 640px 预览确认材质灯光
+{ "name": "vision_preview", "arguments": { "max_edge": 640 } }
+```
+
+### 限制（以代码为准）
+
+- **视口状态依赖**：`vision_capture` 抓的是当前活动视口；`redraw=false` 会拿到上一帧旧画面。
+  视口被遮挡、最小化或无帧缓冲时抓取失败并返回错误。
+- **多视角有上限**：`vision_views` 最多取前 6 个视角；每张图都要切视图 + 重绘，视角越多越慢。
+- **渲染耗时**：`vision_preview` 场景改动后首次渲染可能数十秒（着色器编译）；它依赖当前
+  渲染器，不同渲染器结果和耗时不同。
+- **图片尺寸**：`vision_capture` / `vision_views` 的 `max_edge` 钳制在 64–2048，
+  `vision_preview` 在 64–1600；`vision_preview` 按当前渲染宽高比算高，固定输出 jpeg。
+- **上下文体积**：图片比文本占额度得多，`max_edge` 越大越清楚也越慢、越占上下文；按需调低。
+- **纯文本客户端**：只能看到 `images` 元数据（label / mimeType / base64Chars），看不到画面。
 
 ---
 

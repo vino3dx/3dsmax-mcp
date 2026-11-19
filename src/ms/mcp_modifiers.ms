@@ -16,6 +16,7 @@ global mcpH_mod_add, mcpH_mod_remove, mcpH_mod_list, mcpH_mod_get_params
 global mcpH_mod_set_param, mcpH_mod_set_params, mcpH_mod_enable, mcpH_mod_disable
 global mcpH_mod_reorder, mcpH_mod_rename, mcpH_mod_get_gizmo_info
 global mcpH_mod_set_sub_object_selection
+global mcpSetOneModParam, mcpApplyModParams
 global mcpH_model_extrude_spline, mcpH_model_lathe_spline, mcpH_model_loft, mcpH_model_sweep
 
 
@@ -50,20 +51,51 @@ fn mcpFindModifier node spec =
     undefined
 )
 
+/* Apply a name->value object to a modifier and report every parameter.
+   Returns #(applied, rejected, failures):
+     applied  - array of property names that were set successfully
+     rejected - array of "name: reason" strings for names the modifier does not
+                expose (unknown / unsupported property), checked via getPropNames
+     failures - array of "name: reason" strings for properties that exist but
+                whose assignment threw (invalid value, type mismatch, read-only)
+   No exception is ever treated as success: a name ends up in exactly one bucket.
+   getPropNames is the authoritative list of settable names for a MAXScript
+   modifier; setProperty on an unknown name raises, which used to be swallowed
+   by an empty catch() and reported as success. */
 fn mcpApplyModParams mod paramsObj =
 (
-    -- A bare "return" (no value) is not a valid factor in the one-line "do"
-    -- form, so the guard returns an explicit value instead.
-    if paramsObj == undefined do return undefined
-    if not (mcpIsObj paramsObj) do return undefined
-    local entries = mcpPairs paramsObj
-    for e in entries do
+    local applied = #()
+    local rejected = #()
+    local failures = #()
+    if paramsObj == undefined do return #(applied, rejected, failures)
+    if not (mcpIsObj paramsObj) do return #(applied, rejected, failures)
+
+    local known = #()
+    try ( known = getPropNames mod ) catch ( known = #() )
+    local knownNames = #()
+    for nm in known do append knownNames (nm as string)
+
+    for e in (mcpPairs paramsObj) do
     (
         local k = e[1]
         local v = e[2]
-        try ( setProperty mod k v ) catch()
+        local ks = k as string
+        local found = false
+        for kn in knownNames do ( if kn == ks do ( found = true; exit ) )
+        if not found then
+        (
+            append rejected (ks + ": unsupported parameter")
+        )
+        else
+        (
+            local err = ""
+            try ( setProperty mod k v )
+            catch ( err = (getCurrentException() as string) )
+            if err == "" then append applied ks
+            else append failures (ks + ": " + err)
+        )
     )
-    ok
+    #(applied, rejected, failures)
 )
 
 
@@ -207,6 +239,11 @@ fn mcpH_mod_get_params params =
 
 
 /*-------------------------------------------------------------- mod_set_param */
+/* Set one property on the named modifier of each object.  Every outcome is
+   accounted for: a name the modifier does not expose is "rejected", a name
+   that exists but cannot be assigned is a "failure", and only a genuinely
+   assigned value lands in "applied".  If nothing was applied the handler
+   throws, which the transport turns into MCP isError instead of a fake ok. */
 fn mcpH_mod_set_param params =
 (
     local nodes = mcpResolveNodes (mcpArr params "objects") fallbackToSelection:true
@@ -215,28 +252,56 @@ fn mcpH_mod_set_param params =
     local value = mcpGet params "value"
     if value == undefined do mcpFail "err.missing_param" a1:"value"
     local applied = #()
+    local appliedParams = #()
+    local rejected = #()
     local failures = #()
     for n in nodes do
     (
-        local ok = true
+        local res = undefined
+        local err = ""
         try
         (
             local m = mcpFindModifier n spec
             if m == undefined do mcpFail "msg.no_modifier" a1:n.name a2:spec
-            setProperty m pname value
-            append applied n.name
+            res = mcpApplyModParams m (mcpObj #(#(pname, value)))
         )
-        catch ( ok = false; append failures (n.name + ": " + (getCurrentException())) )
+        catch ( err = (getCurrentException() as string) )
+        if err != "" then
+        (
+            append failures (n.name + ": " + err)
+        )
+        else
+        (
+            if res[1].count > 0 do
+            (
+                append applied n.name
+                append appliedParams (pname as string)
+            )
+            for x in res[2] do append rejected (n.name + ": " + x)
+            for x in res[3] do append failures (n.name + ": " + x)
+        )
     )
+
     local p = #()
     mcpPair p "applied" applied
+    mcpPair p "appliedParams" appliedParams
+    mcpPair p "rejected" rejected
     mcpPair p "failures" failures
-    mcpPair p "message" (mcpMsg "msg.ok")
+    if applied.count == 0 do
+        mcpFail "err.mod_params_failed" a1:(rejected.count as string) a2:(failures.count as string)
+    local partial = (rejected.count > 0 or failures.count > 0)
+    mcpPair p "partial" partial
+    mcpPair p "success" (not partial)
+    mcpPair p "message" (if partial then (mcpMsg "msg.mod_params_partial" a1:(applied.count as string) a2:(rejected.count as string) a3:(failures.count as string)) else (mcpMsg "msg.ok"))
     mcpObj p
 )
 
 
 /*-------------------------------------------------------------- mod_set_params */
+/* Batch version of mod_set_param.  mcpApplyModParams classifies every single
+   name/value pair, so a response can be all-success, partial, or all-failed.
+   All-failed throws; partial is explicitly marked (partial:true, success:false)
+   and lists exactly which parameters were rejected or threw. */
 fn mcpH_mod_set_params params =
 (
     local nodes = mcpResolveNodes (mcpArr params "objects") fallbackToSelection:true
@@ -245,23 +310,44 @@ fn mcpH_mod_set_params params =
     if paramsObj == undefined do mcpFail "err.missing_param" a1:"params"
     if not (mcpIsObj paramsObj) do mcpFail "err.bad_value" a1:"params"
     local applied = #()
+    local appliedParams = #()
+    local rejected = #()
     local failures = #()
     for n in nodes do
     (
-        local ok = true
+        local res = undefined
+        local err = ""
         try
         (
             local m = mcpFindModifier n spec
             if m == undefined do mcpFail "msg.no_modifier" a1:n.name a2:spec
-            mcpApplyModParams m paramsObj
-            append applied n.name
+            res = mcpApplyModParams m paramsObj
         )
-        catch ( ok = false; append failures (n.name + ": " + (getCurrentException())) )
+        catch ( err = (getCurrentException() as string) )
+        if err != "" then
+        (
+            append failures (n.name + ": " + err)
+        )
+        else
+        (
+            if res[1].count > 0 do append applied n.name
+            for x in res[1] do append appliedParams (n.name + "." + x)
+            for x in res[2] do append rejected (n.name + ": " + x)
+            for x in res[3] do append failures (n.name + ": " + x)
+        )
     )
+
     local p = #()
     mcpPair p "applied" applied
+    mcpPair p "appliedParams" appliedParams
+    mcpPair p "rejected" rejected
     mcpPair p "failures" failures
-    mcpPair p "message" (mcpMsg "msg.ok")
+    if appliedParams.count == 0 do
+        mcpFail "err.mod_params_failed" a1:(rejected.count as string) a2:(failures.count as string)
+    local partial = (rejected.count > 0 or failures.count > 0)
+    mcpPair p "partial" partial
+    mcpPair p "success" (not partial)
+    mcpPair p "message" (if partial then (mcpMsg "msg.mod_params_partial" a1:(appliedParams.count as string) a2:(rejected.count as string) a3:(failures.count as string)) else (mcpMsg "msg.ok"))
     mcpObj p
 )
 
