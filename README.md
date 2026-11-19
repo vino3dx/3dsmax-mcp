@@ -751,7 +751,7 @@ mcpSelfTest()
 │   └── logs/                  # 证据与日志，按日期归档（gitignored）
 ├── docs/
 │   ├── BRIDGE_CONVENTIONS.md  # 桥接契约与编码规范
-│   ├── LIVE_MATRIX.md         # 384 工具 × 实机状态矩阵（生成物）
+│   ├── LIVE_MATRIX.md         # 389 工具 × 实机状态矩阵（生成物）
 │   ├── OFFLINE_LINT_GUIDE.md  # 离线门禁使用指南
 │   ├── P0_ENV.md              # Max 启动崩溃调查环境记录
 │   ├── TOOL_PROFILES_PROPOSAL.md
