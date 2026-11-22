@@ -428,8 +428,10 @@ class MaxMcpServer:
         self.transport = transport or StdioTransport()
         self.catalog: Catalog = build_catalog()
         self.bridge = MaxBridge(self.config)
-        self.runtime = SceneRuntime(self.bridge.call)
-        self.batch = BatchExecutor(self.bridge.call)
+        # Forward through self.bridge dynamically so tests that swap server.bridge
+        # after construction still route runtime/batch calls through the stub.
+        self.runtime = SceneRuntime(lambda m, p=None: self.bridge.call(m, p))
+        self.batch = BatchExecutor(lambda m, p=None: self.bridge.call(m, p))
         # Stitches the incremental context_get replies into a complete snapshot
         # so the resource endpoint never has to re-read every domain.
         self.context_cache = SceneContextCache()

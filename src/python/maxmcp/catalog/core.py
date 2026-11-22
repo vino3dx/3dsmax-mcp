@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from typing import List
 
+from .domains import ALL_DOMAINS
 from .schema import Tool, arr, b, i, n, obj_schema, s, tool
 
 TOOLS: List[Tool] = []
@@ -466,6 +467,7 @@ TOOLS.append(tool(
     },
     mutating=True,
     local=True,
+    mutates=ALL_DOMAINS,
 ))
 
 
