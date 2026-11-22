@@ -24,6 +24,7 @@ global mcpH_hide_objects, mcpH_unhide_all, mcpH_unhide_objects
 global mcpH_freeze_objects, mcpH_unfreeze_all, mcpH_rename_object, mcpH_delete_objects
 global mcpH_clone_objects, mcpH_array_objects, mcpH_attach_objects, mcpH_detach_elements
 global mcpH_count_objects, mcpH_boolean_operation, mcpH_proboolean
+global mcpBooleanOpCode, mcpBooleanOpName, mcpBooleanRun, mcpBooleanPayload
 global mcpObjL
 
 
@@ -1140,60 +1141,122 @@ fn mcpH_count_objects params =
 
 
 /*------------------------------------------------------------------ booleans*/
-fn mcpH_boolean_operation params =
-(
-    local nodes = mcpResolveNodes (mcpArr params "objects") fallbackToSelection:true
-    if nodes.count < 2 do mcpFail "err.bad_value" a1:"objects"
-    local op = mcpStr params "operation" default:"union"
-    local opName = #union
-    if op == "subtract" then opName = #subtraction
-    else if op == "intersect" then opName = #intersection
-    else if op == "merge" then opName = #union
-    else ( opName = #union )
 
-    local result = nodes[1]
-    for i = 2 to nodes.count do
+/* Operation codes are the 0-based radio-button states of the ProBoolean UI:
+   0 union, 1 intersection, 2 subtraction, 3 merge.  (The previous code mapped
+   subtract/intersect to 1/2, which silently ran the wrong operation.) */
+fn mcpBooleanOpCode op =
+(
+    local o = toLower (op as string)
+    if o == "intersect" or o == "intersection" then return 1
+    if o == "subtract" or o == "subtraction" or o == "difference" then return 2
+    if o == "merge" then return 3
+    0
+)
+
+fn mcpBooleanOpName opb =
+(
+    if opb == 1 do return "intersect"
+    if opb == 2 do return "subtract"
+    if opb == 3 do return "merge"
+    "union"
+)
+
+/* Run a CSG boolean and return #(resultNode, engine, operandCount).
+
+   ProBoolean is the primary engine.  Its MAXScript entry point is the
+   PolyBoolean interface exposed on the ProBoolean class:
+
+       ProBoolean.createBooleanObjects <operandA> #(<operandsB>) op addMethod matMethod
+
+   with op as above, addMethod 0=reference 1=copy 2=move 3=instance and
+   matMethod 0=apply operand method 1=retain original material.
+
+   When that path is unavailable we fall back to the classic boolean2
+   operation.  Both paths either produce a node or raise -- the old code
+   wrapped every call in an empty catch(), so a failed boolean still reported
+   "done" and the caller ended up with the untouched first object. */
+fn mcpBooleanRun nodes op addMethod matMethod =
+(
+    local base = nodes[1]
+    local operands = #()
+    for i = 2 to nodes.count do append operands nodes[i]
+    local opb = mcpBooleanOpCode op
+
+    local engine = ""
+    local ok = false
+    local errMsg = ""
+
+    if mcpClassExists "ProBoolean" then
     (
-        try ( result = boolean2 result nodes[i] operation:opName ) catch()
+        try
+        (
+            ProBoolean.createBooleanObjects base operands opb addMethod matMethod
+            engine = "proboolean"
+            ok = true
+        )
+        catch ( errMsg = getCurrentException(); ok = false )
     )
+
+    if not ok then
+    (
+        local opName = #union
+        if opb == 1 do opName = #intersection
+        if opb == 2 do opName = #subtraction
+        local res = base
+        local fallbackOk = true
+        local fbErr = ""
+        for o in operands do
+        (
+            try ( res = boolean2 res o operation:opName )
+            catch ( fallbackOk = false; fbErr = getCurrentException() )
+        )
+        if not fallbackOk do
+        (
+            local why = if errMsg != "" then errMsg else fbErr
+            mcpFail "err.bad_value" a1:("boolean (" + (mcpBooleanOpName opb) + "): " + why)
+        )
+        base = res
+        engine = "boolean2"
+    )
+
+    #(base, engine, operands.count)
+)
+
+fn mcpBooleanPayload nodes op addMethod matMethod =
+(
+    local r = mcpBooleanRun nodes op addMethod matMethod
+    local result = r[1]
     local p = #()
+    mcpPair p "engine" r[2]
+    mcpPair p "operation" (mcpBooleanOpName (mcpBooleanOpCode op))
+    mcpPair p "operands" r[3]
     mcpPair p "result" (mcpNodeInfo result)
     mcpPair p "message" (mcpMsg "msg.ok")
     mcpObj p
 )
 
+fn mcpH_boolean_operation params =
+(
+    local nodes = mcpResolveNodes (mcpArr params "objects") fallbackToSelection:true
+    if nodes.count < 2 do mcpFail "err.bad_value" a1:"objects"
+    local op = mcpStr params "operation" default:"union"
+    local addMethod = mcpInt params "addMethod" default:2
+    local matMethod = mcpInt params "materialMethod" default:0
+    mcpBooleanPayload nodes op addMethod matMethod
+)
 
 fn mcpH_proboolean params =
 (
     local nodes = mcpResolveNodes (mcpArr params "objects") fallbackToSelection:true
     if nodes.count < 2 do mcpFail "err.bad_value" a1:"objects"
     if not (mcpClassExists "ProBoolean") do mcpFail "err.class_missing" a1:"ProBoolean"
-
     local op = mcpStr params "operation" default:"union"
-    local opb = 0
-    if op == "subtract" then opb = 1
-    else if op == "intersect" then opb = 2
-    else if op == "merge" then opb = 3
-    else ( opb = 0 )
-
-    try
-    (
-        proBoolean.SetOperation opb
-        proBoolean.SetShowNewObjectsOnly false
-        proBoolean.InitialObject nodes[1] false
-        for i = 2 to nodes.count do proBoolean.AddObjectToFirst nodes[1] nodes[i] false
-        proBoolean.MakeSelection 4
-        proBoolean.Commit()
-        proBoolean.Close()
-        proBoolean.Update()
-    )
-    catch ( mcpFail "err.bad_value" a1:(getCurrentException()) )
-
+    local addMethod = mcpInt params "addMethod" default:2
+    local matMethod = mcpInt params "materialMethod" default:0
+    local payload = mcpBooleanPayload nodes op addMethod matMethod
     mcpRedraw()
-    local p = #()
-    mcpPair p "result" (mcpNodeInfo nodes[1])
-    mcpPair p "message" (mcpMsg "msg.ok")
-    mcpObj p
+    payload
 )
 
 

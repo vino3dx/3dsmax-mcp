@@ -27,17 +27,36 @@ REPO = os.path.dirname(os.path.dirname(HERE))
 sys.path.insert(0, os.path.join(REPO, "src", "python"))
 
 MS_DIR = os.path.join(REPO, "src", "ms")
-ENU_DIR = os.path.join(
-    os.environ.get("LOCALAPPDATA", ""),
-    "Autodesk", "3dsMax", "2020 - 64bit", "ENU", "scripts", "3dsmax-mcp",
-)
-CHS_DIR = os.path.join(
-    os.environ.get("LOCALAPPDATA", ""),
-    "Autodesk", "3dsMax", "2020 - 64bit", "CHS", "scripts", "3dsmax-mcp",
-)
+
+#: Deployed trees are discovered, not hardcoded to one release: the years vary
+#: per machine (2020, 2022, 2025 ...), and a hardcoded path silently skipped the
+#: whole deployment comparison on any machine that did not have that exact year
+#: installed -- a check that cannot fail is worse than no check.
+def deployed_dirs():
+    local = os.environ.get("LOCALAPPDATA", "")
+    roots = [os.path.join(local, "Autodesk", "3dsMax")]
+    out = []
+    for root in roots:
+        if not os.path.isdir(root):
+            continue
+        for version in sorted(os.listdir(root)):
+            for lang in ("ENU", "CHS"):
+                candidate = os.path.join(root, version, lang, "scripts", "3dsmax-mcp")
+                if os.path.isdir(candidate):
+                    out.append(("{0}/{1}".format(version, lang), candidate))
+    return out
 
 REGISTER_RE = re.compile(r'mcpRegister\s+"([A-Za-z0-9_]+)"')
 LOADER_RE = re.compile(r'"([A-Za-z0-9_]+\.ms)"')
+
+#: Commands that are deliberately reachable only from inside 3ds Max.
+#:
+#: `bridge_stop` closes the listener and stops the pump that would have carried
+#: the reply, so an AI client that called it would lose its only channel with
+#: nothing on the MCP side able to reopen it (Phase B F14).  It stays registered
+#: for the Max panel and the MAXScript Listener, where a human is present, and
+#: is therefore intentionally not reachable from any tool.
+INTERNAL_ONLY = {"bridge_stop"}
 
 
 def md5(path: str) -> str:
@@ -88,7 +107,7 @@ def main() -> int:
                         % ", ".join("%s->%s" % m for m in missing[:20]))
 
     # 2. maxscript -> python
-    orphans = sorted(repo_cmds - {e.bridge_method for e in catalog if not e.local})
+    orphans = sorted(repo_cmds - {e.bridge_method for e in catalog if not e.local} - INTERNAL_ONLY)
     if orphans:
         problems.append("MAXScript commands with no Python tool: %s" % ", ".join(orphans[:20]))
 
@@ -106,11 +125,17 @@ def main() -> int:
         if unlisted:
             problems.append("module(s) on disk but not loaded by mcp_bridge.ms: %s" % ", ".join(unlisted))
 
-    # 4. deployed trees: ENU == CHS == repo (byte-exact deployment)
+    # 4. deployed trees: every installed tree == repo (the repo is canonical and
+    #    install.py copies byte-for-byte).
+    #
+    # Reported as a warning rather than a failure: the deployed copy is a build
+    # artefact, so "the installed tree is older than the repo" is an installation
+    # step the user has to take, while "the deployed copy was edited by hand"
+    # is what the comparison exists to expose.  Both are printed either way, and
+    # this check never skips silently any more.
     drift = []
-    for label, deployed in (("ENU", ENU_DIR), ("CHS", CHS_DIR)):
-        if not os.path.isdir(deployed):
-            continue
+    trees = deployed_dirs()
+    for label, deployed in trees:
         dep_files = ms_files(deployed)
         if dep_files != repo_files:
             drift.append("%s file set differs (repo-only=%s deployed-only=%s)"
@@ -119,8 +144,11 @@ def main() -> int:
             if md5(os.path.join(MS_DIR, f)) != md5(os.path.join(deployed, f)):
                 drift.append("%s: %s differs from src/ms" % (label, f))
     if drift:
-        problems.append("deployed tree drifted from the repo (edit src/ms and re-run install.py): %s"
-                        % "; ".join(drift[:10]))
+        print("\ndeployed tree drifted from src/ms (re-run python scripts/install.py to deploy):")
+        for line in drift[:12]:
+            print("  ~ %s" % line)
+    if not trees:
+        print("\nno deployed 3ds Max script tree found under LOCALAPPDATA; deployment not compared")
 
     print("=== registration sync ===")
     print("python tools          : %d" % len(catalog))

@@ -32,7 +32,7 @@ global mcpReqStr, mcpReqNum, mcpReqInt
 global mcpJsonParse, mcpJsonStringify
 global mcpJsonEscape, mcpJsonNumber, mcpNeedsEscaping, mcpWireToAnsi, mcpHexToInt, mcpHex2Byte
 global mcpZeroRun, mcpExponentToDecimal
-global mcpStringJoin, mcpStringSplit, mcpJoinStrings, mcpBridgeLog
+global mcpStringJoin, mcpStringSplit, mcpJoinStrings, mcpBridgeLog, mcpErrText, mcpToBool
 global mcpListToJson, mcpAnsiBytesToString, mcpStringToAnsiBytes
 
 MCP_MARKER = #mcpobj
@@ -175,6 +175,43 @@ fn mcpStringJoin parts sep =
 )
 
 fn mcpJoinStrings parts sep = ( mcpStringJoin parts sep )
+
+/* `true as boolean` raises in MAXScript -- a Boolean cannot be coerced to
+   Boolean, which is not obvious and turns every "read a flag back" into a
+   silent false.  Every boolean that comes back out of a payload goes through
+   here instead of a cast. */
+fn mcpToBool v fallback:false =
+(
+    if v == undefined then fallback
+    else if isKindOf v Boolean then v
+    else if isKindOf v Number then ( v != 0 )
+    else if isKindOf v String then
+        ( local s = toLower v; s == "true" or s == "1" or s == "yes" )
+    else fallback
+)
+
+/* Every error string that leaves the bridge goes through this.  Not cosmetic:
+   `getCurrentException()` on a struct member that does not exist dumps the
+   whole struct -- polyop alone is about 6 KB of text -- and that lands in the
+   JSON response, in the panel page and in context sections.  The contract is
+   one flat line, at most maxLen characters, with the dropped remainder counted
+   so a truncated message never looks like a complete one. */
+fn mcpErrText exc maxLen:400 =
+(
+    local s = ""
+    if exc == undefined then return s
+    try ( s = exc as string ) catch ( s = "" )
+    if s == undefined then s = ""
+    -- Newlines and tabs inside an exception become one flat line; a multi-line
+    -- error is unreadable once it is inside a JSON string field.
+    s = substituteString s "\r\n" " "
+    s = substituteString s "\n" " "
+    s = substituteString s "\r" " "
+    s = substituteString s "\t" " "
+    if s.count <= maxLen then return s
+    local dropped = s.count - maxLen
+    (substring s 1 maxLen) + " ...(+" + (dropped as string) + " chars)"
+)
 
 fn mcpStringSplit text sep =
 (

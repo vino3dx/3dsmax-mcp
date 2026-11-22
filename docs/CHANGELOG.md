@@ -4,10 +4,14 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.1.0] - 2026-11-18
+
+`0.1.0` is the first public release, and the version number restarts here. The
+`1.0.0`–`1.2.0` sections below are the earlier internal numbering of the same
+code base and are kept unchanged for history; they never shipped under a public
+tag. `pyproject.toml` and `maxmcp.config.VERSION` both report `0.1.0`.
 
 ### Added
-
 - **Animation / Rigging outcomes are now evidence, not an echo (Stage 9).**
   A handler that answers `mcpPair p "objects" (for n in nodes collect n.name)`
   reports success even when every node was skipped, because the runtime reads
@@ -291,6 +295,199 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `from_wire` treats strings outside the latin-1 range as already decoded, so
   localized MAXScript diagnostics are no longer turned into mojibake when a
   result envelope mixes decoded text with raw bridge payloads.
+- **Scene context layer: the bridge now knows what is in the scene before a tool
+  asks.** Until now every question about the scene cost its own round trip, and
+  an agent that wanted "what is selected and what is it made of" had to stitch
+  four tools together and still guess at the rest. Three new modules change
+  that.
+
+  `src/ms/mcp_events.ms` is the listener layer. Notifications are registered
+  through `try` and then *reported*, never assumed: on the 2022 build measured
+  here `callbacks.addScript` accepts 20 of the 55 documented notifications and
+  rejects 35 (including `#nodeAdded`, `#nodeDeleted`, `#preSave`, `#postSave`,
+  `#preOpen`, `#postOpen`, `#preReset`), `id:` must be a `Name` rather than an
+  integer, `NodeEventCallback` requires exactly two parameters or it silently
+  registers and never fires, and `SceneEventCallback` does not exist on this
+  release at all. `context_stats.eventsCapabilities` therefore publishes what
+  actually bound on the running build, and `mcpCtxTick`'s identity check
+  (object count, selection count, file path — every 8th tick, O(1)) covers the
+  changes that have no notification: file > new, reset, merge, and a script
+  editing the scene outside MCP.
+
+  `src/ms/mcp_context.ms` is the data layer: nine domains (scene, selection,
+  objects, materials, assets, animation, rigging, render, project), each built
+  on demand, cached once, and tagged with `domain / revision / updatedAt /
+  source / valid / supported / stale / buildMs / error`. `valid`, `supported`
+  and `stale` are deliberately separate: a read that threw is not an API that
+  is missing, and neither is the same thing as data older than the domain's
+  last change. Nothing is cached that was not read, and a failed collector
+  reports `valid:false` instead of a zero. Object
+  classification goes through `mcpCtxSuperKind`, which normalises
+  `superclassof` — measured here it answers `GeometryClass` but `shape`,
+  `light`, `camera`, `helper` in lower case, which is why the existing
+  `scene_statistics` had been reporting every one of 65 objects as `other`.
+
+  `src/ms/mcp_ui.ms` is the in-Max panel ("Vino 3dsMax MCP", seven read-only
+  pages over a WinForms `TabControl`), opened through `client_ui` or the
+  `Vino3dsMaxMCP` macroScript. Four of the pages are the ones the client
+  contract names -- Connection, Context, Events, Diagnostics -- and they are
+  counters only. Scene / Selection / Assets are detail views backed by the
+  context cache: Refresh never rebuilds, a separate Rebuild button does, and a
+  detail page that has no current snapshot shows the previous one under an
+  explicit `STALE SNAPSHOT` banner rather than an empty pane.
+
+  Six tools join the catalog (384 -> 390): `context_get`, `context_refresh`,
+  `context_stats`, `context_events`, `client_ui`, `client_status`, plus the
+  `context` category, and an MCP resource `max://scene/context` with a
+  `max://scene/context/{domain}` template, since a resource is the natural
+  shape for "read the scene" and does not consume a tool slot.
+
+- **`since` is a global revision, and the two counters behind it are documented
+  in the code that uses them.** The first draft compared the caller's `since`
+  (a global revision) against each domain's cache key. Those are different
+  counters, so a domain that had changed once — key `1` while the global
+  revision was already `40` — was reported as unchanged and the update was
+  lost. Each domain now keeps `mcpCtxStamp` (the global revision at its last
+  change, which is what `since` compares against) and `mcpCtxSent` (the stamp
+  last delivered, so a domain the caller has never received is never skipped).
+  `context_get` was verified end-to-end against the running scene: a material
+  creation rebuilds `scene` and `materials` and skips the other seven; a
+  selection change rebuilds `scene`, `selection` and `objects`.
+
+- **`context_get`'s per-tool invalidation table is derived from the tool name,
+  not a blanket guess.** `mcpEvAfterWrite` originally marked `scene + objects +
+  selection` for every write, which invalidated three domains on every call and
+  made the incremental path useless for the domains that matter. The catalog
+  names tools `<prefix>_<verb><noun>`, so `mcpEvDomainsForMethod` maps all 55
+  mutating prefixes (`mat` -> materials, `mod`/`poly` -> objects+selection,
+  `rig`/`constraint` -> rigging+objects, and so on) and keeps the broad
+  conservative set only for `execute_maxscript`/`execute_python` and unknown
+  prefixes. `scene` stays unconditional: it holds `objectCount`,
+  `selectionCount`, `currentFrame` and `modified`, and costs 0-1 ms to rebuild.
+
+- **`src/python/maxmcp/context.py` stitches the incremental replies back into a
+  complete snapshot.** `context_get(since=...)` returns deltas by design, which
+  leaves every full-picture caller — the resource endpoint, a panel, an agent
+  that just reconnected — to do the bookkeeping. `SceneContextCache` does it
+  once, server-side: it never fabricates a section it has not read
+  (`complete`/`missing` say which), it reports the bridge's revision rather
+  than a local counter, it drops a stored section when the bridge sends that
+  domain unreadably instead of serving a value just declared out of date, and a
+  revision that moves backwards (Max restarted, bridge reloaded, another scene
+  opened) clears the whole cache instead of mixing two sessions. Covered by
+  `test/static/context_cache_test.py`.
+
+- **The panel can now start the bridge.** The Connection page gains a
+  Start / Restart button that calls `mcpNetStart()` directly from inside Max,
+  with the live address, client count and up/down state on a label beside it.
+  It only ever starts or restarts — there is deliberately no Stop, because the
+  listener is the only channel a client has into Max. `bridge_restart`'s
+  description now says the same thing instead of implying it can rescue a
+  stopped bridge.
+
+### Fixed
+
+- **`context_stats.lastRefreshMs` published Max's uptime instead of a
+  duration.** The refresh handler assigned `mcpCtxLastFullScan = (timeStamp())`,
+  and `timeStamp()` is the number of milliseconds since Max started, so the
+  field that means "how long the last refresh took" reported `32243072` after a
+  refresh that took about 150 ms. It now measures `(timeStamp()) - t0` and the
+  refresh response returns the same number as `elapsedMs`, so a caller can see
+  the cost of its own call without a second round trip. Live after the fix: 2 ms
+  for all nine domains on a four-object scene. Covered by
+  `test/static/context_stats_units_test.py`, which also pins the three-way
+  provenance on the stats rows (`valid` / `stale` / `supported`) so a later
+  refactor cannot collapse them back into one flag.
+- **`bridge_stop` was a one-way door.** `mcpNetStop()` stops the 25 ms pump
+  timer, closes the listener and sets `mcpRunning = false`; the pump is the
+  only code that ever runs in Max, so once it is gone nothing can bring the
+  listener back. The `bridge_restart` tool exists and `server.py` even treats
+  its failure as expected, but the command has to travel over the socket that
+  was just closed, so it can never arrive — measured here, every call after a
+  stop returned `protocol_error` indefinitely and recovery required typing
+  `mcpNetStart()` into the MAXScript Listener by hand. The panel button above
+  is the in-product way back. Covered by `test/static/bridge_recovery_test.py`.
+  The client half is covered separately by
+  `test/static/bridge_reconnect_test.py`, which kills and restarts a fake peer
+  on the same port and asserts the *same* `MaxBridge` object works again after
+  exactly one new connection — the earlier attempt to test recovery by stopping
+  the pump measured a one-way door, not a reconnect.
+- **The naming-convention audit could not pass on its own new category.**
+  Phase B's `context_get / context_refresh / context_stats / context_events /
+  client_ui / client_status` were filed under category `context`, which
+  `CATEGORY_DOMAIN_PREFIXES` did not declare, so
+  `test/static/catalog_contract_test.py` reported six A1 violations. The
+  category is now declared with both prefixes; violations 6 -> 0.
+- **`rig_list_bones` could not see a Biped or a CAT rig.** The handler filtered
+  on `(classof o) == BoneGeometry`, but a Biped adds 31 nodes of class
+  `Biped_Object` and no `BoneGeometry` at all, so a fully rigged character
+  returned `count: 0` without an error. Classification is now a shared
+  `mcpBoneKind` that matches the class *name* (a class symbol raises on a build
+  where the plugin is not loaded), rows gained `boneKind`, and the response
+  carries a `kinds` breakdown. Live on 2022: 3 -> 34 bones after adding a Biped
+  (3 bone + 31 biped), back to 3 after deleting it.
+- **`doctor.py` reported every healthy install as "broken autoloader".** It
+  parsed `local bridgeFile = @"..."` while `install.py` writes
+  `mcpLoaderBridgeFile = @"..."`, so the target never matched.
+  `parse_autoloader_target` now matches the shape and prefers a bridge-named
+  variable; `test/static/doctor_loader_test.py` round-trips the installer
+  template through it.
+- **Every call invalidated the scene domain.** `mcpEvDomainsForMethod` seeded
+  its list with `#("scene")`, so a pure read such as `context_stats` marked the
+  scene domain dirty and bumped the revision a client uses for `since`. Reads
+  now map to no domain at all and `mcpEvAfterWrite` records nothing for them;
+  `execute_maxscript` still marks every domain, because a script can change
+  anything and a conservative rebuild is cheaper than serving stale data.
+- **The panel's Events page printed `undefined` in every cell.** `mcpEventsLog`
+  returns an object (`count/total/revision/events`), not a bare array.
+- **The Diagnostics page listed 18 probe rejections as failures.** A probe this
+  build rejects is the probe working; wanted/notification failures, node
+  callback failures and rejected probes are now reported separately.
+- **`(mcpMaxYear())` in a string concatenation threw.** It returns an integer,
+  so the Diagnostics page died half way through Environment on every refresh.
+- **Exception text was unbounded.** `getCurrentException()` on a missing
+  `polyop` member dumps the whole struct — about 6 KB — into the JSON response,
+  the panel page and every context section. All four paths now go through
+  `mcpErrText`, which flattens newlines and caps at 400 characters with the
+  dropped length appended, so a truncated message cannot be mistaken for a
+  complete one.
+- **`as boolean` raised on a Boolean.** MAXScript cannot coerce `true` to
+  `boolean`, so `(mcpGet w "valid") as boolean` threw and every "read a flag
+  back" silently became `false`: `context_stats` reported `valid:false` for all
+  nine domains right after a successful `context_get`. Reading booleans now
+  goes through `mcpToBool`, and the same latent cast in the render domain
+  (`rendSaveFile`) is fixed.
+- **`scene_statistics` reported every object as `other`.** It compared
+  `(superclassof o) as string` against `"Geometry"`, `"Shape"`, `"Light"` and
+  friends, but the running build answers `GeometryClass` and `shape`, `light`,
+  `camera`, `helper` in lower case — so not one comparison ever matched, and on
+  a 65-object scene the tool returned `other: 65`. Classification now goes
+  through `mcpSceneSuperKind`, which prefers the shared `mcpCtxSuperKind` from
+  `mcp_context.ms` and keeps the same rules inline as a degraded path (falling
+  back to `other` would just restore the bug). Same scene now reports
+  geometry 43, shapes 4, lights 7, cameras 2, helpers 6, bones 3, other 0 —
+  which agrees with `context_get`'s `objects` section field for field. Two
+  related miscounts went with it: `systems` was fed from the bone counter (and
+  so was always 0), and bones were counted as systems. `bones`, `particles`
+  and `classification` are now reported separately.
+
+- **The panel rendered as one wrapped paragraph.** MAXScript builds strings
+  with `"\n"`, and a WinForms `TextBox` does not break lines on a lone LF — the
+  page held character 10 between every row and still displayed as a single
+  line. `mcpUiCrlf` normalises to CRLF on the way into the control. Found by
+  screenshotting the open panel, not by reading the return value.
+
+- **`execute_python` did not invalidate the context.** Both escape hatches are
+  registered non-undoable and are the only read-only-path commands that can
+  change anything; the dispatcher hooked `execute_maxscript` only, so Python
+  code that edited the scene left clients serving a stale snapshot.
+
+- **`mcp_events.ms` used backslash line continuations** in a log-message
+  expression, which `scripts/verify.py` forbids. Rewritten as plain statements.
+
+- **`mcp_ui.ms` carried a `…` character.** MAXScript reads `.ms` as ANSI, so a
+  non-ASCII ellipsis in a truncation marker was a decoding risk; replaced with
+  three dots.
 
 - **Seventh static gate: `test/offline_lint_helper.py`.** No gate owned the
   Python source outside the catalog's import graph (`scripts/` and `test/`
@@ -365,7 +562,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `mod_collapse` stays the main entry; its behaviour is unchanged.
 
 ### Fixed
-
 - **Reliability mode reported successful tool calls as `missing_success`
   (found during Stage 3, pre-existing).** `runtime.normalize_payload` only
   accepted a reply as conclusive when it carried `success` or `ok`, so every
@@ -377,6 +573,141 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   A payload that declares nothing still answers `missing_success`. This blocked
   every modelling / material step of a workflow, which is why it was fixed here
   rather than deferred.
+- **The MCP pump replayed the request it was already running
+  (`EXCEPTION_STACK_OVERFLOW` in every slow tool).** `mcpProcessBuffer`
+  published the remaining connection buffer only *after* dispatching a line.
+  Commands that pump the Windows message queue -- `exportFile`, render, bake,
+  `completeRedraw` -- let the WinForms pump timer fire while that line was still
+  in `cn[3]`, so the nested tick re-read it, ran the same command again and
+  recursed until the thread ran out of stack. Every exporter appeared broken
+  ("stack overflow AFTER the file was written", which is what the
+  file-exists recovery workaround was papering over), Max sometimes died
+  outright, and the extra responses poisoned the stream ("out-of-order reply").
+  Two independent fixes: the remaining buffer is now published *before* the
+  dispatch, and `mcpNetPump` is a thin re-entrancy guard around
+  `mcpNetPumpInner` (`mcpPumpBusy`, cleared on every path and reset by
+  `bridge_restart`/`bridge_stop`). Measured after the fix: fbx / obj / stl /
+  abc / 3ds all return `written:true` with no `recovered` flag, no log error,
+  Max alive.
+- **`import_*` reported "0 imported" when objects were already in the scene.**
+  The added-object diff compared *names*, but on a name collision the FBX
+  importer keeps the imported name and renames the node that was already there
+  (`sw_box` -> `sw_box001`) -- so the two name sets overlapped completely while
+  21 objects had in fact arrived. The diff now runs on node handles
+  (`getHandleByAnim`), and an import that adds nothing but does not throw
+  reports `updatedInPlace:true` with its own message instead of a bare `0`.
+- **`mat_set_map_slot` / `mat_get_map_slot` wrote the map into the colour.**
+  `"diffuse"` was passed straight to `setProperty`, which on a Standard material
+  resolves to the Diffuse *colour*, and Max answered "unable to convert Checker
+  to Point3". Legacy materials keep their maps in numbered sub-texmap channels,
+  not in `diffuseMap` properties, so resolution is now: real map property ->
+  `slot + "Map"` / `slot + "_map"` -> per-class alias (`base_color_map`, ...) ->
+  sub-texmap channel table (diffuse 2, bump 9, opacity 7, ...). Both handlers now
+  report where the map landed (`"channel 2"` in the result), and an unknown slot
+  fails with the class name instead of a conversion error.
+- **`rig_skin_*` used skinOps entry points that do not exist on 2022.**
+  `getBoneName` wants three arguments (skin, index, useXref) and the two-argument
+  call was swallowed by a `catch()`, so every vertex in `rig_skin_weight_table`
+  had an empty bone name; `getVertexWeightBone` does not exist at all (the real
+  name is `GetVertexWeightBoneID`); `autoWeight` does not exist either, so
+  `rig_skin_auto_weight` was a silent no-op; `setWeight` takes two arguments and
+  works on the panel selection, so `rig_skin_set_weight` never set anything.
+  Auto weights are now computed from the distance of each vertex to every bone
+  segment (`GetStartPoint`/`GetEndPoint`, nearest two bones, inverse square) and
+  applied with `ReplaceVertexWeights`; single weights read-modify-write the same
+  call and treat the requested value as authoritative (1.0 really does clear the
+  other bones). `rig_skin_add_bone` accepts `bone` or `bones`, reports
+  `notFound`, and no longer dies with "unknown property: name in undefined".
+- **`render_preview` called `makePreview`, which 3ds Max 2022 removed.** It now
+  calls `createPreview` (2020/2021 keep using `makePreview`), and because
+  `createPreview` has no output-path argument and always writes
+  `<getDir #preview>\<scene>_preview.avi`, the file that appears in the preview
+  folder is detected and copied to the requested path. Result carries
+  `entry: "createPreview"`.
+- **`viewport_stats` reported 0x0 for every viewport.** `getView <n>` does not
+  exist in 2022, so every size read was swallowed. Sizes now come from
+  `viewport.getViewportDib index:n` (falling back to `getViewSize()` for the
+  active view), plus the per-view `active` flag.
+- **`export_3ds` rejected a working exporter.** The `.3ds` writer is built into
+  Max and its plugin class name is not resolvable from MAXScript
+  (`Max3dsExporter` / `ThreeDSExporter` both report "does not exist" while
+  `exportFile` writes the file), so the class probe is gone; `exportFile` by
+  extension is the only truthful test.
+- **`list_max_classes` enumerated almost nothing.** `geometry.classes` and
+  friends raise "unknown property" (the lowercase listener names are node
+  collections); only superclass *class values* carry `.classes`. Buckets are now
+  `GeometryClass / Shape / Light / Camera / Helper / System / SpacewarpObject /
+  Material / TextureMap / Modifier / Filter / Atmospheric / ReferenceTarget`
+  (measured 1230 classes, a search for "Box" now returns `Box`), and
+  `mcpClassBuckets` is called instead of being iterated as a value.
+- **`rig_create_bone_chain` created `count - 1` bones.** `"count": 3` produced a
+  two-bone chain; the chain is now cut into `count` segments.
+- **Bake paths carried a double separator.** A folder passed with a trailing
+  slash produced `C:/out/\name.png`; `mcpBakeJoinPath` trims before joining.
+- **Unknown parameters were dropped silently.** A caller that spelled `names`
+  for `objects` got a cheerful `ok` and nothing selected, and the *next* tool
+  failed with "nothing is selected". `_resolve_argument_names` now maps the
+  caller's spelling onto the declared parameter (exact, case-insensitive, an
+  alias group `objects/names/objs/items`, then a close match) without changing
+  the value's shape, and every correction or ignored key is reported in the
+  result as `parameterNotes`.
+- **`bridge_restart` / `bridge_stop` reported a failure.** Both close the socket
+  the reply would travel on, so the client saw "connection dropped". They now
+  return `ok:true` with an explanatory note and the next call reconnects.
+
+- **3ds Max 2022 (2020+) compatibility sweep, live-verified.** A full pass over
+  a real 3ds Max 2022 install turned up a class of failures that all shared one
+  shape: an API that no longer exists, plus a `catch()` that hid it. Fixed, each
+  confirmed on the live bridge:
+
+  - **Bake (`bake_texture`/`bake_ao`/`bake_normals`/`bake_lighting`) was
+    silently doing nothing.** It wrote `node.RenderToTexture.*`, a property that
+    does not exist, so every field assignment no-op'd and `rktBatchRender` never
+    produced a file -- while the tool still answered "烘焙完成" with
+    `written: []`. Rewritten with two back ends: the Bake To Texture interface
+    (`BakeToTexture.addMap` / `.bake()`, 3ds Max 2021+, `route: "btt"`) and the
+    classic `iNodeBakeProperties` + `render rendertype:#bakeSelected` path for
+    2020 and older (`route: "legacy"`). The bake now switches to the Scanline
+    renderer for the duration and restores the previous one afterwards, because
+    the standard bake elements are Scanline-only: attaching them while Arnold is
+    active throws in a loop that spawns modal MAXScript error dialogs and wedges
+    the UI thread. Objects without a UV channel get a box-projected UVW Map
+    first (`BakeToTexture.addMap` refuses to run otherwise). Bake maps are always
+    released afterwards -- a stale registration pointing at a deleted node
+    crashes Max on the next `bake()`. Zero written files is now an error
+    (`err.bake_no_output`) that names the route, the folder and the first
+    failure, instead of a success with an empty list.
+
+  - **`import_fbx` could permanently kill the bridge.** The FBX importer ignores
+    `#noPrompt` when no import mode is configured and opens up to three
+    interactive dialogs; they block the main thread the bridge runs on, so every
+    later call hung until Max was killed by hand. The handler now pre-sets the
+    importer options (`FBXImporterSetParam` for Mode/ImportContent/ShowWarnings/
+    FillTimeline/Cameras/Lights/Skin/Shape/Animation, each best-effort because
+    the names differ per release) which makes it import silently. Imports also
+    report what actually arrived (`imported`/`count`) instead of a bare "done",
+    and a throw that added nothing is a real error again.
+
+  - **Modal-dialog watchdog (`maxmcp.dialogs`).** Any modal box -- MAXScript
+    error, FBX prompt, render report, the WinForms "unhandled exception" box --
+    blocks the thread the bridge answers on, so one bad call used to end the
+    session. The client now dismisses known blockers when a request times out,
+    gives the pending command a grace window, and reports which dialogs it
+    closed (`bridge.dialogs_dismissed`). Crash dialogs (`Application Error`) are
+    deliberately left alone: the process is already gone and closing the box
+    would hide it. Windows-only, no-op elsewhere; `python -m maxmcp.dialogs
+    --list` shows what is currently open.
+
+  - **`proboolean` never worked, and `boolean_operation` ran the wrong
+    operation.** The old code called `proBoolean.SetOperation(...)` etc., but
+    the `proboolean` global is not that interface in 2022 -- the real entry point
+    is the PolyBoolean interface on the class:
+    `ProBoolean.createBooleanObjects <A> #(<B...>) op addMethod matMethod`, where
+    op is 0=union 1=intersection **2=subtraction** 3=merge. The old mapping used
+    1 for subtract and 2 for intersect, so "subtract" silently intersected. Both
+    tools now share one implementation, report `engine: proboolean|boolean2`, and
+    fall back to `boolean2` explicitly; the old code wrapped each `boolean2` call
+    in an empty `catch()`, so a failed boolean still reported success.
 
 - **Crash timeline wording in docs (D8 follow-up).** "18 crashes since
   2026-10-15" corrected to "18 within the event-log window (first
@@ -424,6 +755,128 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Targetdirectionallight` (MAXScript class names are case-insensitive but
   never contain underscores); both constructors and their `mcpEnsureClass`
   guards now use them.
+
+### Fixed
+
+- **`scene.selectionCount` was frozen (F1).** `context_get` publishes
+  `selection.count` from two sections, and both change paths invalidated only
+  one of them: `#selectionSetChanged` mapped to `#("selection")` and
+  `mcpCtxTick`'s identity check appended only `"selection"` when the count
+  moved. The cached `scene` section therefore kept serving the count it had
+  when it was first built while the `selection` section next to it reported
+  the new one — two numbers, one scene. Both paths now mark `scene` and
+  `selection`, the `scene` domain is declared by every tool that moves the
+  object or selection count, and `context_get` replies are merged into the same
+  server-side cache `max://scene/context` reads, so the tool and the resource
+  cannot disagree either.
+
+- **`context_stats` could not tell "never built" from "read failed" (F2).**
+  Both states reported `valid:false, stale:true`, so a domain nobody had asked
+  for looked exactly like one whose collector threw. Every section now carries
+  a `state` word — `fresh` / `partial` / `stale` / `unsupported` / `failed`,
+  ranked with the permanent reason first — plus `complete`; the stats row adds
+  `built` and `state` and defaults to `unbuilt`. The old `valid` / `supported`
+  / `stale` flags are unchanged, so nothing that reads them breaks.
+
+- **Unreadable fields were published as `0` (F3).**
+  `try ( renderStart as integer ) catch ( 0 )` cannot be told apart from a real
+  frame 0, and `exposureControl` did the same with `""` — while the live build
+  answered `"UndefinedClass"` for "no exposure control assigned", which is
+  `classof undefined` and means nothing to a caller. Fields routed through the
+  new `mcpCtxField` helper are either read or `null` **and** named in the
+  section's `unreadable` list; `exposureControl` now reports a class name, `""`
+  for "none assigned" or `null` for "the read failed". Applied to
+  `render.frameStart`, `render.frameEnd`, `render.exposureControl`, `width`,
+  `height`, `pixelAspect`, `timeType` and `frames` — not to every `catch` in
+  the module, which would have been a mechanical change with no evidence
+  behind it.
+
+- **Cross-domain fields were declared by prefix, and some were wrong (F4).**
+  `select_*` moved `scene.selectionCount` while declaring only `selection`;
+  `mat_rename` changed the material name a `selection` row prints without
+  declaring `selection`; `anim_goto_frame` moved `scene.currentFrame` without
+  declaring `scene`; `clone_*`, `group_*`, `model_*` and friends changed
+  `scene.objectCount` the same way. `catalog/domains.py` now records those
+  fields explicitly in `CROSS_DOMAIN_FIELDS` (owner domain + writers +
+  readers) and `test/static/tool_domain_contract_test.py` walks the table, so
+  the next tool added to one of those families cannot silently lose the owner.
+
+- **The revision could move with nothing in the event log (F5).**
+  `mcpCtxTick` bumped `mcpEvRevision` directly instead of going through the
+  event layer, so a client polling `revision` saw it advance with no row to
+  explain it — the one thing an audit trail must not do. The tick now reports
+  through `mcpEvFire` with `domains:` and writes a `tick` row carrying the
+  reason ("selection count changed", "2 object(s) changed shape").
+
+- **Interactive geometry edits were invisible (F6).** Dragging vertices or
+  changing topology in a viewport matches no notification this release
+  delivers, and the O(1) identity check only sees counts. `mcpCtxTick` now
+  fingerprints `getPolygonCount` over one eighth of the object list per tick
+  (8 calls per 200 ms, full pass ≈1.6 s), and `#modPanelObjPostChange` is
+  treated as an `objects` change instead of a selection-only one.
+
+- **`bridge_stop` is no longer an MCP tool (F14).** It stops the 25 ms pump,
+  which is the only thing inside Max that can execute bridge code, so the
+  command that would restart it can never be delivered: one call loses the
+  channel for good, and nothing on the MCP side can undo it. The Max panel's
+  Start button (added for the same reason) only helps a human who is sitting
+  in front of Max. The tool is gone from the catalog (389 tools); the
+  MAXScript command stays registered for the panel and the Listener, and now
+  prints `mcpBridgeStart()` recovery instructions to the Listener, because its
+  JSON reply can never be delivered.
+
+- **`test/static/registration_sync_test.py` finds every installed Max year.**
+  It compared the deployed script tree against `src/ms` using a hardcoded
+  `2020 - 64bit` path, so on a machine with only 2022 installed the comparison
+  silently did nothing — a check that cannot fail. It now discovers
+  `Autodesk/3dsMax/*/{ENU,CHS}/scripts/3dsmax-mcp` and reports drift (which is
+  currently real: the deployed 2022 tree predates this round).
+
+### Changed
+
+- **The context ledger is now driven by a declared write->domain table instead
+  of the undo flag.** `mcpDispatch` used `undoable` as a proxy for "did this
+  change the scene?", which is a different question, and 49 registered commands
+  answered it the dangerous way: they changed the scene while being registered
+  `undoable:false` (`render_set_*`, `render_element_*`, `bake_*`, `poly_select`,
+  `set_units`, `set_time_config`, `export_*`, `viewport_*`, `scene_save_as`,
+  `execute_*`), so nothing reached the ledger and `context_get(since:)` kept
+  serving a snapshot that no longer matched Max. Every catalog tool now declares
+  `mutates` (a tuple of domains, `()` meaning "nothing the nine domains
+  describe") in `src/python/maxmcp/catalog/domains.py`; the dispatcher reads the
+  compiled copy in the new `src/ms/mcp_domains.ms` and reports through
+  `mcpEvAfterWrite method domains:` after a handler returned successfully. The
+  undo flag now only decides whether the call is wrapped in `theHold`.
+
+  Two domain rules were wrong as a result of the same shortcut: a `mat_*` write
+  that attaches a bitmap never invalidated `assets` (so the file list could keep
+  reporting the old count until an unrelated node event fired), and every
+  `render_set_*` call invalidated `project` for nothing while
+  `render_element_*` never named `render` explicitly. Both are now declared
+  per command, and `render_element_*` invalidates `render` alone.
+
+  Read-only commands are a declaration too: a `get_*` / `list_*` /
+  `viewport_stats` call returns an empty domain set and therefore does not move
+  the revision a client feeds back as `since`. A handler that reports failure in
+  its payload (`ok:false`) is not recorded as a write, and the revision is
+  bumped *before* the domain stamp is taken so `changedAt` is strictly newer
+  than the caller's cursor.
+
+  `context_get` sections now carry that stamp: `changedAt` (the global revision
+  at which the domain last moved) is what `since` is compared against, and until
+  now it was only visible through `context_stats`. A client could see a domain
+  come back but had no way to tell whether it was newer than the cursor it sent.
+
+  Five tools were reclassified from read-only to writing because they do change
+  state: `deselect_all` (selection), `undo_last` / `redo_last` (undo buffer; they
+  are registered non-undoable only to avoid wrapping an undo in another undo),
+  `fetch_scene` (restores a held snapshot) and `scene_save` (clears
+  `scene.modified`).
+
+  `src/ms/mcp_domains.ms` is generated by `scripts/gen_tool_domains.py` and must
+  not be edited by hand; `test/static/tool_domain_contract_test.py` fails when it
+  is stale, when a registered command has no declaration, or when a non-read-only
+  tool resolves to nothing.
 
 ## [1.2.0] - 2026-10-18
 

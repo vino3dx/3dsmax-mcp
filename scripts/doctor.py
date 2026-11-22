@@ -13,6 +13,7 @@ from __future__ import annotations
 import glob
 import json
 import os
+import re
 import socket
 import subprocess
 import sys
@@ -135,6 +136,36 @@ def detect_max_script_dirs() -> List[Dict[str, Any]]:
     return found
 
 
+# The autoloader assigns the bridge path with `@"..."` (a MAXScript verbatim
+# string).  What the variable is called is the installer's business, not this
+# checker's: pinning it to `local bridgeFile` made doctor report a perfectly
+# healthy install as broken for months, because install.py writes
+# `mcpLoaderBridgeFile`.
+AUTOLOADER_ASSIGN_RE = re.compile(
+    r'^\s*(?:local\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*@"([^"]*)"\s*$'
+)
+
+
+def parse_autoloader_target(text: str) -> str:
+    """Return the bridge path an autoloader points at, or "" when there is none.
+
+    Shape, not variable name: any `name = @"path"` line qualifies, and a line
+    whose variable mentions "bridge" wins (so a future loader can carry several
+    verbatim paths without this picking the wrong one).  Comment lines cannot
+    match because "--" is not an identifier start.
+    """
+    candidates: List[Tuple[str, str]] = []
+    for line in text.splitlines():
+        match = AUTOLOADER_ASSIGN_RE.match(line)
+        if not match:
+            continue
+        candidates.append((match.group(1).lower(), match.group(2)))
+    for name, path in candidates:
+        if "bridge" in name:
+            return path
+    return candidates[0][1] if candidates else ""
+
+
 def check_bridge_files(dirs: List[Dict[str, Any]]) -> int:
     if not dirs:
         record("warn", "No 3ds Max user configuration folder found",
@@ -158,11 +189,7 @@ def check_bridge_files(dirs: List[Dict[str, Any]]) -> int:
 
         # the autoloader must point at a file that exists
         text = loader.read_text(encoding="utf-8")
-        target = ""
-        for line in text.splitlines():
-            line = line.strip()
-            if line.startswith("local bridgeFile = @\""):
-                target = line.split('@"', 1)[1].rstrip('"')
+        target = parse_autoloader_target(text)
         problem = ""
         if not target:
             problem = "could not parse the bridge path out of {0}".format(loader)

@@ -33,21 +33,26 @@ TOOLS.append(tool(
 ))
 
 TOOLS.append(tool(
-    "bridge_stop", "system",
-    "停止桥接并释放端口。停止后所有 MCP 工具都会失败，直到在 3ds Max 中重新运行 mcpBridgeStart()。",
-    "Stop the bridge and release the port. Every MCP tool will fail afterwards until "
-    "mcpBridgeStart() is run again inside 3ds Max.",
-    mutating=False,
-))
-
-TOOLS.append(tool(
     "bridge_restart", "system",
-    "重启桥接（默认沿用当前端口）。当 AI 客户端断连后无法恢复时使用。",
-    "Restart the bridge (keeps the current port by default). Use it when an AI client "
-    "lost the connection and cannot recover.",
+    "重启桥接（默认沿用当前端口）。仅适用于客户端侧断连：这条指令本身要通过桥接送达，"
+    "所以 bridge_stop 之后无法用它恢复——那种情况只能在 3ds Max 面板按 Start bridge，"
+    "或在 MAXScript Listener 里运行 mcpNetStart()。",
+    "Restart the bridge (keeps the current port by default). Only useful for a "
+    "client-side disconnect: the command itself has to travel over the bridge, so it "
+    "cannot recover a bridge that has been stopped. For that, press Start bridge in "
+    "the Max panel or run mcpNetStart() in the MAXScript Listener.",
     props={"port": i("要绑定的端口；省略则沿用当前端口。", "Port to bind; omit to keep the current one.")},
     mutating=False,
 ))
+
+# `bridge_stop` is deliberately NOT a tool.  It closes the listener and stops the
+# 25 ms pump, which is the only thing in Max that can execute bridge code, so the
+# command that would bring it back cannot be delivered: one call permanently
+# loses the channel, and nothing on the MCP side can undo it (Phase B F14).  The
+# original decision to hide it lived in test/static/bridge_recovery_test.py and
+# was applied to the Max panel only; this closes the other door.  The MAXScript
+# command `bridge_stop` still exists and is still reachable from the panel and
+# the Listener, where a human is present to restart it.
 
 TOOLS.append(tool(
     "bridge_capabilities", "system",
@@ -169,7 +174,9 @@ TOOLS.append(tool(
     "撤销最近一次（或最近 N 次）操作，等价于在 Max 中按 Ctrl+Z。",
     "Undo the last operation (or the last N), equivalent to pressing Ctrl+Z in Max.",
     props={"steps": i("撤销步数，默认 1。", "Number of steps, default 1.", minimum=1, maximum=50)},
-    mutating=False,
+    # Undo mutates the scene; it is registered non-undoable inside Max only to
+    # keep the bridge from wrapping an undo in another undo.
+    mutating=True,
 ))
 
 TOOLS.append(tool(
@@ -177,7 +184,7 @@ TOOLS.append(tool(
     "重做最近一次（或最近 N 次）被撤销的操作。",
     "Redo the last undone operation (or the last N).",
     props={"steps": i("重做步数，默认 1。", "Number of steps, default 1.", minimum=1, maximum=50)},
-    mutating=False,
+    mutating=True,
 ))
 
 TOOLS.append(tool(
@@ -217,7 +224,8 @@ TOOLS.append(tool(
     "fetch_scene", "system",
     "把场景还原到最近一次 hold_scene 的状态。**会丢弃此后的全部改动。**",
     "Restore the scene to the last hold_scene. **Everything done since is discarded.**",
-    mutating=False,
+    # fetchMaxFile() replaces the scene contents, so every domain is stale.
+    mutating=True,
 ))
 
 TOOLS.append(tool(
@@ -326,6 +334,7 @@ TOOLS.append(tool(
     "保存当前场景。若从未保存过则等同于另存为。写盘操作，不是只读工具。",
     "Save the current scene. If it has never been saved this behaves like save-as. "
     "This writes to disk and is not a read-only tool.",
+    # clearNeedSaveFlag:true flips scene.modified, which the scene domain reports.
     mutating=True,
 ))
 

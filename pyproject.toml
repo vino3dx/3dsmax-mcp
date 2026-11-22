@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "3dsmax-mcp"
-version = "1.2.0"
+version = "0.1.0"
 description = "MCP plugin that lets AI agents drive Autodesk 3ds Max (2020 and later) for modelling, materials, rigging, animation, rendering, baking and engine export."
 readme = "README.md"
 requires-python = ">=3.8"

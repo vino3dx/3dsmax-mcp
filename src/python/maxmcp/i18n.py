@@ -80,6 +80,14 @@ MESSAGES: Dict[str, Tuple[str, str]] = {
         "与 3ds Max 的连接已断开，将在下次调用时重连。",
         "Connection to 3ds Max was lost; it will be re-established on the next call.",
     ),
+    "bridge.dialogs_dismissed": (
+        "已自动关闭阻塞 3ds Max 主线程的对话框：{titles}",
+        "Dismissed dialogs that were blocking the 3ds Max main thread: {titles}",
+    ),
+    "tool.recovered_after_error": (
+        "3ds Max 在写完后抛出异常，但文件已生成且非空，按成功处理：{path}",
+        "3ds Max raised an error after writing, but the file exists and is not empty; treated as success: {path}",
+    ),
     "bridge.protocol_error": (
         "桥接返回了无法解析的数据：{detail}",
         "The bridge returned unparsable data: {detail}",
@@ -95,6 +103,18 @@ MESSAGES: Dict[str, Tuple[str, str]] = {
     "tool.bad_arguments": (
         "参数不合法：{detail}",
         "Invalid arguments: {detail}",
+    ),
+    "tool.param_renamed": (
+        "参数名已自动纠正：{source} -> {target}（本工具使用 {target}）。",
+        "Parameter renamed automatically: {source} -> {target} (this tool uses {target}).",
+    ),
+    "tool.param_ignored": (
+        "已忽略未知参数 {name}；本工具接受的参数：{valid}。",
+        "Ignored unknown parameter {name}; this tool accepts: {valid}.",
+    ),
+    "bridge.restarted": (
+        "{tool} 已执行：桥接连接被关闭，下一次调用会自动重连。",
+        "{tool} done: the bridge connection was closed; the next call reconnects automatically.",
     ),
     "env.language_help": (
         "当前语言：{current}。使用 set_language 传入 \"zh\" 或 \"en\" 进行切换，"

@@ -530,7 +530,9 @@ TOOLS.append(tool(
     "清空当前选择。批量操作前先清空可避免误伤上一次选择的对象。",
     "Clear the current selection. Useful before a batch operation so you do not "
     "accidentally operate on whatever was selected earlier.",
-    mutating=False,
+    # Clearing the selection changes selection.count; it is a write even though
+    # nothing is undoable about it.
+    mutating=True,
 ))
 
 TOOLS.append(tool(
@@ -686,6 +688,14 @@ TOOLS.append(tool(
         "objects": arr("操作对象列表（第 1 个为 A）；省略则用当前选择。", "Operands (first is A); omit for the selection."),
         "operation": s("union/subtract/intersect/merge。", "union/subtract/intersect/merge.",
                       enum=["union", "subtract", "intersect", "merge"], default="union"),
+        "addMethod": i(
+            "操作数并入方式：0=引用 1=复制 2=移动（默认，并入后操作数消失） 3=实例。",
+            "How operand B is added: 0=reference, 1=copy, 2=move (default, operands are consumed), 3=instance.",
+            default=2, minimum=0, maximum=3),
+        "materialMethod": i(
+            "布尔后材质处理：0=应用运算方式 1=保留原材质。",
+            "Material method after the boolean: 0=apply operand method, 1=retain original material.",
+            default=0, minimum=0, maximum=1),
     },
 ))
 
@@ -699,5 +709,13 @@ TOOLS.append(tool(
         "objects": arr("操作对象列表（第 1 个为基）；省略则用当前选择。", "Operands (first is base); omit for the selection."),
         "operation": s("union/subtract/intersect/merge。", "union/subtract/intersect/merge.",
                       enum=["union", "subtract", "intersect", "merge"], default="union"),
+        "addMethod": i(
+            "操作数并入方式：0=引用 1=复制 2=移动（默认，并入后操作数消失） 3=实例。",
+            "How operand B is added: 0=reference, 1=copy, 2=move (default, operands are consumed), 3=instance.",
+            default=2, minimum=0, maximum=3),
+        "materialMethod": i(
+            "布尔后材质处理：0=应用运算方式 1=保留原材质。",
+            "Material method after the boolean: 0=apply operand method, 1=retain original material.",
+            default=0, minimum=0, maximum=1),
     },
 ))

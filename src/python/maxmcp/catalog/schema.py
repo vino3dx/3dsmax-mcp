@@ -8,9 +8,10 @@ prompted in either language can still resolve the argument correctly.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from .. import i18n
+from . import domains as _domains
 
 
 @dataclass
@@ -27,6 +28,11 @@ class Tool:
     preset: Dict[str, Any] = field(default_factory=dict)
     #: handled entirely in Python (composes other tools); no MAXScript command
     local: bool = False
+    #: context domains this tool invalidates; ``()`` means "nothing the scene
+    #: snapshot describes".  Declared in :mod:`maxmcp.catalog.domains`, never
+    #: inferred from ``mutating`` or from the bridge's undo flag.  ``None``
+    #: means undeclared, which the contract test treats as a build failure.
+    mutates: Optional[Tuple[str, ...]] = None
 
     @property
     def bridge_method(self) -> str:
@@ -82,8 +88,30 @@ def num3(zh: str, en: str, default: Any = None) -> Dict[str, Any]:
     return _prop("array", zh, en, items={"type": "number"}, minItems=3, maxItems=3, default=default)
 
 
-def obj_schema(name: str = "object", desc_zh: str = "", desc_en: str = "") -> Dict[str, Any]:
-    return _prop("object", desc_zh, desc_en)
+def obj_schema(name: str = "object", desc_zh: str = "", desc_en: str = "",
+               additional: bool = True) -> Dict[str, Any]:
+    """A free-form name -> value object; the caller decides the keys.
+
+    ``additional`` has to stay True for map-like parameters.  ``mod_add`` and
+    ``mod_set_params`` take an object whose property names are whatever the
+    modifier exposes, so a closed schema would let a client-side validator drop
+    every entry before the request is ever sent.
+    """
+    return _prop("object", desc_zh, desc_en, additionalProperties=additional)
+
+
+def any_scalar(zh: str, en: str,
+               types: Sequence[str] = ("integer", "number", "string", "boolean"),
+               examples: Optional[Sequence[Any]] = None) -> Dict[str, Any]:
+    """One JSON scalar whose original type must survive the trip to MAXScript.
+
+    Declaring such a parameter as ``string`` (which is what ``mod_set_param``'s
+    ``value`` used to be) makes the server stringify every argument: the handler
+    then receives ``"3"`` for the number 3 and a typed MAXScript property refuses
+    it.  A union of scalar types is valid JSON Schema, says exactly what is
+    accepted, and leaves the value alone.
+    """
+    return _prop(list(types), zh, en, examples=list(examples) if examples else None)
 
 
 def tool(
@@ -97,12 +125,21 @@ def tool(
     mutating: bool = True,
     preset: Optional[Dict[str, Any]] = None,
     local: bool = False,
+    mutates: Optional[Sequence[str]] = None,
 ) -> Tool:
     properties = props or {}
     schema: Dict[str, Any] = {"type": "object", "properties": properties}
     if required:
         schema["required"] = list(required)
     schema["additionalProperties"] = False
+    if mutates is not None:
+        declared: Optional[Tuple[str, ...]] = tuple(mutates)
+    elif not mutating:
+        # A read-only tool is a declaration in itself: it invalidates nothing.
+        declared = ()
+    else:
+        # None here means "no rule matched" and the contract test fails on it.
+        declared = _domains.domains_for(name)
     return Tool(
         name=name,
         category=category,
@@ -113,13 +150,14 @@ def tool(
         mutating=mutating,
         preset=preset or {},
         local=local,
+        mutates=declared,
     )
 
 
 # ------------------------------------------------------------------ registry
 #: Categories every profile keeps: connection, scene management, object
 #: handling, file IO and introspection.
-BASE_CATEGORIES = ("system", "scene", "objects", "files")
+BASE_CATEGORIES = ("system", "scene", "objects", "files", "context")
 
 # The default core surface is intentionally explicit.  Category-only profiles
 # still exist for backwards compatibility, while this set keeps the default
@@ -127,6 +165,7 @@ BASE_CATEGORIES = ("system", "scene", "objects", "files")
 CORE_TOOLS = frozenset({
     "bridge_status", "bridge_ping", "bridge_capabilities", "bridge_selftest",
     "get_max_version", "execute_maxscript",
+    "context_get", "context_stats",
     "scene_info", "scene_new", "scene_save", "scene_save_as", "scene_open",
     "scene_snapshot", "workflow_run",
     "create_box", "create_sphere", "create_cylinder", "create_cone",

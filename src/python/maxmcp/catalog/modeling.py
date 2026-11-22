@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import List
 
-from .schema import Tool, arr, b, i, n, num3, s, tool
+from .schema import Tool, any_scalar, arr, b, i, n, num3, obj_schema, s, tool
 
 TOOLS: List[Tool] = []
 
@@ -673,8 +673,13 @@ TOOLS.append(tool(
                        "Object names; omit to use the current selection.", items="string"),
         "modifier": s("修改器类名。", "Modifier class name.", examples=["Bend", "TurboSmooth", "Shell"]),
         "name": s("给修改器起的名字。", "Name to give the modifier."),
-        "params": arr("可选的属性名->值对象，批量设置修改器参数。",
-                      "Optional name->value object to set modifier parameters in bulk."),
+        "params": obj_schema(
+            "params",
+            "可选的属性名->值对象，批量设置修改器参数；键可以是该修改器的任意属性，"
+            "值保留数字/布尔/字符串的原始类型并按属性类型校验。",
+            "Optional name->value object to set modifier parameters in bulk; the keys are whatever "
+            "properties the modifier exposes, and numeric/boolean/string values keep their original "
+            "type and are checked against the property's type."),
     },
     required=["modifier"],
 ))
@@ -723,29 +728,37 @@ TOOLS.append(tool(
 
 TOOLS.append(tool(
     "mod_set_param", "modeling",
-    "设置某个修改器的单个参数（param=value）。值按目标属性类型自动转换。",
-    "Set a single parameter of a modifier (param=value). The value is coerced to the target "
-    "property type.",
+    "设置某个修改器的单个参数（param=value）。值保留原始类型（整数/浮点/字符串/布尔），"
+    "再按目标属性的类型校验并转换；设置后会读回真实属性值确认。",
+    "Set a single parameter of a modifier (param=value). The value keeps its original type "
+    "(integer/float/string/boolean), is validated against the property's type, and the real "
+    "property value is read back to confirm the write.",
     props={
         "objects": arr("对象名列表；省略则使用当前选择。",
                        "Object names; omit to use the current selection.", items="string"),
         "modifier": s("修改器名/类名/索引。", "Modifier name / class name / index."),
         "param": s("要设置的属性名。", "Property name to set."),
-        "value": s("新值（字符串形式，类型自动转换）。",
-                  "New value as a string; type is coerced automatically."),
+        "value": any_scalar("新值；数字按数字传，字符串按字符串传，不要先转成字符串。",
+                            "New value; send numbers as numbers and strings as strings, do not "
+                            "pre-stringify. The target property decides the final type.",
+                            examples=[3, 2.5, "true"]),
     },
     required=["modifier", "param", "value"],
 ))
 
 TOOLS.append(tool(
     "mod_set_params", "modeling",
-    "批量设置某个修改器的多个参数，params 为属性名->值对象。",
-    "Set several parameters of a modifier at once; params is a name->value object.",
+    "批量设置某个修改器的多个参数，params 为属性名->值对象，值保留原始类型。",
+    "Set several parameters of a modifier at once; params is a name->value object whose values "
+    "keep their original JSON types.",
     props={
         "objects": arr("对象名列表；省略则使用当前选择。",
                        "Object names; omit to use the current selection.", items="string"),
         "modifier": s("修改器名/类名/索引。", "Modifier name / class name / index."),
-        "params": arr("属性名->值对象。", "Name->value object."),
+        "params": obj_schema(
+            "params",
+            "属性名->值对象；值是修改器该属性对应的数字/布尔/字符串。",
+            "Name->value object; each value is the number, boolean or string that property takes."),
     },
     required=["modifier", "params"],
 ))

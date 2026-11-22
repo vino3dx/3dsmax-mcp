@@ -39,7 +39,9 @@ fn mcpRendererClassName friendly =
 (
     local f = toLower (friendly as string)
     if f == "scanline" do return "Default_Scanline_Renderer"
-    if f == "arnold" do return "Arnold_Renderer"
+    -- 3ds Max 2022+ registers Arnold as "Arnold"; older MAXtoA builds used
+    -- "Arnold_Renderer".  Pick whichever this installation actually has.
+    if f == "arnold" do return (if (mcpClassExists "Arnold") then "Arnold" else "Arnold_Renderer")
     if f == "vray" or f == "v-ray" do return "V_Ray_Adv"
     if f == "corona" do return "CoronaRenderer"
     if f == "fstorm" or f == "fstormrender" do return "FStormRender"
@@ -100,7 +102,7 @@ fn mcpH_render_set_engine params =
     if cls == undefined do mcpFail "err.bad_value" a1:"engine"
     if not (mcpClassExists cls) do
     (
-        local cand = #("Default_Scanline_Renderer","Arnold_Renderer","V_Ray_Adv","CoronaRenderer",
+        local cand = #("Default_Scanline_Renderer","Arnold","Arnold_Renderer","V_Ray_Adv","CoronaRenderer",
             "FStormRender","Redshift_Renderer","ART_Renderer","Quicksilver_Hardware_Renderer")
         local avail = #()
         for c in cand do ( if (mcpClassExists c) do append avail c )
@@ -477,18 +479,94 @@ fn mcpH_render_region params =
 )
 
 
+/* Preview animation ("Animation > Make Preview").
+   3ds Max 2022 dropped the MAXScript `makePreview()` function and replaced it
+   with `createPreview()`, which has no documented output-path argument: it
+   always writes `<getDir #preview>\\<scene>_preview.avi`.  So: call whichever
+   entry point this release has, then find the file that appeared in the preview
+   folder and copy it where the caller asked for it.  Reference a missing global
+   safely -- MAXScript yields undefined instead of raising, which is what makes
+   the version probe below possible. */
+fn mcpPreviewCandidates dir =
+(
+    local list = #()
+    try ( list = getFiles (dir + "\\*.avi") ) catch ( list = #() )
+    if list.count == 0 do try ( list = getFiles (dir + "\\*.mov") ) catch ( list = #() )
+    list
+)
+
+fn mcpPreviewSnapshot dir =
+(
+    local snap = #()
+    for f in (mcpPreviewCandidates dir) do append snap #(toLower f, (getFileModDate f))
+    snap
+)
+
+fn mcpPreviewChanged snap dir =
+(
+    local hit = undefined
+    for f in (mcpPreviewCandidates dir) do
+    (
+        local old = undefined
+        for b in snap do ( if b[1] == (toLower f) do old = b[2] )
+        if old == undefined or (getFileModDate f) != old do hit = f
+    )
+    hit
+)
+
 fn mcpH_render_preview params =
 (
+    local previewDir = ""
+    try ( previewDir = getDir #preview ) catch ( previewDir = "" )
     local path = mcpStr params "path" default:""
-    if path == "" do path = (try ( getDir #preview ) catch ( "" )) + "\\preview.avi"
+    if path == "" do path = previewDir + "\\preview.avi"
     local dir = getFilenamePath path
     if dir != "" and not (doesDirectoryExist dir) do ( try ( makeDir dir all:true ) catch() )
+
+    local snap = if previewDir == "" then #() else (mcpPreviewSnapshot previewDir)
+    local errMsg = ""
+    local used = ""
     local ok = false
-    try ( makePreview outputName:path; ok = doesFileExist path ) catch ( ok = false )
-    if not ok do mcpFail "err.file_missing" a1:path
+
+    if (createPreview != undefined) then
+    (
+        used = "createPreview"
+        try ( createPreview() )
+        catch ( errMsg = (getCurrentException() as string) )
+        ok = doesFileExist path
+        if not ok do
+        (
+            -- createPreview ignores the output path: pick up whatever it wrote.
+            local produced = if previewDir == "" then undefined else (mcpPreviewChanged snap previewDir)
+            if produced != undefined do
+            (
+                if (toLower produced) != (toLower path) do
+                    try ( copyFile produced path ) catch ( errMsg = (getCurrentException() as string) )
+                ok = doesFileExist path
+            )
+        )
+    )
+    else if (makePreview != undefined) then
+    (
+        used = "makePreview"
+        try ( makePreview outputName:path )
+        catch ( errMsg = (getCurrentException() as string) )
+        ok = doesFileExist path
+    )
+    else
+    (
+        mcpFail "err.feature_unsupported" a1:"preview animation (createPreview)"
+    )
+
+    if not ok do
+    (
+        local why = if errMsg == "" then path else (path + " | " + errMsg)
+        mcpFail "err.file_missing" a1:why
+    )
     local p = #()
     mcpPair p "path" path
     mcpPair p "written" ok
+    mcpPair p "entry" used
     mcpPair p "message" (mcpMsg "msg.ok")
     mcpObj p
 )
@@ -718,7 +796,10 @@ fn mcpH_viewport_capture params =
     local dir = getFilenamePath path
     if dir != "" and not (doesDirectoryExist dir) do ( try ( makeDir dir all:true ) catch() )
     local ok = false
-    try ( save bmp path; ok = doesFileExist path ) catch ( ok = false )
+    -- save() takes no file name: the bitmap must carry it.  Calling
+    -- `save bmp path` throws "位图的 save() 操作需要 fileName", which used to
+    -- surface as a bogus "file missing" error on every capture.
+    try ( bmp.filename = path; save bmp; ok = doesFileExist path ) catch ( ok = false )
     if not ok do mcpFail "err.file_missing" a1:path
     local p = #()
     mcpPair p "path" path
@@ -766,7 +847,7 @@ fn mcpH_viewport_capture_all params =
     local dir = getFilenamePath path
     if dir != "" and not (doesDirectoryExist dir) do ( try ( makeDir dir all:true ) catch() )
     local ok = false
-    try ( save grid path; ok = doesFileExist path ) catch ( ok = false )
+    try ( grid.filename = path; save grid; ok = doesFileExist path ) catch ( ok = false )
     if not ok do mcpFail "err.file_missing" a1:path
     local p = #()
     mcpPair p "path" path
@@ -871,41 +952,53 @@ fn mcpH_viewport_set_shading params =
 )
 
 
+/* Per viewport size.
+   `getView <n>` does not exist in 3ds Max 2022 (it raised "Call needs function
+   or class, got undefined"), so every width/height came back 0 and the whole
+   report was useless.  The pixels are available from the viewport DIB instead,
+   which is the same surface viewport_capture reads. */
+fn mcpViewportSize v =
+(
+    local w = 0
+    local h = 0
+    try
+    (
+        local dib = viewport.getViewportDib index:v
+        w = dib.width
+        h = dib.height
+    )
+    catch()
+    if w == 0 and v == (try (viewport.activeViewport as integer) catch (1)) do
+        try ( local sz = getViewSize(); w = sz.x; h = sz.y ) catch()
+    #(w, h)
+)
+
 fn mcpH_viewport_stats params =
 (
     local nViews = 1
     try ( nViews = viewport.numViews ) catch ( nViews = 1 )
+    local activeIdx = 1
+    try ( activeIdx = viewport.activeViewport as integer ) catch ( activeIdx = 1 )
     local views = #()
     for v = 1 to nViews do
     (
         local vp = #()
-        local w = 0
-        local h = 0
-        try
-        (
-            local vd = getView v
-            local sz = [0,0]
-            try ( sz = vd.size ) catch ( sz = [0,0] )
-            w = sz.x
-            h = sz.y
-        )
-        catch()
+        local sz = mcpViewportSize v
         mcpPair vp "index" v
-        mcpPair vp "width" w
-        mcpPair vp "height" h
+        mcpPair vp "width" sz[1]
+        mcpPair vp "height" sz[2]
+        mcpPair vp "active" (v == activeIdx)
         append views (mcpObj vp)
     )
-    local activeIdx = 1
     local activeType = ""
     local camName = ""
-    try ( activeIdx = viewport.activeViewport as integer ) catch ( activeIdx = 1 )
+    try ( activeType = (viewport.getType()) as string ) catch ( activeType = "" )
     try
     (
-        local avd = getView activeIdx
-        try ( activeType = (avd.type as string) ) catch ( activeType = "" )
-        try ( if avd.node != undefined do camName = avd.node.name ) catch ( camName = "" )
+        local cam = viewport.getCamera()
+        if cam != undefined do camName = cam.name
     )
-    catch()
+    catch ( camName = "" )
     local p = #()
     mcpPair p "views" views
     mcpPair p "activeViewport" activeIdx

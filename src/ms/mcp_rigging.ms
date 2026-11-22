@@ -14,6 +14,7 @@
 global mcpGetSkinMod, mcpGetMorpherMod, mcpFindBoneIndex
 global mcpH_rig_create_bone, mcpH_rig_create_bone_chain, mcpH_rig_create_dummy, mcpH_rig_create_point_helper
 global mcpH_rig_link_objects, mcpH_rig_set_bone_size, mcpH_rig_mirror_bone_chain, mcpH_rig_list_bones
+global mcpBoneKind
 global mcpH_rig_skin_add, mcpH_rig_skin_add_bone, mcpH_rig_skin_set_weight, mcpH_rig_skin_auto_weight
 global mcpH_rig_skin_weight_table, mcpH_rig_skin_remove_bone, mcpH_rig_skin_set_vertex_weights
 global mcpH_rig_ik_solver, mcpH_rig_set_ik_chain, mcpH_rig_ik_goal, mcpH_rig_spline_ik, mcpH_rig_ik_enable, mcpH_rig_ik_disable
@@ -34,16 +35,74 @@ fn mcpGetMorpherMod node =
     undefined
 )
 
+/* skinOps.getBoneName takes THREE arguments in 3ds Max 2022:
+   (skin, index, useXref).  Called with two it raises "argument count error",
+   which was swallowed by the catch() and turned every bone name into "" --
+   the weight table listed each vertex with an empty bone name. */
+fn mcpSkinBoneName skinMod index =
+(
+    local nm = ""
+    try ( nm = skinOps.getBoneName skinMod index 0 ) catch ( nm = "" )
+    if nm == "" do try ( nm = skinOps.getBoneName skinMod index ) catch ( nm = "" )
+    nm
+)
+
 fn mcpFindBoneIndex skinMod boneName =
 (
     local nb = 0
     try ( nb = skinOps.getNumberBones skinMod ) catch ( nb = 0 )
     for i = 1 to nb do
     (
-        local bn = try ( skinOps.getBoneName skinMod i ) catch ("")
-        if bn == boneName do return i
+        if (mcpSkinBoneName skinMod i) == boneName do return i
     )
     -1
+)
+
+/* Read/modify/write of one vertex' weights.  There is no per-bone setter that
+   works from script (skinOps.setWeight wants 2 arguments and works on the
+   modifier panel selection), so the vertex weight set is rebuilt and pushed
+   back with ReplaceVertexWeights -- the same call the auto weights use. */
+fn mcpSkinSetVertexWeight skinMod vertex boneId weight =
+(
+    local ids = #()
+    local ws = #()
+    local vc = 0
+    try ( vc = skinOps.getVertexWeightCount skinMod vertex ) catch ( vc = 0 )
+    for i = 1 to vc do
+    (
+        local b = 0
+        local w = 0.0
+        try ( b = skinOps.GetVertexWeightBoneID skinMod vertex i ) catch ( b = 0 )
+        try ( w = skinOps.getVertexWeight skinMod vertex i ) catch ( w = 0.0 )
+        if b > 0 do ( append ids b; append ws w )
+    )
+    local found = false
+    for i = 1 to ids.count do ( if ids[i] == boneId do ( ws[i] = weight; found = true ) )
+    if not found do ( append ids boneId; append ws weight )
+
+    /* Weights are normalised to 1 per vertex, so scaling the whole set by the
+       new total diluted the value the caller asked for: "Bone1 = 1.0" on a
+       vertex that held 0.5/0.5 came back 0.667/0.333.  Instead the requested
+       weight is authoritative and the *other* bones share what is left --
+       which is what "set this bone to 1.0 and the others stop mattering"
+       means in the tool description. */
+    local target = 0.0
+    local others = 0.0
+    for i = 1 to ids.count do
+    (
+        if ids[i] == boneId then target = ws[i] else others += ws[i]
+    )
+    if target < 0.0 do target = 0.0
+    if target > 1.0 do target = 1.0
+    local remain = 1.0 - target
+    for i = 1 to ids.count do
+    (
+        if ids[i] == boneId then ws[i] = target
+        else if others > 0.000001 then ws[i] = ws[i] / others * remain
+        else ws[i] = 0.0
+    )
+    try ( skinOps.ReplaceVertexWeights skinMod vertex ids ws ) catch ( return false )
+    true
 )
 
 
@@ -81,10 +140,13 @@ fn mcpH_rig_create_bone_chain params =
     local h = mcpNum params "height" default:1.0
     local prefix = mcpStr params "name" default:"Bone"
     local bones = #()
-    for i = 1 to (n - 1) do
+    /* `count` is the number of bones, so the chain is cut into `count` equal
+       segments.  It used to be cut into count-1 segments, which quietly made
+       "count: 3" produce a two bone chain. */
+    for i = 1 to n do
     (
-        local a = startP + (endP - startP) * ((i - 1) as float / (n - 1))
-        local bpt = startP + (endP - startP) * (i as float / (n - 1))
+        local a = startP + (endP - startP) * ((i - 1) as float / n)
+        local bpt = startP + (endP - startP) * (i as float / n)
         local bone = BoneSys.createBone a bpt [0,0,1]
         try ( bone.width = w; bone.height = h ) catch()
         if bones.count > 0 do try ( bone.parent = bones[bones.count] ) catch()
@@ -213,6 +275,31 @@ fn mcpH_rig_mirror_bone_chain params =
     mcpObj p
 )
 
+/* Which kind of bone is this node, if any?
+
+   Measured on 3ds Max 2022: a Biped adds 31 nodes whose class is Biped_Object
+   and not one is a BoneGeometry, so the previous filter
+       if (classof o) == BoneGeometry
+   returned an empty list for a whole Biped rig -- no error, just "count: 0".
+   CAT bones report CATBone; that class is present on this build, but no
+   scriptable way to create a CAT rig was found here, so the CATBone branch is
+   class-name based and is NOT live-verified (marked in the report rather than
+   claimed).
+
+   Matched on the class name as a string on purpose: comparing against a class
+   symbol raises on a build where the plugin is not loaded, which would take the
+   whole handler down instead of returning the bones that do exist. */
+fn mcpBoneKind node =
+(
+    if node == undefined do return ""
+    local c = ""
+    try ( c = (classof node) as string ) catch ( c = "" )
+    if c == "BoneGeometry" do return "bone"
+    if c == "Biped_Object" do return "biped"
+    if c == "CATBone" do return "cat"
+    ""
+)
+
 fn mcpH_rig_list_bones params =
 (
     local rootName = mcpStr params "root" default:""
@@ -223,12 +310,43 @@ fn mcpH_rig_list_bones params =
         candidates = (for o in objects collect o)
     else
         mcpCollectHierarchy root candidates
+
     local bones = #()
-    for o in candidates do ( if (classof o) == BoneGeometry do append bones o )
-    local all = for b in bones collect (mcpNodeInfo b)
+    local nBone = 0
+    local nBiped = 0
+    local nCat = 0
+    for o in candidates do
+    (
+        local kind = mcpBoneKind o
+        if kind != "" do
+        (
+            append bones o
+            if kind == "bone" do nBone += 1
+            if kind == "biped" do nBiped += 1
+            if kind == "cat" do nCat += 1
+        )
+    )
+
+    -- Each row keeps everything mcpNodeInfo reports and gains `boneKind`, so a
+    -- caller can tell a Biped chain from a bone chain without a second call.
+    local rows = #()
+    for b in bones do
+    (
+        local info = mcpNodeInfo b
+        local pairs = #()
+        for pair in (mcpPairs info) do append pairs pair
+        append pairs #("boneKind", (mcpBoneKind b))
+        append rows (mcpObj pairs)
+    )
+
     local p = #()
-    mcpPair p "count" all.count
-    mcpPaginateInto p all (mcpInt params "limit" default:500) (mcpInt params "offset" default:0)
+    mcpPaginateInto p rows (mcpInt params "limit" default:500) (mcpInt params "offset" default:0)
+    local kinds = #()
+    mcpPair kinds "bone" nBone
+    mcpPair kinds "biped" nBiped
+    mcpPair kinds "cat" nCat
+    mcpPair p "kinds" (mcpObj kinds)
+    mcpPair p "filter" "BoneGeometry | Biped_Object | CATBone (matched by class name)"
     mcpObj p
 )
 
@@ -257,10 +375,13 @@ fn mcpH_rig_skin_add params =
     mcpObj p
 )
 
+/* Accepts either "bone" (one name) or "bones" (a list).
+   A name that does not resolve used to reach `boneNode.name` and die with
+   "unknown property: name in undefined", which says nothing about the actual
+   mistake; resolve first, then report the names that did not match. */
 fn mcpH_rig_skin_add_bone params =
 (
     local nodes = mcpResolveNodes (mcpArr params "objects") fallbackToSelection:true
-    local boneNode = mcpResolveNode (mcpReqStr params "bone")
     -- The catalog has advertised a rigid/weighted switch since this tool existed,
     -- but the handler always passed 0 (weighted), so `rigid: true` was silently
     -- ignored.  addBone's third argument is exactly that flag.
@@ -268,28 +389,55 @@ fn mcpH_rig_skin_add_bone params =
     -- Keep the integer form the old code used (0): it reads as false for
     -- versions that want a boolean and as "weighted" for versions that want 0/1.
     local flag = if rigid then 1 else 0
+
+    local names = #()
+    local single = mcpStr params "bone" default:""
+    if single != "" do append names single
+    for n in (mcpArr params "bones") do
+    (
+        local s = if isKindOf n String then n else (try (n as string) catch (""))
+        if s != "" do append names s
+    )
+    if names.count == 0 do mcpFail "err.missing_param" a1:"bone or bones"
+
+    local boneNodes = #()
+    local missing = #()
+    for nm in names do
+    (
+        local b = mcpResolveNode nm
+        if b == undefined then append missing nm else append boneNodes b
+    )
+    if boneNodes.count == 0 do
+        mcpFail "err.not_found_in_list" a1:(mcpStringJoin names ", ") a2:"bones"
+
     local failed = #()
+    local applied = #()
+    local added = 0
     for node in nodes do
     (
         local skinMod = mcpGetSkinMod node
         if skinMod == undefined then
             append failed (node.name + ": no Skin")
         else
-            try ( skinOps.addBone skinMod boneNode flag ) catch ( append failed (node.name + ": " + (getCurrentException())) )
+        (
+            local nodeAdded = 0
+            for b in boneNodes do
+            (
+                local ok = true
+                try ( skinOps.addBone skinMod b flag ) catch ( ok = false; append failed (node.name + "/" + b.name + ": " + (getCurrentException() as string)) )
+                if ok do ( added += 1; nodeAdded += 1 )
+            )
+            if nodeAdded > 0 do append applied node.name
+        )
     )
+
     local p = #()
     -- A node named in `failed` is not a success just because it was asked for.
-    local applied = #()
-    for n in nodes do
-    (
-        local nm = try (n.name) catch ("")
-        local bad = false
-        for f in failed do ( if (findString f nm) == 1 do bad = true )
-        if not bad and nm != "" do append applied nm
-    )
     mcpPair p "objects" applied
-    mcpPair p "bone" boneNode.name
+    mcpPair p "bones" (for b in boneNodes collect b.name)
+    mcpPair p "added" added
     mcpPair p "rigid" rigid
+    if missing.count > 0 do mcpPair p "notFound" missing
     mcpPair p "failures" failed
     mcpPair p "message" (mcpMsg "msg.ok")
     mcpObj p
@@ -312,8 +460,8 @@ fn mcpH_rig_skin_set_weight params =
             local bi = mcpFindBoneIndex skinMod boneNode.name
             if bi < 0 then
                 append failed (node.name + ": bone not in skin")
-            else
-                try ( skinOps.setWeight skinMod bi vertex weight ) catch ( append failed (node.name + ": " + (getCurrentException())) )
+            else if not (mcpSkinSetVertexWeight skinMod vertex bi weight) do
+                append failed (node.name + ": could not set the weight")
         )
     )
     local p = #()
@@ -333,11 +481,34 @@ fn mcpH_rig_skin_set_weight params =
     mcpObj p
 )
 
+/* Distance from a point to a bone segment (start -> end, already in the same
+   space as p). */
+fn mcpPointSegmentDistance p a b =
+(
+    local ab = b - a
+    local len2 = dot ab ab
+    local t = 0.0
+    if len2 > 0.000001 do t = (dot (p - a) ab) / len2
+    t = amax 0.0 (amin 1.0 t)
+    length (p - (a + ab * t))
+)
+
+/* Auto weights.
+   The Skin modifier's "Auto Weights" button is a C++ only operation: skinOps
+   exposes no autoWeight entry point (the whole struct was enumerated -- see
+   mcp/README), so calling it raised "unknown property".  Instead compute the
+   weights the same way the modifier does conceptually: distance from each
+   vertex to every bone segment (skinOps.GetStartPoint/GetEndPoint give those in
+   object space), then blend the two nearest bones with an inverse square
+   falloff.  Fast, deterministic, and it produces usable skinning that the
+   caller can refine with rig_skin_set_weight. */
 fn mcpH_rig_skin_auto_weight params =
 (
     local nodes = mcpResolveNodes (mcpArr params "objects") fallbackToSelection:true
     local applied = #()
     local failed = #()
+    local weighted = 0
+
     for node in nodes do
     (
         local skinMod = mcpGetSkinMod node
@@ -345,15 +516,81 @@ fn mcpH_rig_skin_auto_weight params =
             append failed (node.name + ": no Skin")
         else
         (
-            local ok = true
-            try ( skinOps.autoWeight skinMod )
-            catch ( ok = false; append failed (node.name + ": " + (getCurrentException())) )
-            if ok do append applied node.name
+            local nb = 0
+            try ( nb = skinOps.getNumberBones skinMod ) catch ( nb = 0 )
+            if nb < 1 then
+                append failed (node.name + ": no bones in the Skin modifier")
+            else
+            (
+                -- Bone segments in world space (GetStartPoint is object space,
+                -- so transform by the node matrix below).
+                local starts = #()
+                local ends = #()
+                for i = 1 to nb do
+                (
+                    local sPt = [0,0,0]
+                    local ePt = [0,0,0]
+                    try ( sPt = skinOps.GetStartPoint skinMod i ) catch()
+                    try ( ePt = skinOps.GetEndPoint skinMod i ) catch()
+                    starts[i] = sPt
+                    ends[i] = ePt
+                )
+
+                local mesh = undefined
+                local done = 0
+                try
+                (
+                    mesh = snapshotAsMesh node
+                    local tm = node.transform
+                    for v = 1 to mesh.numVerts do
+                    (
+                        local p = (getVert mesh v) * tm
+                        -- nearest two bones
+                        local i1 = 0
+                        local d1 = 1.0e9
+                        local i2 = 0
+                        local d2 = 1.0e9
+                        for i = 1 to nb do
+                        (
+                            local d = mcpPointSegmentDistance p starts[i] ends[i]
+                            if d < d1 then ( i2 = i1; d2 = d1; i1 = i; d1 = d )
+                            else if d < d2 then ( i2 = i; d2 = d )
+                        )
+                        if i1 > 0 do
+                        (
+                            local ids = #(i1)
+                            local ws = #(1.0)
+                            if i2 > 0 and d2 < 1.0e8 then
+                            (
+                                local e = 0.001
+                                local w1 = 1.0 / ((d1 * d1) + e)
+                                local w2 = 1.0 / ((d2 * d2) + e)
+                                -- only blend when the second bone is genuinely
+                                -- nearby, otherwise the vertex belongs to one bone
+                                if (d2 < (d1 * 2.0 + 0.001)) then
+                                (
+                                    local total = w1 + w2
+                                    ids = #(i1, i2)
+                                    ws = #(w1 / total, w2 / total)
+                                )
+                            )
+                            try ( skinOps.ReplaceVertexWeights skinMod v ids ws ) catch()
+                            done += 1
+                        )
+                    )
+                    try ( free mesh ) catch()
+                )
+                catch ( append failed (node.name + ": " + (getCurrentException() as string)) )
+                if done > 0 do ( weighted += 1; append applied node.name )
+            )
         )
     )
+
     local p = #()
     -- `objects` is what the weights were recomputed for, not what was asked.
     mcpPair p "objects" applied
+    mcpPair p "weighted" weighted
+    mcpPair p "method" "distance to bone segments (nearest two bones, inverse square)"
     mcpPair p "failures" failed
     mcpPair p "message" (mcpMsg "msg.ok")
     mcpObj p
@@ -379,9 +616,15 @@ fn mcpH_rig_skin_weight_table params =
                 local w = 0.0
                 local bi = 0
                 try ( w = skinOps.getVertexWeight skinMod v i ) catch ( w = 0.0 )
-                try ( bi = skinOps.getVertexWeightBone skinMod v i ) catch ( bi = 0 )
-                local bn = ""
-                try ( bn = skinOps.getBoneName skinMod bi ) catch ( bn = "" )
+                -- GetVertexWeightBoneID, not getVertexWeightBone: the latter
+                -- does not exist in this release (unknown property).
+                try ( bi = skinOps.GetVertexWeightBoneID skinMod v i ) catch ( bi = 0 )
+                /* getVertexWeightBone returns a bone *id*, while getBoneName
+                   is indexed by position in the bone list.  Passing the id
+                   straight through produced empty names for every vertex
+                   whenever the two orders differed, so map id -> list index
+                   first. */
+                local bn = mcpSkinBoneName skinMod bi
                 local we = #()
                 mcpPair we "bone" bn
                 mcpPair we "weight" w

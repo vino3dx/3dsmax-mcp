@@ -295,9 +295,9 @@ TOOLS.append(tool(
 
 TOOLS.append(tool(
     "mat_create_arnold", "shading",
-    "创建一个 Arnold 材质（aiStandardSurface）。**只有当本机安装了 Arnold 时才可用**；"
+    "创建一个 Arnold 材质（ai_standard_surface）。**只有当本机安装了 Arnold 时才可用**；"
     "否则返回 class_missing 错误。用 list_render_engines / does_class_exist 先探测。",
-    "Create an Arnold material (aiStandardSurface). **Only available when Arnold is installed "
+    "Create an Arnold material (ai_standard_surface). **Only available when Arnold is installed "
     "on this machine** - otherwise it returns a class_missing error. Probe first with "
     "list_render_engines / does_class_exist.",
     props={
@@ -306,7 +306,7 @@ TOOLS.append(tool(
                        "Assign to these objects after creation; omit to skip."),
     },
     bridge="mat_create_guarded",
-    preset={"className": "aiStandardSurface"},
+    preset={"className": "ai_standard_surface,aiStandardSurface"},
 ))
 
 TOOLS.append(tool(

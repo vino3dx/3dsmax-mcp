@@ -45,12 +45,148 @@ fn mcpMatUsedBy m =
   c
 )
 
+/* Friendly slot name -> the property the material actually stores the map in.
+   "diffuse" is *not* a map property on a Standard material: setProperty would
+   write the Checker into the diffuse *colour* and Max answers "unable to
+   convert Checker to Point3".  The real names are diffuseMap / bumpMap /
+   opacityMap / ..., and the Arnold and Physical materials use their own
+   spelling (base_color_map, ...), so resolve instead of guessing. */
+fn mcpMatMapAliases slot =
+(
+  local s = toLower slot
+  case s of
+  (
+    "diffuse": #("diffuseMap", "base_color_map", "baseColor_map", "diffuse_color_map")
+    "basecolor": #("base_color_map", "baseColor_map", "diffuseMap")
+    "base_color": #("base_color_map", "baseColor_map", "diffuseMap")
+    "bump": #("bumpMap", "bump_map")
+    "normal": #("normals_map", "normalMap", "bumpMap", "bump_map")
+    "opacity": #("opacityMap", "opacity_map")
+    "specular": #("specularMap", "specular_color_map", "specularMap")
+    "glossiness": #("glossinessMap", "specular_roughness_map", "glossiness_map")
+    "roughness": #("specular_roughness_map", "roughnessMap", "glossinessMap")
+    "reflection": #("reflectionMap", "reflection_color_map")
+    "refraction": #("refractionMap", "refraction_color_map")
+    "displacement": #("displacementMap")
+    "emission": #("selfIllumMap", "emission_color_map", "emissionMap")
+    "selfillumination": #("selfIllumMap", "emission_color_map")
+    "ao": #("ao_map", "ambientOcclusionMap")
+    default: #()
+  )
+)
+
+fn mcpMatEndsWithMap name =
+(
+  local s = toLower (name as string)
+  local n = s.count
+  if n < 3 do return false
+  (substring s (n - 2) 3) == "map" or (n > 3 and (substring s (n - 3) 4) == "_map")
+)
+
+fn mcpMatMapPropName m slot =
+(
+  local wanted = toLower (slot as string)
+  local props = #()
+  try ( props = getPropNames m ) catch ( props = #() )
+
+  /* Order matters.  A Standard material has BOTH "Diffuse" (the colour) and
+     "DiffuseMap" (the map).  Matching the exact name first resolved "diffuse"
+     to the colour and then failed with "unable to convert Checker to Point3",
+     so map-looking names are tried before the plain name. */
+  -- 1) the caller already used a real map property name
+  for p in props do
+      ( if (toLower (p as string)) == wanted and (mcpMatEndsWithMap p) do return p )
+  -- 2) "diffuse" -> "diffuseMap" / "diffuse_map"
+  for p in props do ( if (toLower (p as string)) == (wanted + "map") do return p )
+  for p in props do ( if (toLower (p as string)) == (wanted + "_map") do return p )
+  -- 3) known aliases for the classes that spell it differently
+  for cand in (mcpMatMapAliases wanted) do
+  (
+    local want = toLower cand
+    for p in props do ( if (toLower (p as string)) == want do return p )
+  )
+  -- Deliberately NO plain exact-name fallback: on a Standard material "diffuse"
+  -- matches the Diffuse *colour*, and writing a map there fails with
+  -- "unable to convert Checker to Point3".  Materials that keep their maps in
+  -- numbered channels instead of properties are handled by mcpMatMapChannel.
+  undefined
+)
+
+/* Legacy materials (Standard, Raytrace, Architectural, ...) do not expose
+   diffuseMap / bumpMap as MAXScript properties: their maps live in numbered
+   sub-texmap channels, which is also what the material editor labels.  The
+   numbering below is the 3ds Max Standard layout and is shared by most of the
+   older material classes. */
+fn mcpMatMapChannel slot =
+(
+  local s = toLower (slot as string)
+  case s of
+  (
+    "ambient": 1
+    "diffuse": 2
+    "basecolor": 2
+    "base_color": 2
+    "specular": 3
+    "specularlevel": 4
+    "specular_level": 4
+    "glossiness": 5
+    "selfillum": 6
+    "selfillumination": 6
+    "emission": 6
+    "opacity": 7
+    "filter": 8
+    "filtercolor": 8
+    "bump": 9
+    "normal": 9
+    "reflection": 10
+    "refraction": 11
+    "displacement": 12
+    default: 0
+  )
+)
+
 fn mcpMatGetMap m slot =
 (
   local theMap = undefined
-  try ( theMap = getProperty m (slot as name) ) catch ( theMap = undefined )
-  if not (isKindOf theMap TextureMap) do theMap = undefined
+  local prop = mcpMatMapPropName m slot
+  if prop != undefined do
+    try ( theMap = getProperty m prop ) catch ( theMap = undefined )
+  if not (isKindOf theMap TextureMap) do
+  (
+    theMap = undefined
+    local ch = mcpMatMapChannel slot
+    if ch > 0 do
+    (
+      local sub = try ( getSubTexmap m ch ) catch ( undefined )
+      if (isKindOf sub TextureMap) do theMap = sub
+    )
+  )
   theMap
+)
+
+/* Returns a short description of where the map landed ("diffuseMap" or
+   "channel 2"), or undefined when the slot cannot be resolved. */
+fn mcpMatSetMap m slot theMap =
+(
+  local prop = mcpMatMapPropName m slot
+  if prop != undefined do
+  (
+    local ok = true
+    try ( setProperty m prop theMap ) catch ( ok = false )
+    if ok do return (prop as string)
+  )
+  local ch = mcpMatMapChannel slot
+  if ch > 0 do
+  (
+    local ok = true
+    try ( setSubTexmap m ch theMap ) catch ( ok = false )
+    if ok do
+    (
+      local got = try ( getSubTexmap m ch ) catch ( undefined )
+      if got == theMap do return ("channel " + (ch as string))
+    )
+  )
+  undefined
 )
 
 fn mcpMatDetails m =
@@ -492,12 +628,15 @@ fn mcpH_mat_set_map_slot params =
   local theMap = execute (mapClass + "()")
   if theMap == undefined do mcpFail "err.class_missing" a1:mapClass
   if path != "" do ( try ( theMap.filename = path ) catch() )
-  try ( setProperty m (slot as name) theMap ) catch ( mcpFail "err.invalid_argument" a1:slot a2:(getCurrentException() as string) )
+  local slotWhere = mcpMatSetMap m slot theMap
+  if slotWhere == undefined do
+    mcpFail "err.invalid_argument" a1:slot a2:("no map slot matches on " + ((classof m) as string))
   local p = #()
 
   -- Reaching here means every failure path above mcpFails.
   mcpPair p "success" true  mcpPair p "material" (try (m.name) catch (""))
   mcpPair p "slot" slot
+  mcpPair p "property" slotWhere
   mcpPair p "mapClass" (try ((classof theMap) as string) catch (""))
   mcpPair p "message" (mcpMsg "msg.ok")
   mcpObj p
@@ -508,8 +647,13 @@ fn mcpH_mat_get_map_slot params =
   local m = mcpRequireMat (mcpStr params "material" default:"")
   local slot = mcpReqStr params "slot"
   local theMap = mcpMatGetMap m slot
+  local prop = mcpMatMapPropName m slot
+  local slotWhere = if prop != undefined then (prop as string)
+                else ( local ch = mcpMatMapChannel slot
+                       if ch > 0 then ("channel " + (ch as string)) else "" )
   local p = #()
   mcpPair p "slot" slot
+  mcpPair p "property" slotWhere
   mcpPair p "mapClass" (try ((classof theMap) as string) catch (""))
   mcpPair p "filename" (try (theMap.filename) catch (""))
   mcpObj p
@@ -540,9 +684,22 @@ fn mcpH_mat_create_physical params =
   mcpAssignCreatedMat m params
 )
 
+/* A creatable class can be renamed between releases: Arnold's Standard Surface
+   has always been "ai_standard_surface" internally, while the catalog used to
+   ask for "aiStandardSurface".  Accept a comma/semicolon separated candidate
+   list in className and bind the first one the installation actually has. */
+fn mcpResolveMatClass spec =
+(
+    local names = filterString (spec as string) ",;|"
+    for n in names do ( if (mcpClassExists n) do return n )
+    undefined
+)
+
 fn mcpH_mat_create_guarded params =
 (
-  local className = mcpReqStr params "className"
+  local spec = mcpReqStr params "className"
+  local className = mcpResolveMatClass spec
+  if className == undefined do mcpFail "err.class_missing" a1:spec
   local nm = mcpStr params "name" default:""
   mcpEnsureClass className
   local m = execute (className + "()")
@@ -553,7 +710,9 @@ fn mcpH_mat_create_guarded params =
 
 fn mcpH_mat_create_generic params =
 (
-  local className = mcpReqStr params "className"
+  local spec = mcpReqStr params "className"
+  local className = mcpResolveMatClass spec
+  if className == undefined do mcpFail "err.class_missing" a1:spec
   local nm = mcpStr params "name" default:""
   mcpEnsureClass className
   local m = execute (className + "()")

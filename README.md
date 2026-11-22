@@ -18,6 +18,7 @@ An MCP (Model Context Protocol) plugin that gives AI agents full control of Auto
 - [在 AI 客户端中使用](#在-ai-客户端中使用)
 - [接入国产 AI 客户端](#接入国产-ai-客户端)
 - [工具一览](#工具一览)
+- [视觉反馈：让 AI 看到场景](#视觉反馈让-ai-看到场景)
 - [工具档位](#工具档位)
 - [中英双语切换](#中英双语切换)
 - [配置](#配置)
@@ -35,7 +36,7 @@ An MCP (Model Context Protocol) plugin that gives AI agents full control of Auto
 
 | 部分 | 运行位置 | 职责 |
 | --- | --- | --- |
-| **MCP 服务端** | 独立 Python 进程（stdlib-only） | 对 AI 客户端讲 MCP/JSON-RPC，对外暴露 **386 个工具** |
+| **MCP 服务端** | 独立 Python 进程（stdlib-only） | 对 AI 客户端讲 MCP/JSON-RPC，对外暴露 **391 个工具** |
 | **MAXScript 桥接** | 3ds Max 进程内（主线程） | 监听本地 TCP，执行真实场景操作 |
 
 AI 客户端（Cursor / Claude Desktop / 任意 MCP 客户端）→ MCP 服务端 → 本地 TCP → 3ds Max 桥接 → 场景。
@@ -67,7 +68,7 @@ AI 客户端（Cursor / Claude Desktop / 任意 MCP 客户端）→ MCP 服务�
 ```
 ┌────────────────────┐   MCP / JSON-RPC 2.0    ┌──────────────────────────┐
 │  AI client         │  ◀── stdio / HTTP ────▶ │  maxmcp (Python)         │
-│  Cursor / Claude   │                         │  · catalog: 386 tools    │
+│  Cursor / Claude   │                         │  · catalog: 391 tools    │
 │  WorkBuddy / Cline │                         │  · i18n: zh / en / auto  │
 │  国产 AI 客户端     │                         │  · wire codec (ANSI)     │
 └────────────────────┘                         └────────────┬─────────────┘
@@ -126,7 +127,7 @@ python scripts/install.py --yes
 安装器会：
 
 1. 扫描所有 3ds Max 用户脚本目录（`%LOCALAPPDATA%\Autodesk\3dsMax\<年份> - 64bit\<语言>\scripts`）。
-2. 把 19 个 MAXScript 模块复制到 `<scripts>\3dsmax-mcp\`。
+2. 把 23 个 MAXScript 模块复制到 `<scripts>\3dsmax-mcp\`。
 3. 写入启动自动加载器 `<scripts>\startup\3dsmax-mcp-bridge.ms` 与端口/语言配置 `<scripts>\3dsmax-mcp\3dsmax-mcp.ini`。
 4. 把 Python 服务端复制到 `%LOCALAPPDATA%\3dsmax-mcp\maxmcp`。
 5. 注册 MCP 客户端（Cursor / Claude Desktop）。
@@ -156,7 +157,7 @@ python scripts/install.py --uninstall         # 卸载
   Status      : listening
   Address     : 127.0.0.1:8765
   3ds Max     : 2020 (major 22)
-  Commands    : 353
+  Commands    : 359
   Language    : zh
   Pump timer  : true
   ----------------------------------------------------
@@ -180,15 +181,15 @@ python scripts/doctor.py
 -- environment
   [ok]   Python 3.13.14 at ...\python.exe
   [ok]   MCP server package (installed)
-         386 tools (animation=59, files=8, modeling=83, objects=61, pipeline=54, scene=18, shading=69, system=34)
+         391 tools (animation=59, context=6, files=8, modeling=83, objects=61, pipeline=54, scene=18, shading=69, system=33)
 -- 3ds Max side
-  [ok]   3ds Max 2020 [CHS]: 19 bridge modules + autoloader
-  [ok]   3ds Max 2020 [ENU]: 19 bridge modules + autoloader
+  [ok]   3ds Max 2020 [CHS]: 23 bridge modules + autoloader
+  [ok]   3ds Max 2020 [ENU]: 23 bridge modules + autoloader
   [ok]   3ds Max is running
 -- connectivity
   [ok]   Bridge listening on port 8765
   [ok]   Live handshake succeeded
-         handlers=353  language=zh  3ds Max year=2020
+         handlers=359  language=zh  3ds Max year=2020
   [ok]   Language: zh from Max UI 'CHS' (auto)
          The server follows this while its own language is 'auto'.
 -- MCP clients
@@ -224,7 +225,7 @@ Max 未运行时对应的一行是 `[warn] No bridge listening on 8765, 8766, ..
 }
 ```
 
-重启 Cursor，在 **Settings → MCP** 里应看到 `3dsmax-mcp` 已连接、386 个工具。
+重启 Cursor，在 **Settings → MCP** 里应看到 `3dsmax-mcp` 已连接、391 个工具。
 
 ### Claude Desktop
 
@@ -252,11 +253,11 @@ stdio 上的 JSON-RPC 服务端，`initialize` → `tools/list` → `tools/call`
 
 ## 工具一览
 
-共 **386 个工具**，分 8 类：
+共 **391 个工具**，分 9 类：
 
 | 分类 | 数量 | 覆盖内容 |
 | --- | ---: | --- |
-| `system` | 34 | 桥接控制、握手、脚本逃逸仓、undo/redo 事务、单位与时间配置、内省 |
+| `system` | 33 | 桥接控制、握手、脚本逃逸仓、undo/redo 事务、单位与时间配置、内省 |
 | `scene` | 18 | 场景新建/打开/保存/合并、图层、资源与丢失贴图重链 |
 | `files` | 8 | 文本读写、目录列举、复制/删除、文件信息 |
 | `objects` | 61 | 基础体与样条、变换/对齐/镜像/轴心、层级与父子、组、选择、隐藏冻结、克隆阵列、布尔/ProBoolean |
@@ -264,6 +265,7 @@ stdio 上的 JSON-RPC 服务端，`initialize` → `tools/list` → `tools/call`
 | `shading` | 69 | 材质读写与赋给、PBR/Arnold/V-Ray/Corona/FStorm 材质、贴图节点、材质库、UVW 贴图与 Unwrap、灯光、相机、环境 |
 | `animation` | 59 | 关键帧与曲线、控制器与表达式、约束、骨骼与 IK、蒙皮权重、Morpher |
 | `pipeline` | 54 | 渲染引擎与设置、单帧/帧序列/批渲染、渲染元素、**视口截图（vision_capture / vision_views / vision_preview，直接返回图像）**、烘焙（AO/法线/光照/贴图）、导入导出（FBX/OBJ/glTF/USD/ABC/STL/3DS）与引擎预设 |
+| `context` | 6 | **场景上下文**（`context_get` / `context_refresh` / `context_stats` / `context_events`）、内置面板（`client_ui` / `client_status`）
 
 查看完整列表：
 
@@ -323,18 +325,115 @@ Agent 做场景从来不是"一次调用"，而是十几步：读场景 → 确�
 
 ---
 
+## 视觉反馈：让 AI 看到场景
+
+纯文本的工具结果只能告诉 AI「命令执行了」，不能告诉它「这一步到底做成了什么样」——
+对象有没有翻面、材质是不是白的一片、模型有没有跑出画面，JSON 里都看不出来。
+`pipeline` 类目下的三个视觉工具把画面**直接作为 MCP 图片内容块返回**给 AI，形成
+「修改 → 截图 → 检查 → 再修改」的闭环。它们都是只读工具（不写场景）。
+
+> **返回的是图片本身，不是本地路径。** 桥接端只能传 JSON 文本，所以 MAXScript 把
+> 图片的 base64 放在结果的 `_images` 数组里；服务端收到后把每一项转成真正的 MCP
+> `image` content block，文本部分只留下 `images` 描述（label / mimeType /
+> base64Chars）。能显示图片的客户端会直接看到画面；不能显示图片的客户端至少保留
+> 元数据，不会把像素弄丢。`vision_capture` 额外支持用 `path` 参数把图片另存一份到
+> 本机磁盘，方便人自己打开看。
+
+### vision_capture —— 当前视口截图
+
+抓当前活动视口的一帧。参数（均为可选）：
+
+| 参数 | 类型 | 默认 | 说明 |
+| --- | --- | --- | --- |
+| `max_edge` | integer | 800 | 图片长边像素上限，代码钳制在 64–2048 |
+| `format` | string | `jpeg` | `jpeg`（默认，体积小）或 `png`（无损） |
+| `redraw` | boolean | `true` | 抓图前强制重绘；关掉会拿到上一帧的旧画面 |
+| `path` | string | 空 | 可选：同时把图片写到该绝对路径（会自动建目录） |
+
+返回文本含 `width` / `height` / `mime` / `bytes`，图片块的 label 为 `active`；
+写了 `path` 时还会带 `path`。抓图失败（视口无帧缓冲）返回错误，不会假装成功。
+
+### vision_views —— 多视角截图
+
+依次切到多个标准视图各抓一张，**每张都是独立图片块**，不拼成网格图（拼图会被整体
+降采样，每格细节损失数倍）。参数（均为可选）：
+
+| 参数 | 类型 | 默认 | 说明 |
+| --- | --- | --- | --- |
+| `views` | string[] | `["perspective","front","left","top"]` | 可选视角：`perspective` / `front` / `back` / `left` / `right` / `top` / `bottom` / `orthographic` / `user`；代码最多取前 6 个 |
+| `max_edge` | integer | 800 | 每张长边像素，钳制 64–2048 |
+| `format` | string | `jpeg` | `jpeg` 或 `png` |
+| `fit` | boolean | `true` | 抓图前缩放视图到场景（有选择时缩放到选择） |
+| `restore` | boolean | `true` | 抓完后恢复原视图类型与视角 |
+
+返回文本含 `count`、`max_edge` 和 `views`（每张的 view / width / height），每张图片的
+label 就是视角名。有选择集但没抓到任何一张时返回错误。
+
+### vision_preview —— 渲染预览
+
+低分辨率渲染一张预览图，**唯一一个参数**是 `max_edge`（integer，默认 640，钳制
+64–1600，越大越慢）。视口截图不反映真实材质和灯光，确认灯光、材质、最终外观时用这个。
+输出固定为 `image/jpeg`，图片块 label 为 `render`。场景改动后第一次渲染可能要几十秒
+（着色器编译），这不是卡死。
+
+### Agent 怎么用截图
+
+AI 在一个操作回合里的典型闭环：
+
+1. **动手前**先看一眼：`vision_capture` 确认当前状态，避免基于臆测修改。
+2. **每步改动后**抓一张：改完几何体 / 材质 / 灯光就 `vision_capture`，看这一步实际
+   做成了什么，而不是只信工具返回的 `ok`。
+3. **看全貌**用 `vision_views`：判断比例、朝向、空间关系，或检查背面 / 顶部有没有问题。
+4. **验收外观**用 `vision_preview`：材质和灯光的最终效果只有渲染图能确认。
+5. **发现问题就回到第 2 步**：把截图发现的问题和预期对比，继续修改并重新截图，直到
+   画面符合预期。
+
+这样能发现纯文本工具发现不了的问题：模型翻面、材质丢失变白、对象出画、灯光过曝、
+比例失真等。截图回灌不新增工具，只是把已有的三个视觉工具用进验证环节。
+
+### 可复制的调用示例
+
+```jsonc
+// 当前视口截图，长边压到 640，另存一份到本机
+{ "name": "vision_capture",
+  "arguments": { "max_edge": 640, "format": "jpeg", "redraw": true,
+                 "path": "D:/renders/check.png" } }
+
+// 一次抓透视 + 前 + 顶三个独立视角
+{ "name": "vision_views",
+  "arguments": { "views": ["perspective", "front", "top"],
+                 "max_edge": 800, "fit": true, "restore": true } }
+
+// 渲染一张 640px 预览确认材质灯光
+{ "name": "vision_preview", "arguments": { "max_edge": 640 } }
+```
+
+### 限制（以代码为准）
+
+- **视口状态依赖**：`vision_capture` 抓的是当前活动视口；`redraw=false` 会拿到上一帧旧画面。
+  视口被遮挡、最小化或无帧缓冲时抓取失败并返回错误。
+- **多视角有上限**：`vision_views` 最多取前 6 个视角；每张图都要切视图 + 重绘，视角越多越慢。
+- **渲染耗时**：`vision_preview` 场景改动后首次渲染可能数十秒（着色器编译）；它依赖当前
+  渲染器，不同渲染器结果和耗时不同。
+- **图片尺寸**：`vision_capture` / `vision_views` 的 `max_edge` 钳制在 64–2048，
+  `vision_preview` 在 64–1600；`vision_preview` 按当前渲染宽高比算高，固定输出 jpeg。
+- **上下文体积**：图片比文本占额度得多，`max_edge` 越大越清楚也越慢、越占上下文；按需调低。
+- **纯文本客户端**：只能看到 `images` 元数据（label / mimeType / base64Chars），看不到画面。
+
+---
+
 ## 工具档位
 
-386 个工具全塞进上下文会明显占额度。用 `--profile` 按需裁剪：
+391 个工具全塞进上下文会明显占额度。用 `--profile` 按需裁剪：
 
 | 档位 | 工具数 | 包含分类 |
 | --- | ---: | --- |
-| `core` | 58 | field-tested modeling loop and session essentials |
-| `modeling` | 204 | core + modeling |
-| `lookdev` | 190 | core + shading |
-| `animation` | 180 | core + animation |
-| `pipeline` | 175 | core + pipeline |
-| `full` | **386** | 全部（默认） |
+| `core` | 60 | field-tested modeling loop and session essentials |
+| `modeling` | 209 | core + modeling |
+| `lookdev` | 195 | core + shading |
+| `animation` | 185 | core + animation |
+| `pipeline` | 180 | core + pipeline |
+| `full` | **391** | 全部（默认） |
 
 ```bash
 python -m maxmcp --profile modeling
@@ -480,17 +579,51 @@ python scripts/install.py --client print --http-port 8770
 python -m maxmcp --transport http --http-port 8770
 python -m maxmcp --transport both                      # stdio + http 同进程
 
-# 需要暴露到局域网/公网时，务必加令牌
+# 需要暴露到局域网/公网时，务必加令牌（否则启动会被拒绝）
 python -m maxmcp --transport http --http-host 0.0.0.0 --http-token 你的密钥
 ```
 
-> ⚠️ **安全**：HTTP 端点默认只绑 `127.0.0.1`。一旦改绑到其他地址，
-> **任何能访问该端口的人都能在你的 Max 里执行任意 MAXScript**。
-> 只在可信网络这么做，并且一定设置 `--http-token`（客户端用
-> `Authorization: Bearer <token>`）。绑到非回环地址时服务端会打印醒目警告。
+> ⚠️ **安全**：HTTP 端点默认只绑 `127.0.0.1`（回环）。**改绑到非回环地址
+> （`0.0.0.0`、`::`、局域网 IP）时必须同时提供 `--http-token`，否则服务端
+> 会直接拒绝启动**（exit 2），不会因为疏忽而把接口暴露出去。客户端用
+> `Authorization: Bearer <token>` 携带令牌。绑到非回环且带令牌时会打印醒目警告。
 
 > 云端平台要访问你本机的 `127.0.0.1`，需要自己做端口转发（frp / ngrok / 反向代理）。
 > 这属于网络暴露，风险自负 —— 建议只在内网使用。
+
+### 安全边界（发布部署前必读）
+
+这个 MCP 服务把 3ds Max 的**场景操作能力**暴露给 AI 客户端。理解下面几类工具的权限边界，
+只在**你信任的客户端与环境**中使用：
+
+| 工具 / 通道 | 能力 | 风险含义 |
+| --- | --- | --- |
+| `execute_maxscript` | 执行**任意 MAXScript** | 等价于在 Max 里手敲脚本：可读写场景、调用文件 I/O、改配置。仅在可信 Agent 下启用 |
+| `execute_python` | 执行**任意 Python**（经 Max 内 pymxs） | 同上，且能访问本机 Python 可见资源 |
+| `write_text_file` / `delete_file` / `copy_file` | 读写/删除**本机任意路径** | 参数里的路径没有沙箱白名单，AI 可写到任意可访问位置 |
+| `scene_open` / `scene_save_as` | 打开/覆盖 `.max` 文件 | 覆盖已有工程前请自行备份；不要让不可信输入决定路径 |
+| 导出类工具（`export_*` / `bake_render`） | 写文件到指定路径 | 同上，路径由调用方给出 |
+
+**网络暴露**：TCP 桥接（`8765`）默认只监听 `127.0.0.1`，**没有认证**，且工具参数无法把它
+改成非回环地址 —— 不要把该端口做端口转发或暴露到局域网/公网。比桥接更敏感的是 HTTP 端点：
+能访问它且持有令牌的人即可远程执行上面的任意代码工具。令牌**不是**防火墙的替代品，
+暴露部署时请同时用系统防火墙 / 安全组限制来源 IP。回环监听带有 Host 头校验（防 DNS rebinding），
+非回环监听不发 `Access-Control-Allow-Origin: *`。
+
+**降低权限面**：用工具档位和分类禁用收敛暴露给 AI 的能力：
+
+```bash
+python -m maxmcp --profile core          # 只暴露核心只读 + 常用工具子集
+```
+
+```json
+// config.json —— 禁用整类高危工具（例如禁止脚本执行）
+{ "disabled_categories": ["system"] }
+```
+
+`execute_maxscript` / `execute_python` 属于 `system` 类；在多人共享或生产机上建议禁用。
+注意：档位与分类过滤只影响**工具列表的呈现**，网关/传输层本身不按此鉴权 —— 它不是安全沙箱，
+真正的边界是"只连本机 + 可信客户端"。
 
 ### 工具名长度
 
@@ -581,6 +714,8 @@ python scripts/doctor.py
 | 工具太多、上下文爆 | 换小档位 `--profile lookdev` 等。 |
 | HTTP 客户端连不上（`Connection refused`） | HTTP 端点不是常驻服务，得先跑 `start-http.bat` 或 `python -m maxmcp --transport http`。 |
 | HTTP 返回 401 | 服务端设了 `--http-token`，客户端要带 `Authorization: Bearer <token>`。 |
+| HTTP 启动报 `REFUSED to start` | 绑定了非回环地址却没给 `--http-token`。改回 `--http-host 127.0.0.1`，或补上令牌。 |
+| HTTP 返回 403（Host forbidden） | 回环无令牌模式下，请求的 `Host` 头不是本机地址（可能是 DNS rebinding）。用 `127.0.0.1` / `localhost` 访问。 |
 | 国产平台（智谱/百炼）加不上 | 它们按 URL 注册，只吃 HTTP/SSE，且**访问不到你本机的 127.0.0.1**。需要端口转发把端点暴露出去。 |
 | Max 重启后语言变了 | 若 `3dsmax-mcp.ini` 里是 `auto`，这是预期行为（跟随 Max）。想固定就重装带 `--language zh`。 |
 
@@ -605,7 +740,7 @@ mcpSelfTest()
 │   │   ├── wire.py            #   ANSI 线编解码（中文往返的关键）
 │   │   ├── i18n.py            #   双语消息层 + Max 语言码映射
 │   │   ├── config.py          #   配置加载
-│   │   └── catalog/           #   386 个工具定义
+│   │   └── catalog/           #   391 个工具定义
 │   │       ├── schema.py      #     Tool 类 + 档位 + DSL
 │   │       ├── core.py        #     system / scene / files
 │   │       ├── objects.py     #     objects
@@ -614,9 +749,10 @@ mcpSelfTest()
 │   │       ├── animation.py   #     animation
 │   │       └── pipeline.py    #     pipeline（渲染/烘焙/导入导出 + vision 截图）
 │   └── ms/                    # MAXScript 桥接（字节级部署到 Max 用户脚本目录）
-│       ├── mcp_bridge.ms      #   入口：加载 18 个模块、启停桥接、语言解析
+│       ├── mcp_bridge.ms      #   入口：加载 22 个模块、启停桥接、语言解析
 │       ├── mcp_json.ms        #   纯 MAXScript JSON 引擎
 │       ├── mcp_core.ms        #   命令注册表、消息表、节点解析、语言探测
+│       ├── mcp_domains.ms     #   每个命令写脏哪些 context 域（生成文件，勿手改）
 │       ├── mcp_net.ms         #   TCP 监听 + 主线程 Timer 泵 + 调度
 │       ├── mcp_system.ms      #   系统 / undo / 单位 / 脚本逃逸仓
 │       ├── mcp_objects.ms     #   对象与样条
@@ -657,7 +793,7 @@ mcpSelfTest()
 │   └── logs/                  # 证据与日志，按日期归档（gitignored）
 ├── docs/
 │   ├── BRIDGE_CONVENTIONS.md  # 桥接契约与编码规范
-│   ├── LIVE_MATRIX.md         # 386 工具 × 实机状态矩阵（生成物）
+│   ├── LIVE_MATRIX.md         # 391 工具 × 实机状态矩阵（生成物）
 │   ├── OFFLINE_LINT_GUIDE.md  # 离线门禁使用指南
 │   ├── P0_ENV.md              # Max 启动崩溃调查环境记录
 │   ├── TOOL_PROFILES_PROPOSAL.md
@@ -721,8 +857,18 @@ python test/static/catalog_contract_test.py --json     # 机器可读报告
 python test/static/offline_lint_helper.py              # 人读输出
 python test/static/offline_lint_helper.py --json       # 机器可读报告
 
+# 写操作 → context 域契约：每个注册命令都必须声明 mutates（generated/mcp_domains.ms），
+#         非只读工具声明缺失、只读工具声明非空、生成文件与 catalog 不一致都会失败
+python test/static/tool_domain_contract_test.py        # 人读输出
+python test/static/tool_domain_contract_test.py --json # 机器可读报告
+python scripts/gen_tool_domains.py                     # 改了工具名/域规则后重新生成
+
 # 实机验证矩阵（需要 Max 桥接在听）：--list 可无 Max 只看清单
 python test/live/live_matrix.py --list
+
+# 实机验证：写操作是否真的把域标脏、since 增量是否重发、失败是否不推进 revision
+python test/live/write_tracking_test.py --port 8765            # 只打印计划
+python test/live/write_tracking_test.py --port 8765 --yes      # 真机执行（可逆）
 
 # 端到端：用 MockBridge 顶替 Max，验证 initialize / tools/list / tools/call /
 #         中文往返 / 错误透传 / 语言切换 / 配置持久化

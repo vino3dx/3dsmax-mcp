@@ -18,16 +18,26 @@
        <- {"id":1,"ok":true,"result":{...}}\n
 -----------------------------------------------------------------------------*/
 
-global mcpListener, mcpConns, mcpTimer, mcpPort, mcpRunning, mcpHost
-global mcpNetStart, mcpNetStop, mcpNetPump, mcpOnTick, mcpNetStatus
+global mcpListener, mcpConns, mcpTimer, mcpPort, mcpRunning, mcpHost, mcpPumpBusy
+global mcpNetStart, mcpNetStop, mcpNetPump, mcpNetPumpInner, mcpOnTick, mcpNetStatus
 global mcpProcessBuffer, mcpHandleLine, mcpHandleLineInner, mcpDispatch, mcpOkJson, mcpErrJson
 global mcpRunLoop, mcpWritePortHint, mcpWriteStream, mcpBridgeLog, mcpIdJson
+global mcpDispatchDomains, mcpDispatchNotify
+-- Defined in mcp_context.ms / mcp_events.ms / mcp_domains.ms, which load after
+-- this file; the names are declared here so the tick and the dispatcher read
+-- real globals.
+global mcpCtxTick, mcpEvAfterWrite, mcpToolDomains, mcpEvDomainsForMethod
 
 -- A connection is a plain 3 element array: #(tcpClient, networkStream, buffer)
-mcpConns = #()
-mcpHost = "127.0.0.1"
-mcpPort = 8765
-mcpRunning = false
+/* Reloading a module must not kill a live listener: re-running this file from
+   the Listener (or through mcpBridgeLoad) used to clear mcpConns and flip
+   mcpRunning back to false while the socket was still open, so the next
+   bridge_status reported a dead bridge.  Only initialise what is unset. */
+if mcpConns == undefined do mcpConns = #()
+if mcpHost == undefined do mcpHost = "127.0.0.1"
+if mcpPort == undefined do mcpPort = 8765
+if mcpRunning == undefined do mcpRunning = false
+if mcpPumpBusy == undefined do mcpPumpBusy = false
 
 
 /*-------------------------------------------------------------- response JSON*/
@@ -94,6 +104,55 @@ fn mcpErrJson id kind message =
 
 
 /*------------------------------------------------------------------- dispatch*/
+/* The domains a command invalidates come from the declared table in
+   mcp_domains.ms, never from the undo flag.  Those are different questions:
+   `render_set_resolution` changes the scene and is registered undoable:false
+   (there is nothing to hold), while `select_objects` is undoable:true and only
+   moves the selection.  Deriving one from the other is what let 49 writes reach
+   the scene without reaching the ledger.
+
+   undefined means "no declaration".  That is a build error -- the static
+   contract test fails on it -- but a partially installed bridge still has to
+   run, so the legacy prefix heuristic answers instead of the ledger going
+   silent. */
+fn mcpDispatchDomains method =
+(
+    local declared = undefined
+    if mcpToolDomains != undefined do
+    (
+        try ( declared = mcpToolDomains method ) catch ( declared = undefined )
+    )
+    if declared == undefined do
+    (
+        try ( declared = mcpEvDomainsForMethod method ) catch ( declared = #() )
+    )
+    declared
+)
+
+/* Tell the ledger about a successful write.  Called only after the handler
+   returned, and skipped when the handler reported failure in its payload
+   (`ok:false`) instead of throwing -- a failed command must not be recorded as
+   a domain change, or `since` moves forward over a scene that did not move. */
+fn mcpDispatchNotify method domains result =
+(
+    if mcpEvAfterWrite == undefined then return undefined
+    if domains == undefined then return undefined
+    -- Declared as touching nothing (a read, a viewport grab, a file write):
+    -- nothing to record, and no need to inspect the result payload.
+    if domains.count == 0 then return undefined
+
+    local flag = undefined
+    try ( flag = mcpGet result "ok" ) catch ( flag = undefined )
+    if ((classof flag) == BooleanClass) and (flag == false) do
+    (
+        try ( mcpBridgeLog ("net: " + (method as string) + " returned ok:false, ledger not updated") ) catch()
+        return undefined
+    )
+
+    try ( mcpEvAfterWrite method domains:domains ) catch()
+    undefined
+)
+
 fn mcpDispatch method params =
 (
     local entry = mcpFindEntry method
@@ -103,7 +162,22 @@ fn mcpDispatch method params =
     -- per request override of the registered undo behaviour
     local wantUndo = entry[3]
     if (mcpGet params "undo") != undefined do wantUndo = mcpBool params "undo" default:wantUndo
-    if not wantUndo do return (handler params)
+
+    -- Resolved once, before the handler runs, so a handler that reloads a
+    -- module mid-call cannot change which domains get reported.
+    local domains = mcpDispatchDomains method
+
+    if not wantUndo do
+    (
+        local readOnlyResult = handler params
+        /* execute_maxscript / execute_python are registered non-undoable
+           (arbitrary code, a hold around it would be meaningless), yet they are
+           the main escape hatches and can change anything.  They now report
+           through the same path as everything else: their declaration is the
+           full domain set, so the special case that used to live here is gone. */
+        mcpDispatchNotify method domains readOnlyResult
+        return readOnlyResult
+    )
 
     local label = mcpEntryLabel method
     local customLabel = mcpStr params "undo_label"
@@ -121,6 +195,9 @@ fn mcpDispatch method params =
         else mcpHoldCancel()
     )
     if failure != undefined do throw failure
+    -- One place sees every successful write, so the context revision cannot
+    -- drift just because a tool forgot to report itself.
+    mcpDispatchNotify method domains result
     result
 )
 
@@ -239,6 +316,15 @@ fn mcpProcessBuffer cn =
         local line = substring buf 1 (idx - 1)
         buf = substring buf (idx + 1) (buf.count - idx)
 
+        /* Publish the remainder *before* dispatching.  A long command (export,
+           render, bake) pumps the Windows message queue, which re-enters this
+           timer from inside mcpHandleLine.  While cn[3] still held the line
+           being executed, that nested tick replayed the same request: the
+           command ran again, nested, and replayed again -- a runaway recursion
+           that ended in EXCEPTION_STACK_OVERFLOW raised by the *exporter*
+           (which is why every slow exporter looked broken).  Handing the
+           remainder over first makes a re-entrant pass see nothing to do. */
+        cn[3] = buf
         if line.count > 0 and (substring line line.count 1) == "\r" do
             line = substring line 1 (line.count - 1)
 
@@ -255,7 +341,7 @@ fn mcpProcessBuffer cn =
 
 
 /*------------------------------------------------------------------------ pump*/
-fn mcpNetPump =
+fn mcpNetPumpInner =
 (
     if mcpListener == undefined then return 0
 
@@ -386,9 +472,37 @@ fn mcpNetPump =
     served
 )
 
+/* The re-entrancy gate.
+   Commands that pump the Windows message queue (exportFile, render, bake,
+   completeRedraw) let the WinForms timer fire while a request is still being
+   executed.  Without this flag the nested tick drained the socket and ran the
+   *next* request on top of the one in flight: the scene was mutated from two
+   places at once and, when the nested work was itself slow, the recursion
+   never unwound.  One request at a time, or nothing. */
+fn mcpNetPump =
+(
+    if mcpPumpBusy == true then return 0
+    mcpPumpBusy = true
+    local served = 0
+    try ( served = mcpNetPumpInner() )
+    catch
+    (
+        served = 0
+        try ( mcpBridgeLog ("net: pump raised -> " + (getCurrentException() as string)) ) catch()
+    )
+    -- Must be cleared on every path: leaving it set would silence the bridge.
+    mcpPumpBusy = false
+    served
+)
+
 fn mcpOnTick sender args =
 (
     try ( mcpNetPump() ) catch()
+    /* Context maintenance rides this tick instead of owning a second timer:
+       two timers would interleave inside the same MAXScript evaluation and
+       re-open the re-entrancy class of bug mcpPumpBusy exists to prevent.
+       mcpCtxTick is O(1) on 7 of every 8 ticks (see mcp_context.ms). */
+    if mcpCtxTick != undefined do ( try ( mcpCtxTick() ) catch() )
 )
 
 -- Headless / batch helper: pump for N seconds instead of relying on the UI timer.
@@ -470,6 +584,8 @@ fn mcpNetStart port:8765 host:"127.0.0.1" =
     mcpPort = port
     mcpRunning = true
     mcpConns = #()
+    -- A restart is also the recovery path for a pump that died mid-request.
+    mcpPumpBusy = false
 
     local timerOk = false
     try
@@ -515,6 +631,7 @@ fn mcpNetStop =
         mcpListener = undefined
     )
     mcpRunning = false
+    mcpPumpBusy = false
     mcpMsg "msg.bridge_stopped"
 )
 

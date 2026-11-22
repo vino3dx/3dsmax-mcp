@@ -46,11 +46,22 @@ fn mcpH_bridge_ping params =
     mcpObj p
 )
 
+/* Not exposed as an MCP tool any more (see catalog/core.py): the socket the
+   reply would travel on is the one this closes, so an AI client that calls it
+   loses the channel for good.  It stays registered for the panel and for the
+   Listener, and it prints the recovery line to the Listener, because the
+   response body itself can never be delivered. */
 fn mcpH_bridge_stop params =
 (
     mcpNetStop()
+    try
+    (
+        format "3ds Max MCP: bridge stopped. Recover with mcpBridgeStart() in this Listener,\nor press \"Start bridge\" in the Vino 3dsMax MCP panel.\n"
+    )
+    catch()
     local p = #()
     mcpPair p "running" false
+    mcpPair p "recovery" "mcpBridgeStart() in the MAXScript Listener, or Start bridge in the Max panel"
     mcpPair p "message" (mcpMsg "msg.bridge_stopped")
     mcpObj p
 )
@@ -265,17 +276,67 @@ fn mcpH_execute_python params =
         return (mcpObj p)
     )
 
-    local raw = undefined
+    -- python.Execute() answers "success" for any statement block and never
+    -- surfaces print() output, which made this tool useless for real Python
+    -- work.  Run the code through a small driver instead: it captures stdout,
+    -- tracebacks and the exit status, then hands the text back through a file.
+    local tmpDir = (try ( getDir #temp ) catch ( "C:/Temp" )) + "\\3dsmax-mcp"
+    try ( makeDir tmpDir all:true ) catch()
+    local codePath = tmpDir + "\\mcp_py_code.py"
+    local outPath = tmpDir + "\\mcp_py_out.txt"
+    local drvPath = tmpDir + "\\mcp_py_driver.py"
+
+    local io = (dotNetClass "System.IO.File")
+    try ( io.WriteAllText codePath code (dotNetClass "System.Text.Encoding").UTF8 )
+    catch ( mcpFail "err.bad_value" a1:"code" )
+
+    local drvText = "import io, sys, traceback\n"
+    drvText += "cp = r\"" + (substituteString codePath "\\" "/") + "\"\n"
+    drvText += "op = r\"" + (substituteString outPath "\\" "/") + "\"\n"
+    drvText += "buf = io.StringIO()\n"
+    drvText += "old = sys.stdout\n"
+    drvText += "sys.stdout = buf\n"
+    drvText += "status = 'OK'\n"
+    drvText += "try:\n"
+    drvText += "    src = io.open(cp, 'r', encoding='utf-8-sig').read()\n"
+    drvText += "    exec(compile(src, cp, 'exec'), {'__name__': '__main__'})\n"
+    drvText += "except Exception:\n"
+    drvText += "    status = 'ERR'\n"
+    drvText += "    buf.write(traceback.format_exc())\n"
+    drvText += "finally:\n"
+    drvText += "    sys.stdout = old\n"
+    drvText += "f = io.open(op, 'w', encoding='utf-8')\n"
+    drvText += "f.write(status + '\\n' + buf.getvalue())\n"
+    drvText += "f.close()\n"
+    try ( io.WriteAllText drvPath drvText (dotNetClass "System.Text.Encoding").UTF8 )
+    catch ( mcpFail "err.bad_value" a1:"driver" )
+    try ( io.Delete outPath ) catch()
+
     local failure = undefined
-    try ( raw = python.Execute code )
+    try ( python.ExecuteFile drvPath )
     catch ( failure = getCurrentException() )
     if failure != undefined do throw failure
+
+    local text = ""
+    try ( if io.Exists outPath do text = io.ReadAllText outPath (dotNetClass "System.Text.Encoding").UTF8 )
+    catch ( text = "" )
+
+    local status = ""
+    local body = text
+    local nl = findString text "\n"
+    if nl != undefined do
+    (
+        status = substring text 1 (nl - 1)
+        body = substring text (nl + 1) -1
+    )
 
     local p = #()
     mcpPair p "available" true
     mcpPair p "pythonVersion" (pyVersion as string)
-    mcpPair p "result" (mcpResultToJson raw)
-    mcpPair p "resultText" (try ( raw as string ) catch ( "" ))
+    mcpPair p "ok" (status != "ERR")
+    mcpPair p "output" body
+    mcpPair p "result" (mcpResultToJson status)
+    mcpPair p "resultText" body
     mcpPair p "message" (mcpMsg "msg.ok")
     mcpObj p
 )
