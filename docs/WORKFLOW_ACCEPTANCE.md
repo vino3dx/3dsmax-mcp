@@ -71,12 +71,23 @@ python scripts/verify.py                       # Static  —— 目录/注册/�
 | W45 | 枚举键两种形态（数组 / 布尔）都判成功 | Static | `check_enumeration_decides` |
 | W46 | 必填契约：handler 离不开的参数必须写进 `required` | Static | `param_contract_audit.py`（required contract） |
 | W47 | 消息键完整：`i18n.t` 与 `mcpMsg` / `mcpFail` 的键都已声明 | Static | `i18n_audit.py` |
+| W48 | 创建：尺寸被夹取时 `success:false` 且 `failures` 带实际值 | Offline | `check_rejected_dimension_is_a_failure` |
+| W49 | 创建：名称被 Max 改成唯一变体是 `warning` 而非失败 | Offline | `check_name_collision_is_a_warning_not_a_failure` |
+| W50 | 创建：样条与折线都有判定字段（不再 `missing_success`） | Offline | `check_spline_creation_has_a_verdict`、`check_line_knots_are_counted` |
+| W51 | 修改器：未进栈 / 参数被拒 / 值被夹取 都是失败 | Offline | `check_mod_add_verifies_the_stack`、`check_mod_add_refused_param_is_a_failure`、`check_mod_set_param_reads_the_value_back` |
+| W52 | 修改器：移除后栈必须变小，不存在时报失败 | Offline | `check_mod_remove_confirms_the_stack_shrank` |
+| W53 | 拓扑 no-op：`unchanged` 有、`failures` 无、整体成功 | Offline | `check_topology_noop_is_reported_without_failing`、`check_weld_noop_is_not_a_failure` |
+| W54 | 对象操作：align / parent 只报场景接受的对象 | Offline | `check_align_reports_only_what_the_scene_accepted`、`check_parent_reports_real_children` |
+| W55 | attach：目标不是形状时拒绝且不消耗源对象 | Offline | `check_attach_requires_a_shape_target`、`check_attach_counts_splines` |
+| W56 | 布尔：操作数未被消耗即失败；真正改变时 `changed:true` | Offline | `check_boolean_reports_a_consumed_nothing_operand`、`check_boolean_changes_the_result` |
+| W57 | 克隆 / 阵列：失败可见，原对象与副本分开记 | Offline | `check_clone_partial_failure_is_visible`、`check_array_separates_created_from_moved` |
+| W58 | MAXScript 一行两语句（参数数量错误）必须为零 | Static | `ms_check.py` 第 5 节 |
 
-级别统计：`Static` 20 类、`Offline` 25 类（其中 6 类两种证据都有，共 45 类），
-`Runtime` 0 类。对应 57 个测试函数：`workflow_engine_test.py` 18 个（Static）、
-`workflow_scene_test.py` 22 个（Offline）、`object_state_test.py` 11 个（Offline），
-外加 `outcome_declaration_test.py` 10 组、`outcome_audit.py` 的覆盖率断言与
-`param_contract_audit.py` 的参数契约断言。
+级别统计：`Static` 21 类、`Offline` 37 类（其中 6 类两种证据都有，共 58 类），
+`Runtime` 0 类。对应 71 个测试函数：`workflow_engine_test.py` 18 个（Static）、
+`workflow_scene_test.py` 22 个（Offline）、`object_state_test.py` 11 个（Offline）、
+`modeling_state_test.py` 20 个（Offline），外加 `outcome_declaration_test.py` 10 组、
+`outcome_audit.py` 的结果分级与回读缺口报告、`param_contract_audit.py` 的参数契约断言。
 
 ## 3. Runtime 待执行清单（本轮未做）
 
@@ -99,6 +110,12 @@ python scripts/verify.py                       # Static  —— 目录/注册/�
 | R12 | 锁定或冻结层上的对象做 `hide` / `reset_transform` | `hidden` 不含该对象、`failures` 点名它，工具整体 `isError:true`；其余对象已改 |
 | R13 | `set_units` 设一个会被夹取的 `scale` | `failures` 里带实际生效的值，`systemScale` 字段与之一致 |
 | R14 | `scene_new{keepScene:true}` / `rig_skin_add_bone{rigid:true}` | `kept` 含 units/frameRate/resolution 且真的生效；绑定后骨骼是刚性（`addBone` 的第三个参数接受布尔或 0/1） |
+| R15 | `create_box{length:10,name:"Crate"}` 两次 | 第二次返回 `success:true`、`warnings` 里带实际名称、场景里真的有两个对象 |
+| R16 | `mod_add` 给 `TurboSmooth` / `Bend` / `Shell` / `ProOptimizer` 各设一个数值参数 | 参数真的生效（`mod_get_params` 读回一致）；若某个修改器的属性写后读回失败，记下是哪一个 |
+| R17 | 两个水密 Box 做 union / subtract | `changed:true`、`facesAfter > facesBefore`、`operandsRemaining:0`；破面网格时 `success:false` 且 `failures` 点名操作数 |
+| R18 | 两个 Circle 做 `attach`（目标是 Circle） | 目标 `numSplines` 增加、源对象消失；若并入同一 spline，记录为文档修正项 |
+| R19 | 重合点 `poly_weld_vertices` / 空面集 `poly_extrude_faces` | 前者 `unchanged` 含该对象且整体成功；后者按空集=全部的约定执行，或明确报失败 |
+| R20 | 锁定对象上 `align_objects` / `parent_objects` | `aligned` / `children` 不含它、`failures` 点名它、工具 `isError:true`；其余对象已改 |
 
 R5/R9/R10 是最关键的三个：它们验证的是"失败时不撒谎"，而这一点离线只能证明
 Python 侧的解释，证明不了 Max 侧的行为。

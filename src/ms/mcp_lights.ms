@@ -288,7 +288,8 @@ fn mcpH_light_delete params =
   local p = #()
 
   -- Reaching here means every failure path above mcpFails.
-  mcpPair p "success" true  mcpPair p "name" nm
+  mcpPair p "success" true
+  mcpPair p "name" nm
   mcpPair p "message" (mcpMsg "msg.ok")
   mcpObj p
 )
@@ -306,7 +307,8 @@ fn mcpH_light_align_to_object params =
   local p = #()
 
   -- Reaching here means every failure path above mcpFails.
-  mcpPair p "success" true  mcpPair p "light" (try (l.name) catch (""))
+  mcpPair p "success" true
+  mcpPair p "light" (try (l.name) catch (""))
   mcpPair p "target" (try (tgt.name) catch (""))
   mcpPair p "message" (mcpMsg "msg.ok")
   mcpObj p
@@ -332,7 +334,8 @@ fn mcpH_light_set_sun params =
   local p = #()
 
   -- Reaching here means every failure path above mcpFails.
-  mcpPair p "success" true  mcpPair p "name" (try (sys.name) catch (""))
+  mcpPair p "success" true
+  mcpPair p "name" (try (sys.name) catch (""))
   mcpPair p "azimuth" azimuth
   mcpPair p "altitude" altitude
   mcpPair p "message" (mcpMsg "msg.ok")
@@ -362,7 +365,8 @@ fn mcpH_cam_create params =
   local p = #()
 
   -- Reaching here means every failure path above mcpFails.
-  mcpPair p "success" true  mcpPair p "class" (try ((classof c) as string) catch (""))
+  mcpPair p "success" true
+  mcpPair p "class" (try ((classof c) as string) catch (""))
   mcpPair p "name" (try (c.name) catch (""))
   mcpPair p "type" typeStr
   mcpPair p "message" (mcpMsg "msg.created" a1:(try (c.name) catch ("")))
@@ -394,7 +398,8 @@ fn mcpH_cam_create_physical params =
   local p = #()
 
   -- Reaching here means a failure here throws instead of being ignored.
-  mcpPair p "success" true  mcpPair p "class" (try ((classof c) as string) catch (""))
+  mcpPair p "success" true
+  mcpPair p "class" (try ((classof c) as string) catch (""))
   mcpPair p "name" (try (c.name) catch (""))
   mcpPair p "message" (mcpMsg "msg.created" a1:(try (c.name) catch ("")))
   mcpObj p
@@ -501,7 +506,8 @@ fn mcpH_cam_look_through params =
   local p = #()
 
   -- Reaching here means every failure path above mcpFails.
-  mcpPair p "success" true  mcpPair p "name" (try (c.name) catch (""))
+  mcpPair p "success" true
+  mcpPair p "name" (try (c.name) catch (""))
   mcpPair p "message" (mcpMsg "msg.ok")
   mcpObj p
 )
@@ -517,7 +523,8 @@ fn mcpH_cam_align_to_view params =
   local p = #()
 
   -- Reaching here means every failure path above mcpFails.
-  mcpPair p "success" true  mcpPair p "name" (try (c.name) catch (""))
+  mcpPair p "success" true
+  mcpPair p "name" (try (c.name) catch (""))
   mcpPair p "message" (mcpMsg "msg.ok")
   mcpObj p
 )
@@ -531,7 +538,8 @@ fn mcpH_cam_set_viewport params =
   local p = #()
 
   -- Reaching here means every failure path above mcpFails.
-  mcpPair p "success" true  mcpPair p "name" (try (c.name) catch (""))
+  mcpPair p "success" true
+  mcpPair p "name" (try (c.name) catch (""))
   mcpPair p "message" (mcpMsg "msg.ok")
   mcpObj p
 )
@@ -566,7 +574,8 @@ fn mcpH_cam_delete params =
   local p = #()
 
   -- Reaching here means every failure path above mcpFails.
-  mcpPair p "success" true  mcpPair p "name" nm
+  mcpPair p "success" true
+  mcpPair p "name" nm
   mcpPair p "message" (mcpMsg "msg.ok")
   mcpObj p
 )
@@ -591,7 +600,8 @@ fn mcpH_env_set_background_color params =
   local p = #()
 
   -- Reaching here means every failure path above mcpFails.
-  mcpPair p "success" true  mcpPair p "message" (mcpMsg "msg.ok")
+  mcpPair p "success" true
+  mcpPair p "message" (mcpMsg "msg.ok")
   mcpObj p
 )
 
@@ -605,7 +615,8 @@ fn mcpH_env_set_background_map params =
   local p = #()
 
   -- Reaching here means the assignment above throws instead of ignoring errors.
-  mcpPair p "success" true  mcpPair p "path" path
+  mcpPair p "success" true
+  mcpPair p "path" path
   mcpPair p "message" (mcpMsg "msg.ok")
   mcpObj p
 )
@@ -618,7 +629,8 @@ fn mcpH_env_set_ambient params =
   local p = #()
 
   -- Reaching here means every failure path above mcpFails.
-  mcpPair p "success" true  mcpPair p "message" (mcpMsg "msg.ok")
+  mcpPair p "success" true
+  mcpPair p "message" (mcpMsg "msg.ok")
   mcpObj p
 )
 
@@ -642,7 +654,8 @@ fn mcpH_env_set_exposure params =
   local p = #()
 
   -- Reaching here means every failure path above mcpFails.
-  mcpPair p "success" true  mcpPair p "type" typeStr
+  mcpPair p "success" true
+  mcpPair p "type" typeStr
   mcpPair p "exposureValue" ev
   mcpPair p "message" (mcpMsg "msg.ok")
   mcpObj p
@@ -690,7 +703,9 @@ fn mcpH_uvw_map params =
       if sx > 0 do mod.length = sx
       if sy > 0 do mod.width = sy
       if sz > 0 do mod.height = sz
+      local before = n.modifiers.count
       addModifier n mod
+      if (n.modifiers.count <= before) do mcpFail "err.bad_value" a1:"modifier did not enter the stack"
       append applied n.name
     )
     catch ( append failures (n.name + ": " + (getCurrentException())) )
@@ -707,12 +722,23 @@ fn mcpH_uvw_unwrap params =
 (
   local nodes = mcpResolveNodes (mcpArr params "objects") fallbackToSelection:true
   local applied = #()
+  local failures = #()
   for n in nodes do
   (
-    try ( mcpEnsureClass "Unwrap_UVW"; addModifier n (Unwrap_UVW()); append applied n.name ) catch()
+    local ok = true
+    try
+    (
+      mcpEnsureClass "Unwrap_UVW"
+      local before = n.modifiers.count
+      addModifier n (Unwrap_UVW())
+      if (n.modifiers.count <= before) do mcpFail "err.bad_value" a1:"modifier did not enter the stack"
+      append applied n.name
+    )
+    catch ( ok = false; append failures (n.name + ": " + (getCurrentException() as string)) )
   )
   local p = #()
   mcpPair p "applied" applied
+  mcpPair p "failures" failures
   mcpPair p "message" (mcpMsg "msg.ok")
   mcpObj p
 )
@@ -721,20 +747,24 @@ fn mcpH_uvw_quick_peel params =
 (
   local nodes = mcpResolveNodes (mcpArr params "objects") fallbackToSelection:true
   local applied = #()
+  local failures = #()
   for n in nodes do
   (
     try
     (
       mcpEnsureClass "Unwrap_UVW"
       local mod = Unwrap_UVW()
+      local before = n.modifiers.count
       addModifier n mod
+      if (n.modifiers.count <= before) do mcpFail "err.bad_value" a1:"modifier did not enter the stack"
       try ( mod.quickPeel() ) catch()
       append applied n.name
     )
-    catch()
+    catch ( append failures (n.name + ": " + (getCurrentException() as string)) )
   )
   local p = #()
   mcpPair p "applied" applied
+  mcpPair p "failures" failures
   mcpPair p "message" (mcpMsg "msg.ok")
   mcpObj p
 )

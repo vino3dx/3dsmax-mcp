@@ -68,6 +68,21 @@ fn mcpSplitByFlag nodes flagName want =
    that matters here: which call is being made. */
 
 
+/* Set a numeric/boolean property and read it back.  Returns "" on success or a
+   message naming what the scene kept instead of what was asked for - a spline
+   silently rejects some radius/side combinations, and the old `try (...) catch()`
+   turned that into a cheerful "Created." */
+fn mcpSetPropVerified obj propName want =
+(
+    local wantNum = want as float
+    try ( setProperty obj propName wantNum ) catch ( return (propName + ": not settable on " + ((classof obj) as string)) )
+    local got = undefined
+    try ( got = getProperty obj propName ) catch ( return (propName + ": not readable back") )
+    if got == undefined do return (propName + ": rejected")
+    if (abs ((got as float) - wantNum)) > 0.0001 do return (propName + ": kept " + (got as string))
+    ""
+)
+
 /*------------------------------------------------------------------- primitives*/
 -- Generic primitive creator.  `class` arrives via the catalog preset or the
 -- `class` argument of create_primitive.  Dimension params are applied with
@@ -81,11 +96,19 @@ fn mcpH_create_primitive params =
 
     local obj = execute (cls + "()")
     if obj == undefined do mcpFail "err.bad_value" a1:cls
+    if not (isValidNode obj) do mcpFail "err.bad_value" a1:(cls + " returned no node")
 
     local failures = #()
+    local warnings = #()
     local nm = mcpStr params "name" default:""
     if nm == "" do nm = mcpStr params "setName" default:""
-    if nm != "" do ( try ( obj.name = nm ) catch ( append failures ("name: " + (getCurrentException() as string)) ) )
+    if nm != "" do
+    (
+        try ( obj.name = nm ) catch ( append failures ("name: " + (getCurrentException() as string)) )
+        -- Max keeps a unique variant when the name is taken; say so instead of
+        -- letting the caller believe the requested name is what exists.
+        if obj.name != nm do append warnings ("name: scene kept " + obj.name)
+    )
 
     local pos = mcpGet params "position"
     if pos != undefined do ( try ( obj.position = (mcpPoint3From pos) ) catch ( append failures ("position: " + (getCurrentException() as string)) ) )
@@ -97,7 +120,8 @@ fn mcpH_create_primitive params =
     (
         if (mcpGet params pn) != undefined do
         (
-            try ( setProperty obj pn (mcpNum params pn) ) catch ( append failures (pn + ": " + (getCurrentException() as string)) )
+            local problem = mcpSetPropVerified obj pn (mcpNum params pn)
+            if problem != "" do append failures problem
         )
     )
 
@@ -109,7 +133,8 @@ fn mcpH_create_primitive params =
     (
         if (mcpGet params pn) != undefined do
         (
-            try ( setProperty obj pn (mcpBool params pn) ) catch ( append failures (pn + ": " + (getCurrentException() as string)) )
+            local problem = mcpSetPropVerified obj pn (mcpBool params pn)
+            if problem != "" do append failures problem
         )
     )
 
@@ -118,6 +143,7 @@ fn mcpH_create_primitive params =
     mcpPair p "success" (failures.count == 0)
     mcpPair p "object" (mcpNodeInfo obj)
     mcpPair p "failures" failures
+    mcpPair p "warnings" warnings
     mcpPair p "message" (mcpMsg "msg.created" a1:obj.name)
     mcpObj p
 )
@@ -134,14 +160,32 @@ fn mcpH_create_spline params =
     local obj = execute (cls + "()")
     if obj == undefined do mcpFail "err.bad_value" a1:cls
 
+    local failures = #()
+    local warnings = #()
+
     local nm = mcpStr params "name" default:""
-    if nm != "" do ( try ( obj.name = nm ) catch() )
+    if nm != "" do
+    (
+        try ( obj.name = nm ) catch ( append failures ("name: " + (getCurrentException() as string)) )
+        -- Max silently keeps a unique variant when the name is taken; report the
+        -- name the scene actually holds instead of the one that was requested.
+        if obj.name != nm do append warnings ("name: scene kept " + obj.name)
+    )
 
     local pos = mcpGet params "position"
-    if pos != undefined do ( try ( obj.position = (mcpPoint3From pos) ) catch() )
+    if pos != undefined do
+    (
+        try ( obj.position = (mcpPoint3From pos) ) catch ( append failures ("position: " + (getCurrentException() as string)) )
+    )
 
     local txt = mcpStr params "text" default:""
-    if txt != "" do ( try ( obj.text = txt ) catch() )
+    if txt != "" do
+    (
+        try ( obj.text = txt ) catch ( append failures ("text: " + (getCurrentException() as string)) )
+        local gotTxt = ""
+        try ( gotTxt = obj.text ) catch ( gotTxt = "" )
+        if gotTxt != txt do append failures ("text: scene kept " + gotTxt)
+    )
 
     local dimProps = #("length","width","radius","radius1","radius2","sides","segments",
                        "height","turns","from","to","cornerRadius","size","thickness","angle","genSmooth")
@@ -149,13 +193,17 @@ fn mcpH_create_spline params =
     (
         if (mcpGet params pn) != undefined do
         (
-            try ( setProperty obj pn (mcpNum params pn) ) catch()
+            local problem = mcpSetPropVerified obj pn (mcpNum params pn)
+            if problem != "" do append failures problem
         )
     )
 
     mcpRedraw()
     local p = #()
+    mcpPair p "success" (failures.count == 0)
     mcpPair p "object" (mcpNodeInfo obj)
+    mcpPair p "failures" failures
+    mcpPair p "warnings" warnings
     mcpPair p "message" (mcpMsg "msg.created" a1:obj.name)
     mcpObj p
 )
@@ -172,22 +220,45 @@ fn mcpH_create_line params =
     -- this handler fail with "Call needs function or class, got: undefined".
     local obj = SplineShape()
     addNewSpline obj
+    local failures = #()
+    local warnings = #()
     for i = 1 to pts.count do
     (
-        try ( addKnot obj 1 #corner #line (mcpPoint3From pts[i]) ) catch()
+        try ( addKnot obj 1 #corner #line (mcpPoint3From pts[i]) )
+        catch ( append failures ("point " + (i as string) + ": " + (getCurrentException() as string)) )
     )
-    if closed do ( try ( close obj 1 ) catch() )
+
+    -- A line whose knots did not land is not a created line.  Compare against the
+    -- request instead of trusting addKnot's silence.
+    local knots = 0
+    try ( knots = numKnots obj 1 ) catch ( knots = 0 )
+    if knots != pts.count do append failures ("knots: asked for " + (pts.count as string) + ", scene has " + (knots as string))
+
+    if closed do
+    (
+        try ( close obj 1 ) catch ( append failures ("closed: " + (getCurrentException() as string)) )
+    )
 
     local nm = mcpStr params "name" default:""
-    if nm != "" do ( try ( obj.name = nm ) catch() )
+    if nm != "" do
+    (
+        try ( obj.name = nm ) catch ( append failures ("name: " + (getCurrentException() as string)) )
+        if obj.name != nm do append warnings ("name: scene kept " + obj.name)
+    )
 
     local pos = mcpGet params "position"
-    if pos != undefined do ( try ( obj.position = obj.position + (mcpPoint3From pos) ) catch() )
+    if pos != undefined do
+    (
+        try ( obj.position = obj.position + (mcpPoint3From pos) ) catch ( append failures ("position: " + (getCurrentException() as string)) )
+    )
 
     updateShape obj
     mcpRedraw()
     local p = #()
+    mcpPair p "success" (failures.count == 0)
     mcpPair p "object" (mcpNodeInfo obj)
+    mcpPair p "failures" failures
+    mcpPair p "warnings" warnings
     mcpPair p "message" (mcpMsg "msg.created" a1:obj.name)
     mcpObj p
 )
@@ -328,16 +399,43 @@ fn mcpH_align_objects params =
     local doPos = mcpBool params "position" default:true
     local doRot = mcpBool params "rotation" default:false
     local doScale = mcpBool params "scale" default:false
+    local applied = #()
+    local failures = #()
     for n in nodes do
     (
-        if doPos do ( try ( n.position = target.position ) catch() )
-        if doRot do ( try ( n.rotation = target.rotation ) catch() )
-        if doScale do ( try ( n.scale = target.scale ) catch() )
+        local nm = "?"
+        try ( nm = n.name ) catch ( nm = "?" )
+        local ok = true
+        try
+        (
+            if doPos do
+            (
+                n.position = target.position
+                -- A locked transform or a driven controller can reject the
+                -- assignment without throwing, so read the position back.
+                if (distance n.position target.position) > 0.001 do
+                    mcpFail "err.bad_value" a1:("position kept " + (n.position as string))
+            )
+            if doScale do
+            (
+                n.scale = target.scale
+                local s = n.scale
+                local t = target.scale
+                if (abs (s.x - t.x)) > 0.001 or (abs (s.y - t.y)) > 0.001 or (abs (s.z - t.z)) > 0.001 do
+                    mcpFail "err.bad_value" a1:("scale kept " + (s as string))
+            )
+            if doRot do ( n.rotation = target.rotation )
+        )
+        catch ( ok = false; append failures (nm + ": " + (getCurrentException() as string)) )
+        if ok then append applied nm
     )
     mcpRedraw()
     local p = #()
     mcpPair p "target" target.name
-    mcpPair p "aligned" (for n in nodes collect n.name)
+    -- `aligned` used to be the request list, so a locked node still counted as
+    -- aligned.  It is now what the scene agreed to.
+    mcpPair p "aligned" applied
+    mcpPair p "failures" failures
     mcpPair p "message" (mcpMsg "msg.ok")
     mcpObj p
 )
@@ -505,46 +603,46 @@ fn mcpH_scatter_objects params =
 
     seed seedVal
     local created = #()
+    local failures = #()
     for i = 1 to count do
     (
         local proto = nodes[((i - 1) mod nodes.count) + 1]
-        local obj = copy proto
-        local px = center.x + (random (-0.5 * size.x) (0.5 * size.x))
-        local py = center.y + (random (-0.5 * size.y) (0.5 * size.y))
-        local pz = center.z + (random (-0.5 * size.z) (0.5 * size.z))
-
-        if region == "surface" and surfaceNode != undefined do
+        try
         (
-            try
+            local obj = copy proto
+            if obj == undefined or not (isValidNode obj) do mcpFail "err.bad_value" a1:"copy returned no node"
+            local px = center.x + (random (-0.5 * size.x) (0.5 * size.x))
+            local py = center.y + (random (-0.5 * size.y) (0.5 * size.y))
+            local pz = center.z + (random (-0.5 * size.z) (0.5 * size.z))
+
+            if region == "surface" then
             (
+                -- Asking for surface placement and silently leaving the copy in
+                -- mid-air is the one thing this mode must not do.
+                if surfaceNode == undefined do mcpFail "err.node_not_found" a1:surfaceName
                 local rayHit = intersectRay surfaceNode (ray [px, py, 1e6] [0,0,-1])
-                if rayHit != undefined do
-                (
-                    px = rayHit.pos.x
-                    py = rayHit.pos.y
-                    pz = rayHit.pos.z
-                )
+                if rayHit == undefined do mcpFail "err.bad_value" a1:"ray missed the surface"
+                px = rayHit.pos.x
+                py = rayHit.pos.y
+                pz = rayHit.pos.z
             )
-            catch()
-        )
 
-        obj.position = [px, py, pz]
-        if doRot do ( try ( obj.rotation = (eulerAngles (random -180.0 180.0) (random -180.0 180.0) (random -180.0 180.0)) as quat ) catch() )
-        if doScale do
-        (
-            try
+            obj.position = [px, py, pz]
+            if doRot do ( try ( obj.rotation = (eulerAngles (random -180.0 180.0) (random -180.0 180.0) (random -180.0 180.0)) as quat ) catch() )
+            if doScale do
             (
                 local sc = random sMin sMax
                 obj.scale = [sc, sc, sc]
             )
-            catch()
+            append created obj.name
         )
-        append created obj.name
+        catch ( append failures ("instance " + (i as string) + ": " + (getCurrentException() as string)) )
     )
     mcpRedraw()
     local p = #()
     mcpPair p "created" created
     mcpPair p "count" created.count
+    mcpPair p "failures" failures
     mcpPair p "message" (mcpMsg "msg.created" a1:(created.count as string))
     mcpObj p
 )
@@ -559,20 +657,34 @@ fn mcpH_parent_objects params =
     if parent == undefined do mcpFail "err.node_not_found" a1:parentName
 
     local keep = mcpBool params "keepTransform" default:true
+    local applied = #()
+    local failures = #()
     for n in nodes do
     (
-        if keep then
+        local nm = "?"
+        try ( nm = n.name ) catch ( nm = "?" )
+        local ok = true
+        try
         (
-            local w = n.transform
-            n.parent = parent
-            n.transform = w
+            if keep then
+            (
+                local w = n.transform
+                n.parent = parent
+                n.transform = w
+            )
+            else n.parent = parent
+            -- A parent assignment can be refused (cycle, locked hierarchy);
+            -- `children` used to echo the request so it looked like it worked.
+            if n.parent != parent do mcpFail "err.bad_value" a1:"parent not changed"
         )
-        else n.parent = parent
+        catch ( ok = false; append failures (nm + ": " + (getCurrentException() as string)) )
+        if ok then append applied nm
     )
     mcpRedraw()
     local p = #()
     mcpPair p "parent" parent.name
-    mcpPair p "children" (for n in nodes collect n.name)
+    mcpPair p "children" applied
+    mcpPair p "failures" failures
     mcpPair p "message" (mcpMsg "msg.hierarchy" a1:parent.name)
     mcpObj p
 )
@@ -993,22 +1105,34 @@ fn mcpH_clone_objects params =
     local offset = mcpPoint3From (mcpGet params "offset") default:[0,0,0]
 
     local created = #()
+    local failures = #()
     for n in nodes do
     (
+        local nm = "?"
+        try ( nm = n.name ) catch ( nm = "?" )
         for k = 1 to count do
         (
             local c = undefined
-            if cloneType == "instance" then c = instance n
-            else if cloneType == "reference" then c = reference n
-            else ( c = copy n )
-            if k > 1 do ( try ( c.position = c.position + (offset * (k - 1)) ) catch() )
-            append created c.name
+            local made = true
+            try
+            (
+                if cloneType == "instance" then c = instance n
+                else if cloneType == "reference" then c = reference n
+                else ( c = copy n )
+                -- The name is the evidence the copy exists: `copy` returning
+                -- undefined is the only silent way this can half-succeed.
+                if c == undefined or not (isValidNode c) do mcpFail "err.bad_value" a1:"copy returned no node"
+                if k > 1 do ( c.position = c.position + (offset * (k - 1)) )
+            )
+            catch ( made = false; append failures (nm + " #" + (k as string) + ": " + (getCurrentException() as string)) )
+            if made do append created c.name
         )
     )
     mcpRedraw()
     local p = #()
     mcpPair p "created" created
     mcpPair p "count" created.count
+    mcpPair p "failures" failures
     mcpPair p "message" (mcpMsg "msg.created" a1:(created.count as string))
     mcpObj p
 )
@@ -1029,6 +1153,8 @@ fn mcpH_array_objects params =
     local radius = mcpNum params "radius" default:50.0
 
     local created = #()
+    local moved = #()
+    local failures = #()
     local proto = nodes[1]
     if mode == "radial" then
     (
@@ -1036,7 +1162,6 @@ fn mcpH_array_objects params =
         for i = 1 to total do
         (
             local ang = (i - 1) * (360.0 / (amax total 1))
-            local c = copy proto
             local pos = [0,0,0]
             if axis == "x" then
                 pos = [center.x, center.y + radius * (cos (degToRad ang)), center.z + radius * (sin (degToRad ang))]
@@ -1044,9 +1169,15 @@ fn mcpH_array_objects params =
                 pos = [center.x + radius * (cos (degToRad ang)), center.y, center.z + radius * (sin (degToRad ang))]
             else
                 pos = [center.x + radius * (cos (degToRad ang)), center.y + radius * (sin (degToRad ang)), center.z]
-            c.position = pos
-            try ( c.rotation = (eulerAngles 0 0 ang) as quat ) catch()
-            append created c.name
+            try
+            (
+                local c = copy proto
+                if c == undefined or not (isValidNode c) do mcpFail "err.bad_value" a1:"copy returned no node"
+                c.position = pos
+                try ( c.rotation = (eulerAngles 0 0 ang) as quat ) catch()
+                append created c.name
+            )
+            catch ( append failures ("ring " + (i as string) + ": " + (getCurrentException() as string)) )
         )
     )
     else
@@ -1055,23 +1186,36 @@ fn mcpH_array_objects params =
             for j = 1 to c2 do
                 for k = 1 to c3 do
                 (
+                    local cell = center + [(i - 1) * s1, (j - 1) * s2, (k - 1) * s3]
                     if i == 1 and j == 1 and k == 1 then
                     (
-                        proto.position = center + [(i - 1) * s1, (j - 1) * s2, (k - 1) * s3]
-                        append created proto.name
+                        -- The original is repositioned, not copied.  Reporting it
+                        -- under `created` made a moved object look like a new one.
+                        local mo = true
+                        try ( proto.position = cell )
+                        catch ( mo = false; append failures (proto.name + ": " + (getCurrentException() as string)) )
+                        if mo do append moved proto.name
                     )
                     else
                     (
-                        local c = copy proto
-                        c.position = center + [(i - 1) * s1, (j - 1) * s2, (k - 1) * s3]
-                        append created c.name
+                        try
+                        (
+                            local c = copy proto
+                            if c == undefined or not (isValidNode c) do mcpFail "err.bad_value" a1:"copy returned no node"
+                            c.position = cell
+                            append created c.name
+                        )
+                        catch ( append failures (proto.name + " cell " + (i as string) + "," + (j as string) + "," +
+                                                 (k as string) + ": " + (getCurrentException() as string)) )
                     )
                 )
     )
     mcpRedraw()
     local p = #()
     mcpPair p "created" created
+    mcpPair p "moved" moved
     mcpPair p "count" created.count
+    mcpPair p "failures" failures
     mcpPair p "message" (mcpMsg "msg.created" a1:(created.count as string))
     mcpObj p
 )
@@ -1084,12 +1228,40 @@ fn mcpH_attach_objects params =
     if target == undefined do mcpFail "err.node_not_found" a1:targetName
     local nodes = mcpResolveNodes (mcpArr params "objects") fallbackToSelection:true
 
-    try ( convertToSplineShape target ) catch()
-    for n in nodes do ( try ( attach target n ) catch() )
+    -- Attach only exists for shapes.  Converting the target is a scene change of
+    -- its own, so a failure here must be reported: the old code swallowed it and
+    -- then listed every requested node as attached while nothing had happened.
+    if not (isKindOf target Shape) do
+    (
+        local converted = true
+        try ( convertToSplineShape target ) catch ( converted = false )
+        if not converted do
+            mcpFail "err.bad_value" a1:("target is not a shape: " + target.name)
+    )
+
+    local applied = #()
+    local failures = #()
+    for n in nodes do
+    (
+        local nm = "?"
+        try ( nm = n.name ) catch ( nm = "?" )
+        local ok = true
+        try
+        (
+            local before = numSplines target
+            attach target n
+            -- The only evidence that attach worked is the target gaining splines.
+            if (numSplines target) <= before do
+                mcpFail "err.bad_value" a1:"attach added no splines"
+        )
+        catch ( ok = false; append failures (nm + ": " + (getCurrentException() as string)) )
+        if ok then append applied nm
+    )
     mcpRedraw()
     local p = #()
     mcpPair p "target" target.name
-    mcpPair p "attached" (for n in nodes collect n.name)
+    mcpPair p "attached" applied
+    mcpPair p "failures" failures
     mcpPair p "message" (mcpMsg "msg.ok")
     mcpObj p
 )
@@ -1101,24 +1273,34 @@ fn mcpH_detach_elements params =
     local n = mcpResolveNode name
     if n == undefined do mcpFail "err.node_not_found" a1:name
     try ( convertToPoly n ) catch()
+    if not (mcpIsPoly n) do
+        mcpFail "err.poly_required" a1:(n.name + " is not an Editable Poly")
 
     local created = #()
+    local failures = #()
     local elemCount = 0
     try ( elemCount = polyOp.getNumElements n ) catch()
     for e = 1 to elemCount do
     (
+        local newName = "Det_" + n.name + "_" + (e as string)
+        local before = objects.count
         try
         (
             local faces = polyOp.getElementFaces n e
-            local newName = "Det_" + n.name + "_" + (e as string)
             polyOp.detachFaces n faces delete:false asNode:true name:newName
-            append created newName
+            -- detachFaces does not return the node it made, so count the scene:
+            -- the old code appended the requested name and called it created.
+            if objects.count <= before do
+                mcpFail "err.bad_value" a1:"detach created no node"
+            local made = getNodeByName newName
+            if made != undefined then append created made.name else append created newName
         )
-        catch()
+        catch ( append failures ("element " + (e as string) + ": " + (getCurrentException() as string)) )
     )
     mcpRedraw()
     local p = #()
     mcpPair p "detached" created
+    mcpPair p "failures" failures
     mcpPair p "message" (mcpMsg "msg.ok")
     mcpObj p
 )
@@ -1142,6 +1324,7 @@ fn mcpH_count_objects params =
 
 /*------------------------------------------------------------------ booleans*/
 
+<<<<<<< Updated upstream
 /* Operation codes are the 0-based radio-button states of the ProBoolean UI:
    0 union, 1 intersection, 2 subtraction, 3 merge.  (The previous code mapped
    subtract/intersect to 1/2, which silently ran the wrong operation.) */
@@ -1225,13 +1408,22 @@ fn mcpBooleanRun nodes op addMethod matMethod =
 
 fn mcpBooleanPayload nodes op addMethod matMethod =
 (
+    local facesBefore = 0
+    try ( facesBefore = (getPolygonCount nodes[1])[1] ) catch ( facesBefore = 0 )
     local r = mcpBooleanRun nodes op addMethod matMethod
     local result = r[1]
+    local facesAfter = 0
+    try ( facesAfter = (getPolygonCount result)[1] ) catch ( facesAfter = 0 )
     local p = #()
+    mcpPair p "success" true
     mcpPair p "engine" r[2]
     mcpPair p "operation" (mcpBooleanOpName (mcpBooleanOpCode op))
     mcpPair p "operands" r[3]
     mcpPair p "result" (mcpNodeInfo result)
+    mcpPair p "facesBefore" facesBefore
+    mcpPair p "facesAfter" facesAfter
+    mcpPair p "changed" (facesAfter != facesBefore)
+    mcpPair p "failures" #()
     mcpPair p "message" (mcpMsg "msg.ok")
     mcpObj p
 )

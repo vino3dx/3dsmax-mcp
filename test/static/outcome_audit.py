@@ -46,18 +46,29 @@ from maxmcp.runtime import _OUTCOME_KEYS, _RECEIPT_KEYS
 DECISIVE = {"success", "ok", "failures"} | set(_OUTCOME_KEYS) | set(_RECEIPT_KEYS)
 
 #: ``mcpPair p "objects" (for n in nodes collect n.name)`` echoes the request.
-#: The runtime reads ``objects`` as an enumeration, so such a handler reports
-#: success even when every node was skipped.  Reported, not asserted: the fix is
-#: a per-handler rewrite (collect what was applied, name what was not), and a
-#: gate would just fail until someone did all of them.
+#: The runtime reads that key as an enumeration, so such a handler reports
+#: success even when every node was skipped.  Stage 10 widened this from the
+#: literal ``objects`` to every key the runtime treats as decisive: ``aligned``,
+#: ``attached`` and ``children`` hid the same defect under another name.
+ECHO_DECISIVE = re.compile(
+    r'mcpPair\s+\w+\s+"(?:%s)"\s+\(\s*for\s+\w+\s+in\s+\w+\s+collect'
+    % "|".join(sorted(DECISIVE)))
+#: Kept for callers that ask specifically about the ``objects`` key.
 ECHO_OBJECTS = re.compile(
     r'mcpPair\s+\w+\s+"objects"\s+\(\s*for\s+\w+\s+in\s+\w+\s+collect')
 
 # ---------------------------------------------------------------- grading
-#: ``objects`` is built from a list the handler filled only on success.
-APPLIED_OBJECTS = re.compile(r'mcpPair\s+\w+\s+"objects"\s+applied\b')
+#: ``mcpPair p "<key>" applied`` - the value is a list the handler filled only on
+#: success.  Any decisive key counts, not just ``objects``.
+APPLIED_OBJECTS = re.compile(
+    r'mcpPair\s+\w+\s+"(?:%s)"\s+(?:applied|removed|created|ungrouped|shown|thawed|'
+    r'hidden|frozen|deleted|moved|aligned|attached|detached|children|bones|goals)\b'
+    % "|".join(sorted(DECISIVE)))
 #: The handler names the nodes it could not process.
 DECLARES_FAILURES = re.compile(r'mcpPair\s+\w+\s+"failures"')
+#: ``skipped`` is the other honest half: applied + skipped tells the caller both
+#: what changed and what was deliberately left alone (no controller, no keys).
+DECLARES_SKIPPED = re.compile(r'mcpPair\s+\w+\s+"skipped"')
 #: ``catch()`` with an empty body: the exception is discarded, not recorded.
 BARE_CATCH = re.compile(r'catch\s*\(\s*\)')
 
@@ -73,25 +84,27 @@ GRADES = (CONFIRMED_BUG, SUSPICIOUS, SAFE_ECHO, VERIFIED_RESULT, UNKNOWN)
 def grade_handler(body: str) -> tuple:
     """``(grade, reasons)`` for one handler body - purely structural."""
     reasons = []
-    echo = bool(ECHO_OBJECTS.search(body))
+    echo = bool(ECHO_DECISIVE.search(body))
     applied = bool(APPLIED_OBJECTS.search(body))
     failures = bool(DECLARES_FAILURES.search(body))
+    skipped = bool(DECLARES_SKIPPED.search(body))
     bare = len(BARE_CATCH.findall(body))
 
     if bare:
         reasons.append("%d bare catch" % bare)
-    if applied and failures:
+    if applied and (failures or skipped):
         grade = VERIFIED_RESULT
-        reasons.insert(0, "objects=applied, failures named")
+        reasons.insert(0, "result list built by the handler, "
+                          + ("failures named" if failures else "skipped named"))
     elif applied:
         grade = SUSPICIOUS
-        reasons.insert(0, "objects=applied but no failure list")
-    elif echo and failures:
+        reasons.insert(0, "result list built by the handler but no failure/skip list")
+    elif echo and (failures or skipped):
         grade = SUSPICIOUS
-        reasons.insert(0, "failures named but objects still echoes the request")
+        reasons.insert(0, "failures named but the result list still echoes the request")
     elif echo:
         grade = CONFIRMED_BUG
-        reasons.insert(0, "objects echoes the request, no failure list")
+        reasons.insert(0, "result list echoes the request, no failure list")
     elif failures:
         grade = SAFE_ECHO
         reasons.insert(0, "verdict rests on failures alone")
@@ -108,6 +121,28 @@ _PAIR = re.compile(r'mcpPair\s+\w+\s+"(\w+)"')
 #: to, e.g. ``mcpRegister "create_box" mcpH_create_primitive``.
 _REGISTER = re.compile(r'mcpRegister\s+"([\w]+)"\s+(\w+)')
 _CALL = re.compile(r"\b(mcp\w+)\b")
+
+#: A helper whose value is stored *inside* a pair lives one level down: its keys
+#: are fields of a node payload, not conclusions of this handler.  Following it
+#: used to make ``create_circle`` look as if it declared an outcome, because the
+#: serialised node happens to carry a ``layer`` field - which the runtime does
+#: read as a receipt.  At runtime the payload is nested, so the tool actually
+#: answered ``missing_success`` while the audit called it declared.
+PAIR_VALUE_CALL = re.compile(r'mcpPair\s+\w+\s+"\w+"\s*\(\s*(mcp\w+)')
+PAIR_VALUE_VAR = re.compile(r'mcpPair\s+\w+\s+"\w+"\s+(\w+)\s*\)')
+LOCAL_ASSIGN_CALL = re.compile(r"local\s+(\w+)\s*=\s*(mcp\w+)\s*[\(\n]")
+
+
+def _nested_helpers(body: str) -> set:
+    """Helpers whose keys end up inside a pair value rather than at the top."""
+    out = set(PAIR_VALUE_CALL.findall(body))
+    assigned = {}
+    for var, helper in LOCAL_ASSIGN_CALL.findall(body):
+        assigned.setdefault(var, helper)
+    for var in PAIR_VALUE_VAR.findall(body):
+        if var in assigned:
+            out.add(assigned[var])
+    return out
 
 
 def _blocks() -> dict:
@@ -132,16 +167,78 @@ def _registered() -> dict:
     return out
 
 
-def _keys(body: str, blocks: dict, seen: set) -> set:
-    """Keys this body emits, following ``mcp*`` helper calls.
+def _locations() -> dict:
+    """``handler -> (file, line)`` so a report can point at the code."""
+    out = {}
+    for path in sorted((ROOT / "src" / "ms").glob("*.ms")):
+        text = path.read_text(encoding="utf-8-sig")
+        for match in _FN.finditer(text):
+            out.setdefault(match.group(1), (path.name, text[:match.start()].count("\n") + 1))
+    return out
 
-    Following calls can only *add* keys, so an imprecise walk can hide a gap but
-    never invent one - the failure mode is conservative for a report, and the
-    assertion below only fires on tools that stay empty even after it.
+
+# ------------------------------------------------------------ read-back rules
+#: A call that changes the scene, and the read-back that proves it landed.  The
+#: point is not "every call needs a read-back" - some cannot have one - but that
+#: the ones which *can* be checked are checked, and the rest are listed here so
+#: the gap stays visible instead of being rediscovered as a bug.
+READBACK_RULES = (
+    ("addModifier", re.compile(r"\baddModifier\b"),
+     re.compile(r"modifiers\.count|mcpGetSkinMod|mcpGetMorpherMod")),
+    ("deleteModifier", re.compile(r"\bdeleteModifier\b"), re.compile(r"modifiers\.count")),
+    ("convertToPoly", re.compile(r"\bconvertToPoly\b"), re.compile(r"mcpIsPoly")),
+    ("setProperty", re.compile(r"\bsetProperty\b"), re.compile(r"getProperty|mcpSetPropVerified")),
+    ("delete", re.compile(r"\bdelete\s+(?:nodes|objects|n)\b"), re.compile(r"isValidNode|deleted")),
+    ("copy", re.compile(r"(?<![\w.])(?:copy|instance|reference)\s+\w+"), re.compile(r"isValidNode|created")),
+)
+
+
+def _strip_comments(text: str) -> str:
+    """Strip MAXScript block (/* ... */) and line (-- ...) comments."""
+    text = re.sub(r"/\*.*?\*/", "", text, flags=re.DOTALL)
+    return re.sub(r"--[^\n]*", "", text)
+
+
+def readback_report(catalog, blocks: dict, registered: dict) -> list:
+    """Handlers that change the scene without checking the result (Static)."""
+    where = _locations()
+    rows = []
+    seen = set()
+    for entry in catalog:
+        if entry.local or not entry.mutating:
+            continue
+        handler = registered.get(entry.bridge_method, "mcpH_" + entry.bridge_method)
+        if handler in seen or handler not in blocks:
+            continue
+        seen.add(handler)
+        # Comments mention "copy the file" and "the instance flag"; matching them
+        # would report handlers that do nothing of the sort.
+        body = _strip_comments("\n".join(blocks[handler]))
+        # The helper may hold both the call and the check (mcpApplyModParams).
+        for name, call, proof in READBACK_RULES:
+            if not call.search(body):
+                continue
+            if proof.search(body):
+                continue
+            if any(proof.search("\n".join(blocks[h])) for h in blocks if h in body):
+                continue
+            rows.append((entry.name, name, where.get(handler, ("?", 0))))
+    return rows
+
+
+def _keys(body: str, blocks: dict, seen: set) -> set:
+    """Keys this body emits at the *top level* of its reply.
+
+    Following ``mcp*`` helper calls can only add keys, so an imprecise walk can
+    hide a gap but never invent one - the failure mode is conservative for a
+    report, and the assertion below only fires on tools that stay empty even
+    after it.  Helpers whose value is nested inside a pair are skipped: their
+    keys belong to a payload object, not to the envelope the runtime reads.
     """
     keys = set(_PAIR.findall(body))
+    nested = _nested_helpers(body)
     for helper in set(_CALL.findall(body)):
-        if helper in seen or helper not in blocks:
+        if helper in seen or helper not in blocks or helper in nested:
             continue
         seen.add(helper)
         keys |= _keys("\n".join(blocks[helper]), blocks, seen)
@@ -207,6 +304,11 @@ def main() -> None:
         print("  %-16s %2d  %s" % (grade, len(names), ", ".join(names)))
     for name, reasons in graded[CONFIRMED_BUG] + graded[SUSPICIOUS]:
         print("    %-28s %s" % (name, "; ".join(reasons)))
+
+    gaps = readback_report(catalog, blocks, registered)
+    print("read-back gaps (report, not a gate): %d" % len(gaps))
+    for name, rule, (file, line) in gaps:
+        print("    %-28s %-14s %s:%s" % (name, rule, file, line))
 
     # A core tool that echoes the request and never records a failure is a live
     # lie in the default profile, so that stays a gate.  The rest of the list is

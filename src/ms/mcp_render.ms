@@ -118,7 +118,8 @@ fn mcpH_render_set_engine params =
 
     -- Every failure path above mcpFails, so reaching here means the change
     -- was applied.
-    mcpPair p "success" true    mcpPair p "engine" (mcpCurrentRendererName())
+    mcpPair p "success" true
+    mcpPair p "engine" (mcpCurrentRendererName())
     mcpPair p "message" (mcpMsg "msg.ok")
     mcpObj p
 )
@@ -314,7 +315,8 @@ fn mcpH_render_save_preset params =
 
     -- Every failure path above mcpFails, so reaching here means the change
     -- was applied.
-    mcpPair p "success" true    mcpPair p "path" path
+    mcpPair p "success" true
+    mcpPair p "path" path
     mcpPair p "message" (mcpMsg "msg.saved" a1:path)
     mcpObj p
 )
@@ -331,7 +333,8 @@ fn mcpH_render_load_preset params =
 
     -- Every failure path above mcpFails, so reaching here means the change
     -- was applied.
-    mcpPair p "success" true    mcpPair p "path" path
+    mcpPair p "success" true
+    mcpPair p "path" path
     mcpPair p "message" (mcpMsg "msg.loaded" a1:path)
     mcpObj p
 )
@@ -699,7 +702,8 @@ fn mcpH_render_element_add params =
 
     -- Every failure path above mcpFails, so reaching here means the change
     -- was applied.
-    mcpPair p "success" true    mcpPair p "element" friendly
+    mcpPair p "success" true
+    mcpPair p "element" friendly
     mcpPair p "output" out
     mcpPair p "message" (mcpMsg "msg.ok")
     mcpObj p
@@ -737,7 +741,8 @@ fn mcpH_render_element_remove params =
     local p = #()
 
     -- Every failure path above mcpFails.
-    mcpPair p "success" true    mcpPair p "removed" removed
+    mcpPair p "success" true
+    mcpPair p "removed" removed
     mcpPair p "message" (mcpMsg "msg.ok")
     mcpObj p
 )
@@ -773,7 +778,8 @@ fn mcpH_render_element_set_output params =
     local p = #()
 
     -- Every failure path above mcpFails.
-    mcpPair p "success" true    mcpPair p "element" friendly
+    mcpPair p "success" true
+    mcpPair p "element" friendly
     mcpPair p "output" output
     mcpPair p "message" (mcpMsg "msg.ok")
     mcpObj p
@@ -881,7 +887,8 @@ fn mcpH_viewport_set_view params =
 
     -- Every failure path above mcpFails, so reaching here means the change
     -- was applied.
-    mcpPair p "success" true    mcpPair p "view" view
+    mcpPair p "success" true
+    mcpPair p "view" view
     mcpPair p "message" (mcpMsg "msg.ok")
     mcpObj p
 )

@@ -118,11 +118,41 @@ fn mcpH_rig_create_bone params =
     try ( if (length dir) > 0.0 do ndir = normalize dir ) catch()
     local endP = root + ndir * len
     local b = BoneSys.createBone root endP [0,0,1]
-    try ( b.width = w; b.height = h ) catch()
+    local failures = #()
+    local warnings = #()
+    local alive = true
+    try ( alive = isValidNode b ) catch ( alive = false )
+    if not alive do mcpFail "err.bad_value" a1:"BoneSys.createBone returned no node"
+
+    local szOk = true
+    local szErr = ""
+    try ( b.width = w; b.height = h ) catch ( szOk = false; szErr = (getCurrentException() as string) )
+    if not szOk then
+    (
+        append failures ("width/height: " + szErr)
+    )
+    else
+    (
+        -- Read the dimensions back: a bone silently clamps or ignores them, and
+        -- the reply used to be built from the request.
+        local gotW = 0.0
+        local gotH = 0.0
+        try ( gotW = b.width; gotH = b.height ) catch ( gotW = -1.0 )
+        if (abs (gotW - w)) > 0.0001 do append failures ("width: kept " + (gotW as string))
+        if (abs (gotH - h)) > 0.0001 do append failures ("height: kept " + (gotH as string))
+    )
+
     local nm = mcpStr params "name" default:""
-    if nm != "" do try ( b.name = nm ) catch()
+    if nm != "" do
+    (
+        try ( b.name = nm ) catch ( append failures ("name: " + (getCurrentException() as string)) )
+        if b.name != nm do append warnings ("name: scene kept " + b.name)
+    )
     local p = #()
+    mcpPair p "success" (failures.count == 0)
     mcpPair p "bone" (mcpNodeInfo b)
+    mcpPair p "failures" failures
+    mcpPair p "warnings" warnings
     mcpPair p "message" (mcpMsg "msg.created" a1:b.name)
     mcpObj p
 )
@@ -163,14 +193,43 @@ fn mcpH_rig_create_bone_chain params =
 fn mcpH_rig_create_dummy params =
 (
     local d = Dummy()
+    local failures = #()
+    local warnings = #()
+    local alive = true
+    try ( alive = isValidNode d ) catch ( alive = false )
+    if not alive do mcpFail "err.bad_value" a1:"Dummy() returned no node"
+
     local sz = mcpPoint3From (mcpGet params "size") default:[10,10,10]
-    try ( d.boxSize = sz ) catch()
+    local szOk = true
+    local szErr = ""
+    try ( d.boxSize = sz ) catch ( szOk = false; szErr = (getCurrentException() as string) )
+    if not szOk then ( append failures ("size: " + szErr) )
+    else
+    (
+        local got = [0,0,0]
+        try ( got = d.boxSize ) catch ( got = [-1,-1,-1] )
+        if (abs (got.x - sz.x)) > 0.0001 or (abs (got.y - sz.y)) > 0.0001 or (abs (got.z - sz.z)) > 0.0001 do
+            append failures ("size: kept " + (got as string))
+    )
+
     local pos = mcpPoint3From (mcpGet params "position") default:[0,0,0]
-    try ( d.position = pos ) catch()
+    local posOk = true
+    local posErr = ""
+    try ( d.position = pos ) catch ( posOk = false; posErr = (getCurrentException() as string) )
+    if not posOk then ( append failures ("position: " + posErr) )
+    else if (distance d.position pos) > 0.001 do append failures ("position: kept " + (d.position as string))
+
     local nm = mcpStr params "name" default:""
-    if nm != "" do try ( d.name = nm ) catch()
+    if nm != "" do
+    (
+        try ( d.name = nm ) catch ( append failures ("name: " + (getCurrentException() as string)) )
+        if d.name != nm do append warnings ("name: scene kept " + d.name)
+    )
     local p = #()
+    mcpPair p "success" (failures.count == 0)
     mcpPair p "object" (mcpNodeInfo d)
+    mcpPair p "failures" failures
+    mcpPair p "warnings" warnings
     mcpPair p "message" (mcpMsg "msg.created" a1:d.name)
     mcpObj p
 )
@@ -178,14 +237,42 @@ fn mcpH_rig_create_dummy params =
 fn mcpH_rig_create_point_helper params =
 (
     local pt = Point()
+    local failures = #()
+    local warnings = #()
+    local alive = true
+    try ( alive = isValidNode pt ) catch ( alive = false )
+    if not alive do mcpFail "err.bad_value" a1:"Point() returned no node"
+
     local sz = mcpNum params "size" default:1.0
-    try ( pt.size = sz ) catch()
+    local szOk = true
+    local szErr = ""
+    try ( pt.size = sz ) catch ( szOk = false; szErr = (getCurrentException() as string) )
+    if not szOk then ( append failures ("size: " + szErr) )
+    else
+    (
+        local got = 0.0
+        try ( got = pt.size ) catch ( got = -1.0 )
+        if (abs (got - sz)) > 0.0001 do append failures ("size: kept " + (got as string))
+    )
+
     local pos = mcpPoint3From (mcpGet params "position") default:[0,0,0]
-    try ( pt.position = pos ) catch()
+    local posOk = true
+    local posErr = ""
+    try ( pt.position = pos ) catch ( posOk = false; posErr = (getCurrentException() as string) )
+    if not posOk then ( append failures ("position: " + posErr) )
+    else if (distance pt.position pos) > 0.001 do append failures ("position: kept " + (pt.position as string))
+
     local nm = mcpStr params "name" default:""
-    if nm != "" do try ( pt.name = nm ) catch()
+    if nm != "" do
+    (
+        try ( pt.name = nm ) catch ( append failures ("name: " + (getCurrentException() as string)) )
+        if pt.name != nm do append warnings ("name: scene kept " + pt.name)
+    )
     local p = #()
+    mcpPair p "success" (failures.count == 0)
     mcpPair p "object" (mcpNodeInfo pt)
+    mcpPair p "failures" failures
+    mcpPair p "warnings" warnings
     mcpPair p "message" (mcpMsg "msg.created" a1:pt.name)
     mcpObj p
 )

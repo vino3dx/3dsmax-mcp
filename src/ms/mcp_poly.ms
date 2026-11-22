@@ -112,7 +112,14 @@ fn mcpH_convert_to_editable_poly params =
     for n in nodes do
     (
         local ok = true
-        try ( convertToPoly n; append applied n.name )
+        try
+        (
+            convertToPoly n
+            -- convertToPoly can return without making the object a poly
+            -- (already a mesh with odd flags); the class is the evidence.
+            if not (mcpIsPoly n) do mcpFail "err.poly_required" a1:n.name
+            append applied n.name
+        )
         catch ( ok = false; append failures (n.name + ": " + (getCurrentException())) )
     )
     local p = #()
@@ -425,14 +432,24 @@ fn mcpH_poly_weld_vertices params =
     local thr = mcpNum params "threshold" default:0.1
     local applied = #()
     local failures = #()
+    local unchanged = #()
     for n in nodes do
     (
         local ok = true
+        local f0 = 0
+        local v0 = 0
         try
         (
             if not (mcpEnsurePoly n) do mcpFail "err.poly_required" a1:n.name
+            f0 = polyop.getNumFaces n
+            v0 = polyop.getNumVerts n
             polyop.weldVertsByThreshold n (mcpIdxBA verts) thr
             append applied n.name
+            -- A call that returns without throwing can still change nothing
+            -- (welding coincident verts, connecting unsatisfiable edges,
+            -- deleting an empty face set).  That is not a failure, but the
+            -- caller deserves to know the topology is identical.
+            if (polyop.getNumFaces n) == f0 and (polyop.getNumVerts n) == v0 do append unchanged n.name
         )
         catch ( ok = false; append failures (n.name + ": " + (getCurrentException())) )
         mcpPolyResetSL n
@@ -440,6 +457,7 @@ fn mcpH_poly_weld_vertices params =
     local p = #()
     mcpPair p "applied" applied
     mcpPair p "failures" failures
+    mcpPair p "unchanged" unchanged
     mcpPair p "message" (mcpMsg "msg.ok")
     mcpObj p
 )
@@ -452,16 +470,26 @@ fn mcpH_poly_target_weld params =
     local thr = mcpNum params "threshold" default:0.1
     local applied = #()
     local failures = #()
+    local unchanged = #()
     for n in nodes do
     (
         local ok = true
+        local f0 = 0
+        local v0 = 0
         try
         (
             if not (mcpEnsurePoly n) do mcpFail "err.poly_required" a1:n.name
+            f0 = polyop.getNumFaces n
+            v0 = polyop.getNumVerts n
             n.subobjectLevel = 1
             polyop.setVertSelection n #{v1}
             n.weldTarget (v2 as integer) thr
             append applied n.name
+            -- A call that returns without throwing can still change nothing
+            -- (welding coincident verts, connecting unsatisfiable edges,
+            -- deleting an empty face set).  That is not a failure, but the
+            -- caller deserves to know the topology is identical.
+            if (polyop.getNumFaces n) == f0 and (polyop.getNumVerts n) == v0 do append unchanged n.name
         )
         catch ( ok = false; append failures (n.name + ": " + (getCurrentException())) )
         mcpPolyResetSL n
@@ -469,6 +497,7 @@ fn mcpH_poly_target_weld params =
     local p = #()
     mcpPair p "applied" applied
     mcpPair p "failures" failures
+    mcpPair p "unchanged" unchanged
     mcpPair p "message" (mcpMsg "msg.ok")
     mcpObj p
 )
@@ -480,14 +509,24 @@ fn mcpH_poly_chamfer_vertices params =
     local amt = mcpNum params "amount" default:0.0
     local applied = #()
     local failures = #()
+    local unchanged = #()
     for n in nodes do
     (
         local ok = true
+        local f0 = 0
+        local v0 = 0
         try
         (
             if not (mcpEnsurePoly n) do mcpFail "err.poly_required" a1:n.name
+            f0 = polyop.getNumFaces n
+            v0 = polyop.getNumVerts n
             polyop.chamferVertices n (mcpIdxBA verts) amt
             append applied n.name
+            -- A call that returns without throwing can still change nothing
+            -- (welding coincident verts, connecting unsatisfiable edges,
+            -- deleting an empty face set).  That is not a failure, but the
+            -- caller deserves to know the topology is identical.
+            if (polyop.getNumFaces n) == f0 and (polyop.getNumVerts n) == v0 do append unchanged n.name
         )
         catch ( ok = false; append failures (n.name + ": " + (getCurrentException())) )
         mcpPolyResetSL n
@@ -495,6 +534,7 @@ fn mcpH_poly_chamfer_vertices params =
     local p = #()
     mcpPair p "applied" applied
     mcpPair p "failures" failures
+    mcpPair p "unchanged" unchanged
     mcpPair p "message" (mcpMsg "msg.ok")
     mcpObj p
 )
@@ -505,14 +545,24 @@ fn mcpH_poly_remove_vertices params =
     local verts = mcpArr params "vertices"
     local applied = #()
     local failures = #()
+    local unchanged = #()
     for n in nodes do
     (
         local ok = true
+        local f0 = 0
+        local v0 = 0
         try
         (
             if not (mcpEnsurePoly n) do mcpFail "err.poly_required" a1:n.name
+            f0 = polyop.getNumFaces n
+            v0 = polyop.getNumVerts n
             polyop.deleteVerts n (mcpIdxBA verts)
             append applied n.name
+            -- A call that returns without throwing can still change nothing
+            -- (welding coincident verts, connecting unsatisfiable edges,
+            -- deleting an empty face set).  That is not a failure, but the
+            -- caller deserves to know the topology is identical.
+            if (polyop.getNumFaces n) == f0 and (polyop.getNumVerts n) == v0 do append unchanged n.name
         )
         catch ( ok = false; append failures (n.name + ": " + (getCurrentException())) )
         mcpPolyResetSL n
@@ -520,6 +570,7 @@ fn mcpH_poly_remove_vertices params =
     local p = #()
     mcpPair p "applied" applied
     mcpPair p "failures" failures
+    mcpPair p "unchanged" unchanged
     mcpPair p "message" (mcpMsg "msg.ok")
     mcpObj p
 )
@@ -537,6 +588,8 @@ fn mcpH_poly_select_faces params =
     local hMin = mcpNum params "heightMin" default:1e30
     local hMax = mcpNum params "heightMax" default:(-1e30)
     local outAll = #()
+    local applied = #()
+    local failures = #()
     for n in nodes do
     (
         local ok = true
@@ -577,16 +630,23 @@ fn mcpH_poly_select_faces params =
             try ( n.subobjectLevel = 4 ) catch()
             polyop.setFaceSelection n sel
         )
-        catch ( ok = false; append outAll ("ERROR " + n.name + ": " + (getCurrentException())) )
+        catch ( ok = false; append failures (n.name + ": " + (getCurrentException() as string)) )
         if ok do
         (
             local idxs = #()
             for f = 1 to (polyop.getNumFaces n) do ( if sel[f] do append idxs f )
             append outAll (mcpObj #(#("object", n.name), #("faces", idxs), #("count", idxs.count)))
+            append applied n.name
         )
     )
     local p = #()
+    -- `objects` holds only the rows that succeeded, so a caller can read one
+    -- row per object without filtering.  `failures` is checked first by the
+    -- runtime, so a mixed batch still reports a failure.
+    mcpPair p "objects" outAll
     mcpPair p "results" outAll
+    mcpPair p "applied" applied
+    mcpPair p "failures" failures
     mcpPair p "message" (mcpMsg "msg.ok")
     mcpObj p
 )
@@ -600,16 +660,26 @@ fn mcpH_poly_extrude_faces params =
     local d3 = mcpPoint3From dir default:undefined
     local applied = #()
     local failures = #()
+    local unchanged = #()
     for n in nodes do
     (
         local ok = true
+        local f0 = 0
+        local v0 = 0
         try
         (
             if not (mcpEnsurePoly n) do mcpFail "err.poly_required" a1:n.name
+            f0 = polyop.getNumFaces n
+            v0 = polyop.getNumVerts n
             local ba = mcpPolyFaceBA n faces
             if d3 != undefined then ( polyop.extrudeFaces n ba amount direction:d3 )
             else ( polyop.extrudeFaces n ba amount )
             append applied n.name
+            -- A call that returns without throwing can still change nothing
+            -- (welding coincident verts, connecting unsatisfiable edges,
+            -- deleting an empty face set).  That is not a failure, but the
+            -- caller deserves to know the topology is identical.
+            if (polyop.getNumFaces n) == f0 and (polyop.getNumVerts n) == v0 do append unchanged n.name
         )
         catch ( ok = false; append failures (n.name + ": " + (getCurrentException())) )
         mcpPolyResetSL n
@@ -617,6 +687,7 @@ fn mcpH_poly_extrude_faces params =
     local p = #()
     mcpPair p "applied" applied
     mcpPair p "failures" failures
+    mcpPair p "unchanged" unchanged
     mcpPair p "message" (mcpMsg "msg.ok")
     mcpObj p
 )
@@ -629,14 +700,24 @@ fn mcpH_poly_bevel_faces params =
     local outline = mcpNum params "outline" default:0.0
     local applied = #()
     local failures = #()
+    local unchanged = #()
     for n in nodes do
     (
         local ok = true
+        local f0 = 0
+        local v0 = 0
         try
         (
             if not (mcpEnsurePoly n) do mcpFail "err.poly_required" a1:n.name
+            f0 = polyop.getNumFaces n
+            v0 = polyop.getNumVerts n
             polyop.bevelFaces n (mcpPolyFaceBA n faces) height outline
             append applied n.name
+            -- A call that returns without throwing can still change nothing
+            -- (welding coincident verts, connecting unsatisfiable edges,
+            -- deleting an empty face set).  That is not a failure, but the
+            -- caller deserves to know the topology is identical.
+            if (polyop.getNumFaces n) == f0 and (polyop.getNumVerts n) == v0 do append unchanged n.name
         )
         catch ( ok = false; append failures (n.name + ": " + (getCurrentException())) )
         mcpPolyResetSL n
@@ -644,6 +725,7 @@ fn mcpH_poly_bevel_faces params =
     local p = #()
     mcpPair p "applied" applied
     mcpPair p "failures" failures
+    mcpPair p "unchanged" unchanged
     mcpPair p "message" (mcpMsg "msg.ok")
     mcpObj p
 )
@@ -655,14 +737,24 @@ fn mcpH_poly_inset_faces params =
     local outline = mcpNum params "outline" default:0.0
     local applied = #()
     local failures = #()
+    local unchanged = #()
     for n in nodes do
     (
         local ok = true
+        local f0 = 0
+        local v0 = 0
         try
         (
             if not (mcpEnsurePoly n) do mcpFail "err.poly_required" a1:n.name
+            f0 = polyop.getNumFaces n
+            v0 = polyop.getNumVerts n
             polyop.insetFaces n (mcpPolyFaceBA n faces) outline
             append applied n.name
+            -- A call that returns without throwing can still change nothing
+            -- (welding coincident verts, connecting unsatisfiable edges,
+            -- deleting an empty face set).  That is not a failure, but the
+            -- caller deserves to know the topology is identical.
+            if (polyop.getNumFaces n) == f0 and (polyop.getNumVerts n) == v0 do append unchanged n.name
         )
         catch ( ok = false; append failures (n.name + ": " + (getCurrentException())) )
         mcpPolyResetSL n
@@ -670,6 +762,7 @@ fn mcpH_poly_inset_faces params =
     local p = #()
     mcpPair p "applied" applied
     mcpPair p "failures" failures
+    mcpPair p "unchanged" unchanged
     mcpPair p "message" (mcpMsg "msg.ok")
     mcpObj p
 )
@@ -681,14 +774,24 @@ fn mcpH_poly_bridge_faces params =
     local f2 = mcpArr params "faces2"
     local applied = #()
     local failures = #()
+    local unchanged = #()
     for n in nodes do
     (
         local ok = true
+        local f0 = 0
+        local v0 = 0
         try
         (
             if not (mcpEnsurePoly n) do mcpFail "err.poly_required" a1:n.name
+            f0 = polyop.getNumFaces n
+            v0 = polyop.getNumVerts n
             polyop.bridgeFaces n (mcpIdxBA f1) (mcpIdxBA f2)
             append applied n.name
+            -- A call that returns without throwing can still change nothing
+            -- (welding coincident verts, connecting unsatisfiable edges,
+            -- deleting an empty face set).  That is not a failure, but the
+            -- caller deserves to know the topology is identical.
+            if (polyop.getNumFaces n) == f0 and (polyop.getNumVerts n) == v0 do append unchanged n.name
         )
         catch ( ok = false; append failures (n.name + ": " + (getCurrentException())) )
         mcpPolyResetSL n
@@ -696,6 +799,7 @@ fn mcpH_poly_bridge_faces params =
     local p = #()
     mcpPair p "applied" applied
     mcpPair p "failures" failures
+    mcpPair p "unchanged" unchanged
     mcpPair p "message" (mcpMsg "msg.ok")
     mcpObj p
 )
@@ -706,14 +810,24 @@ fn mcpH_poly_cap_holes params =
     local faces = mcpArr params "faces"
     local applied = #()
     local failures = #()
+    local unchanged = #()
     for n in nodes do
     (
         local ok = true
+        local f0 = 0
+        local v0 = 0
         try
         (
             if not (mcpEnsurePoly n) do mcpFail "err.poly_required" a1:n.name
+            f0 = polyop.getNumFaces n
+            v0 = polyop.getNumVerts n
             polyop.capHoles n (mcpPolyFaceBA n faces)
             append applied n.name
+            -- A call that returns without throwing can still change nothing
+            -- (welding coincident verts, connecting unsatisfiable edges,
+            -- deleting an empty face set).  That is not a failure, but the
+            -- caller deserves to know the topology is identical.
+            if (polyop.getNumFaces n) == f0 and (polyop.getNumVerts n) == v0 do append unchanged n.name
         )
         catch ( ok = false; append failures (n.name + ": " + (getCurrentException())) )
         mcpPolyResetSL n
@@ -721,6 +835,7 @@ fn mcpH_poly_cap_holes params =
     local p = #()
     mcpPair p "applied" applied
     mcpPair p "failures" failures
+    mcpPair p "unchanged" unchanged
     mcpPair p "message" (mcpMsg "msg.ok")
     mcpObj p
 )
@@ -756,14 +871,24 @@ fn mcpH_poly_delete_faces params =
     local faces = mcpArr params "faces"
     local applied = #()
     local failures = #()
+    local unchanged = #()
     for n in nodes do
     (
         local ok = true
+        local f0 = 0
+        local v0 = 0
         try
         (
             if not (mcpEnsurePoly n) do mcpFail "err.poly_required" a1:n.name
+            f0 = polyop.getNumFaces n
+            v0 = polyop.getNumVerts n
             polyop.deleteFaces n (mcpIdxBA faces) delIsoVerts:true
             append applied n.name
+            -- A call that returns without throwing can still change nothing
+            -- (welding coincident verts, connecting unsatisfiable edges,
+            -- deleting an empty face set).  That is not a failure, but the
+            -- caller deserves to know the topology is identical.
+            if (polyop.getNumFaces n) == f0 and (polyop.getNumVerts n) == v0 do append unchanged n.name
         )
         catch ( ok = false; append failures (n.name + ": " + (getCurrentException())) )
         mcpPolyResetSL n
@@ -771,6 +896,7 @@ fn mcpH_poly_delete_faces params =
     local p = #()
     mcpPair p "applied" applied
     mcpPair p "failures" failures
+    mcpPair p "unchanged" unchanged
     mcpPair p "message" (mcpMsg "msg.ok")
     mcpObj p
 )
@@ -868,14 +994,24 @@ fn mcpH_poly_chamfer_edges params =
     local amt = mcpNum params "amount" default:0.0
     local applied = #()
     local failures = #()
+    local unchanged = #()
     for n in nodes do
     (
         local ok = true
+        local f0 = 0
+        local v0 = 0
         try
         (
             if not (mcpEnsurePoly n) do mcpFail "err.poly_required" a1:n.name
+            f0 = polyop.getNumFaces n
+            v0 = polyop.getNumVerts n
             polyop.chamferEdges n (mcpIdxBA edges) amt
             append applied n.name
+            -- A call that returns without throwing can still change nothing
+            -- (welding coincident verts, connecting unsatisfiable edges,
+            -- deleting an empty face set).  That is not a failure, but the
+            -- caller deserves to know the topology is identical.
+            if (polyop.getNumFaces n) == f0 and (polyop.getNumVerts n) == v0 do append unchanged n.name
         )
         catch ( ok = false; append failures (n.name + ": " + (getCurrentException())) )
         mcpPolyResetSL n
@@ -883,6 +1019,7 @@ fn mcpH_poly_chamfer_edges params =
     local p = #()
     mcpPair p "applied" applied
     mcpPair p "failures" failures
+    mcpPair p "unchanged" unchanged
     mcpPair p "message" (mcpMsg "msg.ok")
     mcpObj p
 )
@@ -894,14 +1031,24 @@ fn mcpH_poly_connect_edges params =
     local segs = mcpInt params "segments" default:1
     local applied = #()
     local failures = #()
+    local unchanged = #()
     for n in nodes do
     (
         local ok = true
+        local f0 = 0
+        local v0 = 0
         try
         (
             if not (mcpEnsurePoly n) do mcpFail "err.poly_required" a1:n.name
+            f0 = polyop.getNumFaces n
+            v0 = polyop.getNumVerts n
             polyop.connectEdges n (mcpIdxBA edges) segments:segs
             append applied n.name
+            -- A call that returns without throwing can still change nothing
+            -- (welding coincident verts, connecting unsatisfiable edges,
+            -- deleting an empty face set).  That is not a failure, but the
+            -- caller deserves to know the topology is identical.
+            if (polyop.getNumFaces n) == f0 and (polyop.getNumVerts n) == v0 do append unchanged n.name
         )
         catch ( ok = false; append failures (n.name + ": " + (getCurrentException())) )
         mcpPolyResetSL n
@@ -909,6 +1056,7 @@ fn mcpH_poly_connect_edges params =
     local p = #()
     mcpPair p "applied" applied
     mcpPair p "failures" failures
+    mcpPair p "unchanged" unchanged
     mcpPair p "message" (mcpMsg "msg.ok")
     mcpObj p
 )
@@ -922,17 +1070,27 @@ fn mcpH_poly_extrude_edges params =
     local d3 = mcpPoint3From dir default:undefined
     local applied = #()
     local failures = #()
+    local unchanged = #()
     for n in nodes do
     (
         local ok = true
+        local f0 = 0
+        local v0 = 0
         try
         (
             if not (mcpEnsurePoly n) do mcpFail "err.poly_required" a1:n.name
+            f0 = polyop.getNumFaces n
+            v0 = polyop.getNumVerts n
             n.subobjectLevel = 2
             polyop.setEdgeSelection n (mcpIdxBA edges)
             if d3 != undefined then ( n.extrude amount direction:d3 )
             else ( n.extrude amount )
             append applied n.name
+            -- A call that returns without throwing can still change nothing
+            -- (welding coincident verts, connecting unsatisfiable edges,
+            -- deleting an empty face set).  That is not a failure, but the
+            -- caller deserves to know the topology is identical.
+            if (polyop.getNumFaces n) == f0 and (polyop.getNumVerts n) == v0 do append unchanged n.name
         )
         catch ( ok = false; append failures (n.name + ": " + (getCurrentException())) )
         mcpPolyResetSL n
@@ -940,6 +1098,7 @@ fn mcpH_poly_extrude_edges params =
     local p = #()
     mcpPair p "applied" applied
     mcpPair p "failures" failures
+    mcpPair p "unchanged" unchanged
     mcpPair p "message" (mcpMsg "msg.ok")
     mcpObj p
 )
@@ -949,6 +1108,8 @@ fn mcpH_poly_loop_select params =
     local nodes = mcpResolveNodes (mcpArr params "objects") fallbackToSelection:true
     local edgesArg = mcpArr params "edges"
     local outAll = #()
+    local applied = #()
+    local failures = #()
     for n in nodes do
     (
         local ok = true
@@ -963,11 +1124,21 @@ fn mcpH_poly_loop_select params =
             polyop.setEdgeSelection n loop
             for e = 1 to (polyop.getNumEdges n) do ( if loop[e] do append res e )
         )
-        catch ( ok = false; append outAll ("ERROR " + n.name + ": " + (getCurrentException())) )
-        if ok do append outAll (mcpObj #(#("object", n.name), #("edges", res), #("count", res.count)))
+        catch ( ok = false; append failures (n.name + ": " + (getCurrentException() as string)) )
+        if ok do
+        (
+            append outAll (mcpObj #(#("object", n.name), #("edges", res), #("count", res.count)))
+            append applied n.name
+        )
     )
     local p = #()
+    -- `objects` holds only the rows that succeeded, so a caller can read one
+    -- row per object without filtering.  `failures` is checked first by the
+    -- runtime, so a mixed batch still reports a failure.
+    mcpPair p "objects" outAll
     mcpPair p "results" outAll
+    mcpPair p "applied" applied
+    mcpPair p "failures" failures
     mcpPair p "message" (mcpMsg "msg.ok")
     mcpObj p
 )
@@ -977,6 +1148,8 @@ fn mcpH_poly_ring_select params =
     local nodes = mcpResolveNodes (mcpArr params "objects") fallbackToSelection:true
     local edgesArg = mcpArr params "edges"
     local outAll = #()
+    local applied = #()
+    local failures = #()
     for n in nodes do
     (
         local ok = true
@@ -991,11 +1164,21 @@ fn mcpH_poly_ring_select params =
             polyop.setEdgeSelection n ring
             for e = 1 to (polyop.getNumEdges n) do ( if ring[e] do append res e )
         )
-        catch ( ok = false; append outAll ("ERROR " + n.name + ": " + (getCurrentException())) )
-        if ok do append outAll (mcpObj #(#("object", n.name), #("edges", res), #("count", res.count)))
+        catch ( ok = false; append failures (n.name + ": " + (getCurrentException() as string)) )
+        if ok do
+        (
+            append outAll (mcpObj #(#("object", n.name), #("edges", res), #("count", res.count)))
+            append applied n.name
+        )
     )
     local p = #()
+    -- `objects` holds only the rows that succeeded, so a caller can read one
+    -- row per object without filtering.  `failures` is checked first by the
+    -- runtime, so a mixed batch still reports a failure.
+    mcpPair p "objects" outAll
     mcpPair p "results" outAll
+    mcpPair p "applied" applied
+    mcpPair p "failures" failures
     mcpPair p "message" (mcpMsg "msg.ok")
     mcpObj p
 )
@@ -1008,17 +1191,27 @@ fn mcpH_poly_slice params =
     local splitFlag = mcpBool params "split" default:false
     local applied = #()
     local failures = #()
+    local unchanged = #()
     for n in nodes do
     (
         local ok = true
+        local f0 = 0
+        local v0 = 0
         try
         (
             if not (mcpEnsurePoly n) do mcpFail "err.poly_required" a1:n.name
+            f0 = polyop.getNumFaces n
+            v0 = polyop.getNumVerts n
             local nrm = if axis == "x" then [1,0,0] else ( if axis == "y" then [0,1,0] else [0,0,1] )
             local plane = matrixFromNormal nrm
             plane.row4 = nrm * offsetVal
             polyop.slice n plane (#{1..(polyop.getNumEdges n)}) split:splitFlag
             append applied n.name
+            -- A call that returns without throwing can still change nothing
+            -- (welding coincident verts, connecting unsatisfiable edges,
+            -- deleting an empty face set).  That is not a failure, but the
+            -- caller deserves to know the topology is identical.
+            if (polyop.getNumFaces n) == f0 and (polyop.getNumVerts n) == v0 do append unchanged n.name
         )
         catch ( ok = false; append failures (n.name + ": " + (getCurrentException())) )
         mcpPolyResetSL n
@@ -1026,6 +1219,7 @@ fn mcpH_poly_slice params =
     local p = #()
     mcpPair p "applied" applied
     mcpPair p "failures" failures
+    mcpPair p "unchanged" unchanged
     mcpPair p "message" (mcpMsg "msg.ok")
     mcpObj p
 )
@@ -1038,16 +1232,26 @@ fn mcpH_poly_triangulate params =
     local faces = mcpArr params "faces"
     local applied = #()
     local failures = #()
+    local unchanged = #()
     for n in nodes do
     (
         local ok = true
+        local f0 = 0
+        local v0 = 0
         try
         (
             if not (mcpEnsurePoly n) do mcpFail "err.poly_required" a1:n.name
+            f0 = polyop.getNumFaces n
+            v0 = polyop.getNumVerts n
             try ( n.subobjectLevel = 4 ) catch()
             polyop.setFaceSelection n (mcpPolyFaceBA n faces)
             n.triangulate()
             append applied n.name
+            -- A call that returns without throwing can still change nothing
+            -- (welding coincident verts, connecting unsatisfiable edges,
+            -- deleting an empty face set).  That is not a failure, but the
+            -- caller deserves to know the topology is identical.
+            if (polyop.getNumFaces n) == f0 and (polyop.getNumVerts n) == v0 do append unchanged n.name
         )
         catch ( ok = false; append failures (n.name + ": " + (getCurrentException())) )
         mcpPolyResetSL n
@@ -1055,6 +1259,7 @@ fn mcpH_poly_triangulate params =
     local p = #()
     mcpPair p "applied" applied
     mcpPair p "failures" failures
+    mcpPair p "unchanged" unchanged
     mcpPair p "message" (mcpMsg "msg.ok")
     mcpObj p
 )
@@ -1065,16 +1270,26 @@ fn mcpH_poly_quadify params =
     local faces = mcpArr params "faces"
     local applied = #()
     local failures = #()
+    local unchanged = #()
     for n in nodes do
     (
         local ok = true
+        local f0 = 0
+        local v0 = 0
         try
         (
             if not (mcpEnsurePoly n) do mcpFail "err.poly_required" a1:n.name
+            f0 = polyop.getNumFaces n
+            v0 = polyop.getNumVerts n
             n.subobjectLevel = 4
             polyop.setFaceSelection n (mcpPolyFaceBA n faces)
             n.quadify()
             append applied n.name
+            -- A call that returns without throwing can still change nothing
+            -- (welding coincident verts, connecting unsatisfiable edges,
+            -- deleting an empty face set).  That is not a failure, but the
+            -- caller deserves to know the topology is identical.
+            if (polyop.getNumFaces n) == f0 and (polyop.getNumVerts n) == v0 do append unchanged n.name
         )
         catch ( ok = false; append failures (n.name + ": " + (getCurrentException())) )
         mcpPolyResetSL n
@@ -1082,6 +1297,7 @@ fn mcpH_poly_quadify params =
     local p = #()
     mcpPair p "applied" applied
     mcpPair p "failures" failures
+    mcpPair p "unchanged" unchanged
     mcpPair p "message" (mcpMsg "msg.ok")
     mcpObj p
 )
@@ -1102,7 +1318,12 @@ fn mcpH_poly_subdivide params =
             local m = MeshSmooth()
             m.iterations = iters
             try ( m.smoothness = smoothVal ) catch()
+            local before = n.modifiers.count
             addModifier n m
+            -- The stack is the evidence that the subdivision actually
+            -- got attached; addModifier can refuse and say nothing.
+            if (n.modifiers.count <= before) do
+                mcpFail "err.bad_value" a1:"modifier did not enter the stack"
             append applied n.name
         )
         catch ( ok = false; append failures (n.name + ": " + (getCurrentException())) )
@@ -1130,7 +1351,12 @@ fn mcpH_poly_optimize params =
             local m = ProOptimizer()
             m.vertexPercent = percent
             try ( m.keepNormals = keepNormals ) catch()
+            local before = n.modifiers.count
             addModifier n m
+            -- The stack is the evidence that the subdivision actually
+            -- got attached; addModifier can refuse and say nothing.
+            if (n.modifiers.count <= before) do
+                mcpFail "err.bad_value" a1:"modifier did not enter the stack"
             append applied n.name
         )
         catch ( ok = false; append failures (n.name + ": " + (getCurrentException())) )
@@ -1160,7 +1386,10 @@ fn mcpH_poly_relax params =
             m.iterations = iters
             try ( m.relaxValue = relaxValue ) catch()
             try ( m.keepBoundaryPoints = keepBoundary ) catch()
+            local before = n.modifiers.count
             addModifier n m
+            if (n.modifiers.count <= before) do
+                mcpFail "err.bad_value" a1:"modifier did not enter the stack"
             append applied n.name
         )
         catch ( ok = false; append failures (n.name + ": " + (getCurrentException())) )

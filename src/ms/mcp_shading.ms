@@ -323,7 +323,8 @@ fn mcpH_mat_get_for_object params =
   (
     local it = #()
     mcpPair it "object" (try (n.name) catch (""))
-    try ( if n.material != undefined then mcpPair it "material" (mcpMatDetails n.material) else mcpPair it "material" undefined ) catch()
+    try ( if n.material != undefined then mcpPair it "material" (mcpMatDetails n.material) else
+    mcpPair it "material" undefined ) catch()
     append out (mcpObj it)
   )
   local p = #()
@@ -366,7 +367,8 @@ fn mcpH_mat_set_slot params =
 
   -- Every failure path above mcpFails, so reaching here means the change
   -- was applied; state that instead of leaving the caller to guess.
-  mcpPair p "success" true  mcpPair p "slot" slot
+  mcpPair p "success" true
+  mcpPair p "slot" slot
   mcpPair p "name" (try (m.name) catch (""))
   mcpPair p "message" (mcpMsg "msg.ok")
   mcpObj p
@@ -405,7 +407,8 @@ fn mcpH_mat_set_property params =
 
   -- Every failure path above mcpFails, so reaching here means the change
   -- was applied; state that instead of leaving the caller to guess.
-  mcpPair p "success" true  mcpPair p "property" prop
+  mcpPair p "success" true
+  mcpPair p "property" prop
   mcpPair p "value" val
   mcpPair p "message" (mcpMsg "msg.ok")
   mcpObj p
@@ -486,7 +489,8 @@ fn mcpH_mat_set_specular params =
 
   -- Every failure path above mcpFails, so reaching here means the change
   -- was applied; state that instead of leaving the caller to guess.
-  mcpPair p "success" true  mcpPair p "material" (try (m.name) catch (""))
+  mcpPair p "success" true
+  mcpPair p "material" (try (m.name) catch (""))
   mcpPair p "message" (mcpMsg "msg.ok")
   mcpObj p
 )
@@ -501,7 +505,8 @@ fn mcpH_mat_set_opacity params =
 
   -- Every failure path above mcpFails, so reaching here means the change
   -- was applied; state that instead of leaving the caller to guess.
-  mcpPair p "success" true  mcpPair p "material" (try (m.name) catch (""))
+  mcpPair p "success" true
+  mcpPair p "material" (try (m.name) catch (""))
   mcpPair p "opacity" o
   mcpPair p "message" (mcpMsg "msg.ok")
   mcpObj p
@@ -555,7 +560,8 @@ fn mcpH_mat_set_sub_material params =
 
   -- Every failure path above mcpFails, so reaching here means the change
   -- was applied; state that instead of leaving the caller to guess.
-  mcpPair p "success" true  mcpPair p "material" (try (m.name) catch (""))
+  mcpPair p "success" true
+  mcpPair p "material" (try (m.name) catch (""))
   mcpPair p "index" index
   mcpPair p "subMaterial" (try (sub.name) catch (""))
   mcpPair p "message" (mcpMsg "msg.ok")
@@ -571,7 +577,8 @@ fn mcpH_mat_rename params =
 
   -- Every failure path above mcpFails, so reaching here means the change
   -- was applied; state that instead of leaving the caller to guess.
-  mcpPair p "success" true  mcpPair p "name" nm
+  mcpPair p "success" true
+  mcpPair p "name" nm
   mcpPair p "message" (mcpMsg "msg.ok")
   mcpObj p
 )
@@ -611,7 +618,8 @@ fn mcpH_mat_duplicate params =
 
   -- Every failure path above mcpFails, so reaching here means the change
   -- was applied; state that instead of leaving the caller to guess.
-  mcpPair p "success" true  mcpPair p "original" (try (m.name) catch (""))
+  mcpPair p "success" true
+  mcpPair p "original" (try (m.name) catch (""))
   mcpPair p "copy" newName
   mcpPair p "class" (try ((classof newMat) as string) catch (""))
   mcpPair p "message" (mcpMsg "msg.ok")
@@ -634,7 +642,8 @@ fn mcpH_mat_set_map_slot params =
   local p = #()
 
   -- Reaching here means every failure path above mcpFails.
-  mcpPair p "success" true  mcpPair p "material" (try (m.name) catch (""))
+  mcpPair p "success" true
+  mcpPair p "material" (try (m.name) catch (""))
   mcpPair p "slot" slot
   mcpPair p "property" slotWhere
   mcpPair p "mapClass" (try ((classof theMap) as string) catch (""))
@@ -785,7 +794,8 @@ fn mcpH_map_set_bitmap_path params =
   local p = #()
 
   -- Reaching here means every failure path above mcpFails.
-  mcpPair p "success" true  mcpPair p "material" (try (m.name) catch (""))
+  mcpPair p "success" true
+  mcpPair p "material" (try (m.name) catch (""))
   mcpPair p "slot" slot
   mcpPair p "path" path
   mcpPair p "message" (mcpMsg "msg.ok")
@@ -888,7 +898,8 @@ fn mcpH_mat_library_save params =
   local p = #()
 
   -- Reaching here means every failure path above mcpFails.
-  mcpPair p "success" true  mcpPair p "path" path
+  mcpPair p "success" true
+  mcpPair p "path" path
   mcpPair p "count" mats.count
   mcpPair p "message" (mcpMsg "msg.saved" a1:path)
   mcpObj p
@@ -914,7 +925,8 @@ fn mcpH_mat_library_load params =
   local p = #()
 
   -- Reaching here means every failure path above mcpFails.
-  mcpPair p "success" true  mcpPair p "path" path
+  mcpPair p "success" true
+  mcpPair p "path" path
   mcpPair p "count" mats.count
   mcpPair p "materials" names
   mcpPair p "message" (mcpMsg "msg.loaded" a1:path)

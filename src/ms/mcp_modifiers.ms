@@ -344,7 +344,8 @@ fn mcpH_mod_add params =
         for r in reserved do ( if r == k do found = true )
         if not found do mcpPair extra k (e[2])
     )
-    if explicit != undefined do ( for e in (mcpPairs explicit) do mcpPair extra (e[1]) (e[2]) )
+    if explicit != undefined do ( for e in (mcpPairs explicit) do
+    mcpPair extra (e[1]) (e[2]) )
 
     local applied = #()
     local failures = #()
@@ -363,7 +364,11 @@ fn mcpH_mod_add params =
             local before = n.modifiers.count
             newMod = modClass()
             addModifier n newMod
-            if customName != "" and n.modifiers.count > before do newMod.name = customName
+            -- The stack is the evidence: addModifier can refuse (wrong base
+            -- object, locked stack) and the reply used to say "applied" anyway.
+            if (n.modifiers.count <= before) do
+                mcpFail "err.bad_value" a1:"modifier did not enter the stack"
+            if customName != "" do newMod.name = customName
             -- The modifier is added either way; its parameters are reported
             -- separately so an unsupported name is visible instead of silently
             -- dropped the way it was while `params` was declared as an array.
@@ -374,7 +379,7 @@ fn mcpH_mod_add params =
             for x in res[4] do append unverified (n.name + ": " + x)
             for e in (mcpPairs res[5]) do mcpPair readback (n.name + "." + (e[1] as string)) (e[2])
         )
-        catch ( ok = false; append failures (n.name + ": " + (getCurrentException())) )
+        catch ( ok = false; append failures (n.name + ": " + (getCurrentException() as string)) )
         if ok do append applied n.name
     )
     local p = #()
@@ -397,7 +402,7 @@ fn mcpH_mod_remove params =
 (
     local nodes = mcpResolveNodes (mcpArr params "objects") fallbackToSelection:true
     local spec = mcpReqStr params "modifier"
-    local removed = #()
+    local applied = #()
     local failures = #()
     for n in nodes do
     (
@@ -406,10 +411,14 @@ fn mcpH_mod_remove params =
         (
             local m = mcpFindModifier n spec
             if m == undefined do mcpFail "msg.no_modifier" a1:n.name a2:spec
+            local before = n.modifiers.count
             deleteModifier n m
+            -- verify the stack actually shrank, rather than trusting the call
+            if (n.modifiers.count >= before) do
+                mcpFail "err.bad_value" a1:"modifier still in the stack"
             append removed n.name
         )
-        catch ( ok = false; append failures (n.name + ": " + (getCurrentException())) )
+        catch ( ok = false; append failures (n.name + ": " + (getCurrentException() as string)) )
     )
     local p = #()
     mcpPair p "removed" removed
@@ -812,7 +821,17 @@ fn mcpH_mod_set_sub_object_selection params =
         (
             local m = mcpFindModifier n spec
             if m == undefined do mcpFail "msg.no_modifier" a1:n.name a2:spec
-            try ( m.subobjectLevel = level ) catch()
+            local levelOk = true
+            try ( m.subobjectLevel = level ) catch ( levelOk = false )
+            if level > 0 do
+            (
+                -- A modifier that refuses the level (or exposes no such
+                -- property) used to answer "applied" from an empty catch.
+                if not levelOk do mcpFail "err.bad_value" a1:"sub-object level rejected"
+                local gotLevel = -1
+                try ( gotLevel = m.subobjectLevel ) catch ( gotLevel = -1 )
+                if gotLevel != level do mcpFail "err.bad_value" a1:("level kept " + (gotLevel as string))
+            )
             if sel.count > 0 do
             (
                 local ba = #{}
@@ -821,14 +840,18 @@ fn mcpH_mod_set_sub_object_selection params =
                     local i = idx as integer
                     if i > 0 do ba[i] = true
                 )
-                try ( m.selectedVerts = ba ) catch()
-                try ( m.selectedEdges = ba ) catch()
-                try ( m.selectedFaces = ba ) catch()
-                try ( m.selectedCP = ba ) catch()
+                -- Only one of these properties exists per modifier type; the
+                -- selection counts as applied when any of them reports it.
+                local landed = 0
+                try ( m.selectedVerts = ba; landed = m.selectedVerts.count ) catch ( landed = 0 )
+                if landed == 0 do try ( m.selectedEdges = ba; landed = m.selectedEdges.count ) catch ( landed = 0 )
+                if landed == 0 do try ( m.selectedFaces = ba; landed = m.selectedFaces.count ) catch ( landed = 0 )
+                if landed == 0 do try ( m.selectedCP = ba; landed = m.selectedCP.count ) catch ( landed = 0 )
+                if landed == 0 do mcpFail "err.bad_value" a1:"sub-object selection was not accepted"
             )
             append applied n.name
         )
-        catch ( ok = false; append failures (n.name + ": " + (getCurrentException())) )
+        catch ( ok = false; append failures (n.name + ": " + (getCurrentException() as string)) )
     )
     local p = #()
     mcpPair p "applied" applied
@@ -858,7 +881,11 @@ fn mcpH_model_extrude_spline params =
             m.segments = segments
             m.capStart = capStart
             m.capEnd = capEnd
+            local before = n.modifiers.count
             addModifier n m
+            -- The stack is the evidence: addModifier can refuse and stay silent.
+            if (n.modifiers.count <= before) do
+                mcpFail "err.bad_value" a1:"modifier did not enter the stack"
             append applied n.name
         )
         catch ( ok = false; append failures (n.name + ": " + (getCurrentException())) )
@@ -891,7 +918,11 @@ fn mcpH_model_lathe_spline params =
             m.smooth = smooth
             m.flipNormals = flipNormals
             m.weldCore = weldCore
+            local before = n.modifiers.count
             addModifier n m
+            -- The stack is the evidence: addModifier can refuse and stay silent.
+            if (n.modifiers.count <= before) do
+                mcpFail "err.bad_value" a1:"modifier did not enter the stack"
             append applied n.name
         )
         catch ( ok = false; append failures (n.name + ": " + (getCurrentException())) )
@@ -949,7 +980,10 @@ fn mcpH_model_sweep params =
         (
             mcpEnsureClass "Sweep"
             local m = Sweep()
+            local before = n.modifiers.count
             addModifier n m
+            if (n.modifiers.count <= before) do
+                mcpFail "err.bad_value" a1:"modifier did not enter the stack"
             if sectionName != "" do
             (
                 local sec = mcpResolveNode sectionName

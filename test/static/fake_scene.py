@@ -66,8 +66,30 @@ PRIMITIVE_CLASSES: Dict[str, str] = {
     "create_text": "Text",
 }
 
+#: Classes whose real superclass is Shape rather than Geometry.  attach only
+#: works on these, so the stub has to know which is which.
+SHAPE_CLASSES = {
+    "Line", "SplineShape", "Circle", "Rectangle", "Ellipse", "NGon",
+    "Donut", "Arc", "Helix", "Text",
+}
+
 #: Smallest possible valid PNG header + payload; enough for the server's sniff.
 PNG_BYTES = b"\x89PNG\r\n\x1a\n" + b"\x00" * 64
+
+
+def _coerce(value: Any) -> Any:
+    """Mirror mcpCoerceValue: mod_set_param takes its value as a string."""
+    if not isinstance(value, str):
+        return value
+    lowered = value.lower()
+    if lowered == "true":
+        return True
+    if lowered == "false":
+        return False
+    try:
+        return float(value)
+    except ValueError:
+        return value
 
 
 def _node(name: str, handle: int, klass: str = "Box") -> Dict[str, Any]:
@@ -119,6 +141,14 @@ class FakeScene:
         #: names that refuse state changes (locked nodes), so partial success and
         #: honest failure lists can be exercised offline
         self.reject_ops: set = set()
+        #: dimension properties the scene silently keeps instead of the request
+        self.clamp_props: Dict[str, float] = {}
+        #: modifier properties the scene refuses to change (read-back mismatch)
+        self.clamp_mod_props: Dict[str, float] = {}
+        #: when True, the boolean sequence completes but nothing is consumed
+        self.boolean_noop = False
+        #: when True, polyops return without changing the topology
+        self.poly_noop = False
         #: session settings scene_new may keep (units, frame rate, render size)
         self.session: Dict[str, Any] = {
             "units": "in", "scale": 1.0, "frameRate": 30,
@@ -140,6 +170,11 @@ class FakeScene:
     def add(self, name: str, klass: str = "Box", position: Optional[List[float]] = None) -> Dict[str, Any]:
         self._handle += 1
         node = _node(name, self._handle, klass)
+        if klass in SHAPE_CLASSES:
+            node["superClass"] = "ShapeClass"
+            node["vertexCount"] = 0
+            node["faceCount"] = 0
+            node["splines"] = 1
         if position:
             node["position"] = list(position)
         self.nodes.setdefault(name, []).append(node)
@@ -243,11 +278,17 @@ class FakeScene:
 
     def _h_clone_objects(self, params):
         created: List[str] = []
+        failures: List[str] = []
         count = int(params.get("count") or 1)
         clone_type = params.get("cloneType") or "copy"
         for name in params.get("objects") or []:
             source = self._require(name)
             for index in range(count):
+                if name in self.reject_ops:
+                    # A locked source refuses the copy; the handler names the
+                    # attempt instead of reporting the request as created.
+                    failures.append("{0} #{1}: copy returned no node".format(name, index + 1))
+                    continue
                 clone_name = "{0}_clone{1}".format(name, index + 1)
                 self._handle += 1
                 clone = copy.deepcopy(source)
@@ -255,7 +296,7 @@ class FakeScene:
                 clone["handle"] = self._handle
                 self.nodes.setdefault(clone_name, []).append(clone)
                 created.append(clone_name)
-        return {"created": created, "count": len(created),
+        return {"created": created, "count": len(created), "failures": failures,
                 "cloneType": clone_type, "message": "Created."}
 
     def _h_select_objects(self, params):
@@ -297,12 +338,25 @@ class FakeScene:
         modifier = str(params.get("modifier") or "")
         applied: List[str] = []
         failures: List[str] = []
+        reserved = {"objects", "modifier", "name", "params", "undo", "undo_label"}
+        extra = {k: v for k, v in params.items() if k not in reserved}
+        for key in (params.get("params") or {}):
+            extra[key] = (params.get("params") or {})[key]
         for name in params.get("objects") or []:
             node = self._require(name)
-            if name in self.skip_assign:
+            if name in self.skip_assign or name in self.reject_ops:
                 failures.append("{0}: modifier rejected".format(name))
                 continue
             node["modifiers"] = list(node["modifiers"]) + [modifier]
+            # Mirror the handler: a parameter the modifier refuses makes the
+            # whole object a failure, not a silent "applied".
+            rejected = [k for k in extra if k in self.clamp_mod_props]
+            if rejected:
+                worst = rejected[0]
+                failures.append("{0}: 1 parameter(s) rejected: {1}: kept {2}".format(
+                    name, worst, self.clamp_mod_props[worst]))
+                continue
+            node.setdefault("modParams", {}).update(extra)
             applied.append(name)
         return {"applied": applied, "failures": failures, "message": "Done."}
 
@@ -340,12 +394,53 @@ class FakeScene:
         requested = str(params.get("name") or params.get("setName") or "{0}001".format(klass))
         name = self._unique_name(requested)
         node = self.add(name, klass, list(params.get("position") or [0, 0, 0]))
-        for prop in ("length", "width", "height", "radius"):
+        failures: List[str] = []
+        warnings: List[str] = []
+        if name != requested:
+            # Max keeps a unique variant instead of raising; the handler reports
+            # it as a warning, because the object really was created.
+            warnings.append("name: scene kept {0}".format(name))
+        for prop in ("length", "width", "height", "radius", "radius1", "radius2",
+                     "segments", "sides", "turns", "cornerRadius"):
             value = params.get(prop)
             if isinstance(value, (int, float)) and not isinstance(value, bool):
-                node[prop] = float(value)
-        # Same shape as mcpH_create_primitive: success + the created node + failures.
-        return {"success": True, "object": copy.deepcopy(node), "failures": [],
+                clamped = self.clamp_props.get(prop)
+                if clamped is not None:
+                    # The scene silently keeps another value; only a read-back
+                    # notices, which is exactly what the handler now does.
+                    node[prop] = float(clamped)
+                    failures.append("{0}: kept {1}".format(prop, clamped))
+                else:
+                    node[prop] = float(value)
+        # Same shape as mcpH_create_primitive: success + node + failures + warnings.
+        return {"success": not failures, "object": copy.deepcopy(node),
+                "failures": failures, "warnings": warnings,
+                "message": "Created {0}".format(name)}
+
+    def _h_create_line(self, params):
+        """Mirror mcpH_create_line: knots first, then name/position, then a verdict."""
+        points = list(params.get("points") or [])
+        if not points:
+            raise BridgeCommandError(
+                "Missing parameter: points",
+                detail={"kind": "err.missing_param", "message": "points"},
+            )
+        failures: List[str] = []
+        warnings: List[str] = []
+        requested = str(params.get("name") or "Line001")
+        name = self._unique_name(requested)
+        node = self.add(name, "Line", list(params.get("position") or [0, 0, 0]))
+        if name != requested:
+            warnings.append("name: scene kept {0}".format(name))
+        knots = len(points)
+        if name in self.reject_ops:
+            # addKnot refused for every point: the knot count is the read-back.
+            knots = 0
+            failures.append("knots: asked for {0}, scene has 0".format(len(points)))
+        node["knots"] = knots
+        node["closed"] = bool(params.get("closed"))
+        return {"success": not failures, "object": copy.deepcopy(node),
+                "failures": failures, "warnings": warnings,
                 "message": "Created {0}".format(name)}
 
     # ------------------------------------------------- stage 3: modelling
@@ -375,39 +470,48 @@ class FakeScene:
         return {"objects": out, "message": "Done."}
 
     def _h_poly_select_faces(self, params):
-        applied: List[Dict[str, Any]] = []
+        """Mirror mcpH_poly_select_faces: rows, plus the two halves apart.
+
+        The real handler used to mix "ERROR <name>" strings into `results`, which
+        the runtime reads as a non-empty list = success.
+        """
+        applied: List[str] = []
+        rows: List[Dict[str, Any]] = []
+        failures: List[str] = []
         for name in self._targets(params):
             node = self._require(name)
             if not node.get("isPoly"):
-                raise BridgeCommandError(
-                    "Editable Poly required: {0}".format(name),
-                    detail={"kind": "err.poly_required", "message": name},
-                )
+                failures.append("{0}: Editable Poly required".format(name))
+                continue
             faces = node.get("faceCount", 6)
             self.selected_faces[name] = list(range(1, faces + 1))
-            applied.append({"name": name, "faces": faces})
-        return {"objects": applied, "message": "Done."}
+            rows.append({"object": name, "faces": faces, "count": faces})
+            applied.append(name)
+        return {"results": rows, "applied": applied, "failures": failures,
+                "message": "Done."}
 
     def _h_poly_extrude_faces(self, params):
         amount = params.get("amount") or 0.0
-        applied: List[Dict[str, Any]] = []
+        applied: List[str] = []
+        unchanged: List[str] = []
+        failures: List[str] = []
         for name in self._targets(params):
             node = self._require(name)
             if not node.get("isPoly"):
-                raise BridgeCommandError(
-                    "Editable Poly required: {0}".format(name),
-                    detail={"kind": "err.poly_required", "message": name},
-                )
+                failures.append("{0}: Editable Poly required".format(name))
+                continue
             faces = params.get("faces")
             selected = self.selected_faces.get(name) or []
             if not isinstance(faces, list) and not selected:
-                raise BridgeCommandError(
-                    "Nothing selected",
-                    detail={"kind": "err.no_selection", "message": "empty face selection"},
-                )
-            node["faceCount"] = node.get("faceCount", 6) + 4
-            applied.append({"name": name, "amount": amount, "faces": node["faceCount"]})
-        return {"objects": applied, "message": "Done."}
+                failures.append("{0}: nothing selected".format(name))
+                continue
+            if self.poly_noop or name in self.reject_ops:
+                unchanged.append(name)
+            else:
+                node["faceCount"] = node.get("faceCount", 6) + 4
+            applied.append(name)
+        return {"applied": applied, "unchanged": unchanged, "failures": failures,
+                "message": "Done."}
 
     # ------------------------------------------------- stage 3: materials
     def _h_mat_create_standard(self, params):
@@ -719,6 +823,239 @@ class FakeScene:
                 "mime": "image/png",
             }],
         }
+
+
+    # ------------------------------------------------- stage 10: modelling truth
+    def _h_align_objects(self, params):
+        """Mirror mcpH_align_objects: per-object, verified against the target."""
+        target = self._require(str(params.get("target") or ""))
+        applied: List[str] = []
+        failures: List[str] = []
+        for name in self._targets(params):
+            node = self._require(name)
+            if name in self.reject_ops:
+                failures.append("{0}: position kept {1}".format(name, node["position"]))
+                continue
+            if params.get("position", True) is not False:
+                node["position"] = list(target["position"])
+            if params.get("rotation") is True:
+                node["rotation"] = list(target["rotation"])
+            if params.get("scale") is True:
+                node["scale"] = list(target["scale"])
+            applied.append(name)
+        return {"target": target["name"], "aligned": applied, "failures": failures,
+                "message": "OK"}
+
+    def _h_attach_objects(self, params):
+        """Mirror mcpH_attach_objects: the target must be a shape, and the spline
+        count is the only evidence that attach did anything."""
+        target = self._require(str(params.get("target") or ""))
+        if target.get("superClass") != "ShapeClass":
+            raise BridgeCommandError(
+                "target is not a shape: {0}".format(target["name"]),
+                detail={"kind": "err.bad_value", "message": target["name"]},
+            )
+        attached: List[str] = []
+        failures: List[str] = []
+        for name in self._targets(params):
+            node = self._require(name)
+            if name in self.reject_ops or node.get("superClass") != "ShapeClass":
+                failures.append("{0}: attach added no splines".format(name))
+                continue
+            self.nodes.pop(name, None)
+            target["splines"] = int(target.get("splines") or 1) + 1
+            attached.append(name)
+        return {"target": target["name"], "attached": attached,
+                "failures": failures, "message": "OK"}
+
+    def _h_parent_objects(self, params):
+        parent = self._require(str(params.get("parent") or ""))
+        applied: List[str] = []
+        failures: List[str] = []
+        for name in self._targets(params):
+            node = self._require(name)
+            if name in self.reject_ops:
+                failures.append("{0}: parent not changed".format(name))
+                continue
+            node["parent"] = parent["name"]
+            applied.append(name)
+        return {"parent": parent["name"], "children": applied,
+                "failures": failures, "message": "OK"}
+
+    def _h_boolean_operation(self, params):
+        names = self._targets(params)
+        if len(names) < 2:
+            raise BridgeCommandError(
+                "objects needs at least two entries",
+                detail={"kind": "err.bad_value", "message": "objects"},
+            )
+        result = self._require(names[0])
+        before = int(result.get("faceCount") or 0)
+        failures: List[str] = []
+        for name in names[1:]:
+            operand = self._require(name)
+            if self.boolean_noop or name in self.reject_ops:
+                # The sequence completes but the operand is still there.
+                failures.append("{0}: operand still in the scene after boolean".format(name))
+                continue
+            result["faceCount"] = before + int(operand.get("faceCount") or 0)
+            self.nodes.pop(name, None)
+        return {"success": not failures, "result": copy.deepcopy(result),
+                "facesBefore": before, "facesAfter": int(result.get("faceCount") or 0),
+                "changed": int(result.get("faceCount") or 0) != before,
+                "failures": failures, "message": "OK"}
+
+    def _h_proboolean(self, params):
+        names = self._targets(params)
+        if len(names) < 2:
+            raise BridgeCommandError(
+                "objects needs at least two entries",
+                detail={"kind": "err.bad_value", "message": "objects"},
+            )
+        first = self._require(names[0])
+        before = int(first.get("faceCount") or 0)
+        remaining = 0
+        for name in names[1:]:
+            operand = self._require(name)
+            if self.boolean_noop:
+                remaining += 1
+                continue
+            first["faceCount"] = int(first.get("faceCount") or 0) + int(operand.get("faceCount") or 0)
+            self.nodes.pop(name, None)
+        after = int(first.get("faceCount") or 0)
+        return {"success": True, "result": copy.deepcopy(first),
+                "facesBefore": before, "facesAfter": after, "changed": after != before,
+                "operandsRemaining": remaining, "message": "OK"}
+
+    def _h_mod_remove(self, params):
+        spec = str(params.get("modifier") or "")
+        removed: List[str] = []
+        failures: List[str] = []
+        for name in self._targets(params):
+            node = self._require(name)
+            stack = list(node.get("modifiers") or [])
+            match = next((m for m in stack if m == spec), None)
+            if match is None:
+                failures.append("{0}: no modifier {1}".format(name, spec))
+                continue
+            if name in self.reject_ops:
+                failures.append("{0}: modifier still in the stack".format(name))
+                removed.append(name)
+                continue
+            stack.remove(match)
+            node["modifiers"] = stack
+            removed.append(name)
+        return {"removed": removed, "failures": failures, "message": "OK"}
+
+    def _h_mod_set_param(self, params):
+        return self._set_mod_params(params, single=True)
+
+    def _h_mod_set_params(self, params):
+        return self._set_mod_params(params, single=False)
+
+    def _set_mod_params(self, params, single):
+        spec = str(params.get("modifier") or "")
+        wanted = ({str(params.get("param")): _coerce(params.get("value"))} if single
+                  else {k: _coerce(v) for k, v in (params.get("params") or {}).items()})
+        applied: List[str] = []
+        failures: List[str] = []
+        for name in self._targets(params):
+            node = self._require(name)
+            stack = list(node.get("modifiers") or [])
+            if spec not in stack:
+                failures.append("{0}: no modifier {1}".format(name, spec))
+                continue
+            rejected = [k for k in wanted if k in self.clamp_mod_props]
+            if rejected:
+                key = rejected[0]
+                failures.append("{0}: {1}: kept {2}".format(name, key, self.clamp_mod_props[key]))
+                continue
+            node.setdefault("modParams", {}).update(wanted)
+            applied.append(name)
+        return {"applied": applied, "failures": failures, "message": "OK"}
+
+    def _h_poly_weld_vertices(self, params):
+        applied: List[str] = []
+        unchanged: List[str] = []
+        failures: List[str] = []
+        for name in self._targets(params):
+            node = self._require(name)
+            if not node.get("isPoly"):
+                failures.append("{0}: Editable Poly required".format(name))
+                continue
+            applied.append(name)
+            if self.poly_noop:
+                # Coincident vertices: the call succeeds and changes nothing.
+                unchanged.append(name)
+            else:
+                node["vertexCount"] = max(1, int(node.get("vertexCount") or 8) - 2)
+        return {"applied": applied, "unchanged": unchanged, "failures": failures,
+                "message": "OK"}
+
+    def _h_array_objects(self, params):
+        names = [str(n) for n in params.get("objects") or []]
+        if not names:
+            raise BridgeCommandError(
+                "no objects",
+                detail={"kind": "err.no_selection", "message": "no_selection"},
+            )
+        created: List[str] = []
+        moved: List[str] = []
+        failures: List[str] = []
+        count = int(params.get("count1") or 3)
+        for index in range(1, max(1, count)):
+            try:
+                source = self._require(names[0])
+                clone = self.add(self._unique_name("{0}_arr".format(source["name"])),
+                                 source.get("class") or "Box")
+            except BridgeCommandError as exc:
+                failures.append("cell {0}: {1}".format(index, exc))
+                continue
+            created.append(clone["name"])
+        proto = self._require(names[0])
+        if names[0] in self.reject_ops:
+            failures.append("{0}: position rejected".format(names[0]))
+        else:
+            moved.append(names[0])
+        return {"created": created, "moved": moved, "count": len(created),
+                "failures": failures, "message": "OK"}
+
+    def _h_scatter_objects(self, params):
+        names = [str(n) for n in params.get("objects") or []]
+        if not names:
+            raise BridgeCommandError(
+                "no objects",
+                detail={"kind": "err.no_selection", "message": "no_selection"},
+            )
+        created: List[str] = []
+        failures: List[str] = []
+        count = int(params.get("count") or len(names))
+        for index in range(1, max(1, count) + 1):
+            source = self._require(names[(index - 1) % len(names)])
+            if params.get("region") == "surface" and not names:
+                failures.append("instance {0}: ray missed the surface".format(index))
+                continue
+            clone = self.add(self._unique_name("{0}_sc".format(source["name"])),
+                             source.get("class") or "Box")
+            created.append(clone["name"])
+        return {"created": created, "count": len(created), "failures": failures,
+                "message": "OK"}
+
+    def _h_detach_elements(self, params):
+        node = self._require(str(params.get("name") or ""))
+        before = len(self.nodes)
+        created: List[str] = []
+        failures: List[str] = []
+        elements = int(node.get("elements") or 0)
+        for index in range(1, elements + 1):
+            if self.poly_noop:
+                failures.append("element {0}: detach created no node".format(index))
+                continue
+            name = "Det_{0}_{1}".format(node["name"], index)
+            clone = self.add(self._unique_name(name), node.get("class") or "Editable_Poly")
+            created.append(clone["name"])
+        assert len(self.nodes) >= before
+        return {"detached": created, "failures": failures, "message": "OK"}
 
 
 __all__ = ["FakeScene", "PRIMITIVE_CLASSES", "PNG_BYTES",

@@ -373,6 +373,27 @@ def verify_selection(spec: Dict[str, Any], ctx: Dict[str, Any]) -> Dict[str, Any
                    expected=list(wanted), actual=selected, missing=missing)
 
 
+def _find_field(payload: Dict[str, Any], field: str) -> Optional[Dict[str, Any]]:
+    """Locate the dict that holds ``field`` inside a tool reply.
+
+    A read-only tool returns its payload directly, while a mutating tool returns
+    the runtime envelope with the payload under ``result``/``data``.  Checking
+    only the top level made ``payload_number`` report "unavailable" for every
+    mutating step - which the workflow then honestly called unverified, but the
+    check itself was simply looking in the wrong place.
+    """
+    for container in (payload, payload.get("data"), payload.get("result")):
+        if not isinstance(container, dict):
+            continue
+        if field in container:
+            return container
+        for key in ("objects", "results"):
+            rows = container.get(key)
+            if isinstance(rows, list) and rows and isinstance(rows[0], dict) and field in rows[0]:
+                return rows[0]
+    return None
+
+
 def verify_payload_number(spec: Dict[str, Any], ctx: Dict[str, Any]) -> Dict[str, Any]:
     """Check a scalar the tool itself reported (counts, face totals...).
 
@@ -384,10 +405,9 @@ def verify_payload_number(spec: Dict[str, Any], ctx: Dict[str, Any]) -> Dict[str
     field = spec.get("field")
     if not isinstance(payload, dict) or not isinstance(field, str) or not field:
         return _unavailable("payload_number", "field_not_readable", field=field)
-    container: Any = payload
-    if field not in payload and isinstance(payload.get("objects"), list) and payload["objects"]:
-        first = payload["objects"][0]
-        container = first if isinstance(first, dict) else {}
+    container = _find_field(payload, field)
+    if container is None:
+        return _unavailable("payload_number", "field_absent", field=field)
     value = container.get(field)
     if not isinstance(value, (int, float)) or isinstance(value, bool):
         return _unavailable("payload_number", "field_not_numeric", field=field,

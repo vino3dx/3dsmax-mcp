@@ -231,6 +231,30 @@ def main(argv):
     else:
         print("  none")
 
+    # MAXScript separates statements by newline, so two calls on one line are
+    # parsed as a single call with extra arguments - "Wrong number of arguments"
+    # at runtime, which no amount of static symbol checking would catch.  A batch
+    # edit in Stage 4 produced 34 such lines across five files and they went
+    # unnoticed because no MAXScript has ever been executed in this repo.
+    print("\n== 5. two calls on one line ==")
+    offenders = []
+    second_call = re.compile(r"mcpObj\s+\w+\s+mcpPair\b")
+    pair_call = re.compile(r"\bmcpPair\b")
+    for path in files:
+        text = path.read_text(encoding="utf-8-sig")
+        code = strip_code(text)[0]
+        for lineno, line in enumerate(code.splitlines(), 1):
+            # ``mcpPair rec "verts" (mcpObj vp)`` is one call with a nested
+            # value and is fine; two statements on one line is not.
+            if len(pair_call.findall(line)) >= 2 or second_call.search(line):
+                offenders.append("%s:%d %s" % (path.name, lineno, line.strip()[:70]))
+    if offenders:
+        problems += len(offenders)
+        for item in offenders:
+            print("  FAIL " + item)
+    else:
+        print("  none")
+
     print("\n%d problem(s)" % problems)
     return 1 if problems else 0
 

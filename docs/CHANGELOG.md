@@ -12,6 +12,91 @@ code base and are kept unchanged for history; they never shipped under a public
 tag. `pyproject.toml` and `maxmcp.config.VERSION` both report `0.1.0`.
 
 ### Added
+
+- **Modelling and modifier outcomes are read back, not assumed (Stage 10).**
+  126 mutating tools in the `modeling` and `objects` categories were audited one
+  by one. Three systemic defects came out of it, not just a list of small ones.
+  - **34 lines held two statements.** `mcpPair p "success" true  mcpPair p
+    "name" nm` is parsed by MAXScript as one call with seven arguments -
+    "Wrong number of arguments" at runtime. They came from an earlier batch
+    insertion of `success: true` and sat in `mcp_lights`, `mcp_render`,
+    `mcp_shading` and `mcp_modifiers`. Nothing caught them because this
+    repository has never executed MAXScript; `ms_check.py` now has a fifth
+    section that fails on any line carrying two `mcpPair` calls.
+  - **The audit itself had a false pass.** `_keys()` followed `mcp*` helpers and
+    counted their keys as top-level, so the node payload inside
+    `mcpPair p "object" (mcpNodeInfo obj)` contributed `layer` - a receipt field
+    the runtime does read. `create_circle`, `create_line`, `boolean_operation`
+    and `proboolean` were therefore rated "declared" while answering
+    `missing_success` at runtime: the object was created and the tool said "no
+    evidence". Helpers whose value is nested inside a pair are now skipped.
+  - **The echo hid under other key names.** Stage 9's detector only matched
+    `"objects"`, but `align_objects` echoed under `aligned`, `attach_objects`
+    under `attached` and `parent_objects` under `children` - all receipt keys the
+    runtime reads. Detection now covers every decisive key.
+
+  Creation:
+  - `create_spline` (8 tools) and `create_line` had no verdict field at all;
+    both now return `success` / `failures` / `warnings`, and `create_line`
+    compares `numKnots` with the points it was given.
+  - `create_primitive` verifies every dimension it was asked to set and reports
+    `radius: kept 50.0` when Max keeps something else, instead of a cheerful
+    "Created". A name Max keeps as a unique variant is a `warning`, not a
+    failure: the object exists, and failing it would make an agent retry and
+    leave a duplicate.
+  - `rig_create_bone` / `rig_create_dummy` / `rig_create_point_helper` had the
+    same invisible-verdict shape and got the same treatment.
+
+  Objects:
+  - `align_objects` reads position (`distance`) and scale back per object;
+    `parent_objects` confirms `n.parent`; `attach_objects` refuses a non-shape
+    target instead of swallowing `convertToSplineShape` and then listing every
+    request as attached; `detach_elements` uses the scene object count as
+    evidence that a node was really split off.
+  - `boolean_operation` collects per-operand failures, checks the operand was
+    consumed, and reports `facesBefore` / `facesAfter` / `changed`.
+    `proboolean` reports the same three plus `operandsRemaining`.
+  - `clone_objects`, `array_objects` and `scatter_objects` wrap each copy and
+    name the ones that failed; `array_objects` now says `moved` for the
+    repositioned original instead of calling it `created`, and `scatter_objects`
+    fails an instance whose surface ray missed rather than leaving it in mid-air.
+
+  Modifiers:
+  - `mod_add` requires `n.modifiers.count` to grow, so a refused `addModifier`
+    is a failure. `mcpApplyModParams` returns the parameters that did not take
+    effect (read back with `getProperty`) instead of an undeclared `ok`, so a
+    rejected parameter no longer hides behind `applied`. Same for
+    `mod_set_params`, and `mod_set_sub_object_selection` reads the level and the
+    selection count back.
+  - `mod_set_param` advertises `value` as a string with automatic conversion but
+    handed the raw string to `setProperty`: `"45"` is not a float, so every
+    numeric parameter failed. New `mcpCoerceValue` converts booleans and
+    numbers.
+  - `mod_remove`, `poly_subdivide`, `poly_optimize`, `poly_relax`,
+    `model_extrude_spline`, `model_lathe_spline`, `model_sweep`, `uvw_map`,
+    `uvw_unwrap` and `uvw_quick_peel` now check the stack size instead of
+    trusting `addModifier` / `deleteModifier` to have worked.
+
+  Editable Poly:
+  - 16 topology operations report `unchanged` when face and vertex counts are
+    identical afterwards. A weld of coincident vertices is a valid call, not a
+    failure - but the caller deserves to know the mesh is the same.
+  - `poly_select_faces` / `poly_loop_select` / `poly_ring_select` used to append
+    `"ERROR <name>: ..."` strings into `results`, which the runtime reads as a
+    non-empty list = success. Failures now go to `failures`.
+
+  Verification:
+  - `verify.payload_number` only looked at the envelope top level, so every
+    mutating step's payload (nested under `result`/`data`) was reported
+    "unavailable". It now walks `payload` / `data` / `result` and both row keys.
+
+  Tests: new `test/static/modeling_state_test.py` (Offline, 20 scenarios) drives
+  creation, modifier and topology verdicts through the real TCP stub.
+  `FakeScene` grew the handlers and the `clamp_props` / `clamp_mod_props` /
+  `poly_noop` / `boolean_noop` switches needed to simulate a scene that keeps
+  something else, and `outcome_audit` gained a `read-back gaps` report
+  (16 -> 9, the rest are material/modifier copies and documented backlog).
+
 - **Animation / Rigging outcomes are now evidence, not an echo (Stage 9).**
   A handler that answers `mcpPair p "objects" (for n in nodes collect n.name)`
   reports success even when every node was skipped, because the runtime reads
