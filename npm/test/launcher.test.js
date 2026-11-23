@@ -6,7 +6,10 @@ const path = require("node:path");
 
 const root = path.resolve(__dirname, "..", "..");
 const launcher = path.join(root, "npm", "bin", "3dsmax-mcp.js");
+const packageJson = require("../package.json");
 const pythonPath = path.join(root, "src", "python");
+
+assert.strictEqual(packageJson.name, "vino-3dsmax-mcp");
 
 function run(args, extraEnv = {}, input = undefined) {
   return spawnSync(process.execPath, [launcher, ...args], {
