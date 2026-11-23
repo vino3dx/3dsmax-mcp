@@ -1,11 +1,11 @@
-# @vino3dx/3dsmax-mcp
+# vino-3dsmax-mcp
 
 Lightweight npm launcher for the Python `3dsmax-mcp` MCP server. The launcher
 does not reimplement MCP or MaxScript; it finds Python and starts
 `python -m maxmcp` with stdin/stdout inherited.
 
 ```bash
-npx -y @vino3dx/3dsmax-mcp
+npx -y vino-3dsmax-mcp
 ```
 
 The default Python dependency is pinned to the verified PyPI release
