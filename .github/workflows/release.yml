@@ -4,7 +4,7 @@ name: Release
 #   1) push 一个 v*.*.* 标签（例如 git push origin v0.1.0）→ 自动创建 GitHub Release
 #   2) Actions 页面手动运行（workflow_dispatch）→ 自动创建并推送标签，再创建 Release
 #
-# Release 标题规则：<RELEASE_TITLE_PREFIX>-<tag>，当前为 3dsmax-map-v0.1.0
+# Release 标题规则：<RELEASE_TITLE_PREFIX>-<tag>，当前为 3dsmax-mcp-v0.1.0
 
 on:
   push:
@@ -37,7 +37,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  RELEASE_TITLE_PREFIX: "3dsmax-map"
+  RELEASE_TITLE_PREFIX: "3dsmax-mcp"
 
 jobs:
   release:
