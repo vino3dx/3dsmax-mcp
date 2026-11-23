@@ -4,8 +4,8 @@
 
 const { spawnSync, spawn } = require("node:child_process");
 
-const PACKAGE_NAME = process.env.MAXMCP_PYTHON_PACKAGE || "3dsmax-mcp";
-const PACKAGE_VERSION = process.env.MAXMCP_PYTHON_PACKAGE_VERSION || "1.6.8";
+const PACKAGE_NAME = "vino3dx-3dsmax-mcp";
+const PACKAGE_VERSION = process.env.MAXMCP_PYTHON_PACKAGE_VERSION || "0.1.0";
 const PACKAGE_SPEC = `${PACKAGE_NAME}==${PACKAGE_VERSION}`;
 
 function diagnostic(message) {
@@ -43,7 +43,16 @@ function findPython() {
 }
 
 function packageInstalled(python) {
-  const code = "import importlib.util; raise SystemExit(0 if importlib.util.find_spec('maxmcp') else 1)";
+  const code = [
+    "import importlib.util",
+    "from importlib.metadata import PackageNotFoundError, version",
+    "try:",
+    "    installed = version('vino3dx-3dsmax-mcp') == " + JSON.stringify(PACKAGE_VERSION),
+    "except PackageNotFoundError:",
+    "    installed = False",
+    "source_mode = bool(__import__('os').environ.get('MAXMCP_PYTHONPATH')) and importlib.util.find_spec('maxmcp') is not None",
+    "raise SystemExit(0 if installed or source_mode else 1)",
+  ].join("\n");
   const env = { ...process.env };
   if (process.env.MAXMCP_PYTHONPATH) env.PYTHONPATH = process.env.MAXMCP_PYTHONPATH;
   const result = spawnSync(python.command, [...python.prefix, "-c", code], {
@@ -60,7 +69,7 @@ function installPackage(python) {
     return fail(`Python package ${PACKAGE_SPEC} is not installed; MAXMCP_SKIP_INSTALL=1 prevents installation`);
   }
   diagnostic(`Python package not found; installing ${PACKAGE_SPEC} with pip --user`);
-  const result = spawnSync(python.command, [...python.prefix, "-m", "pip", "install", "--user", PACKAGE_SPEC], {
+  const result = spawnSync(python.command, [...python.prefix, "-m", "pip", "install", "--user", "--upgrade", PACKAGE_SPEC], {
     stdio: "inherit",
     windowsHide: true,
   });
