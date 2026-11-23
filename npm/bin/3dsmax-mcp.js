@@ -44,13 +44,24 @@ function findPython() {
 
 function packageInstalled(python) {
   const code = [
-    "import importlib.util",
+    "import importlib.util, os",
     "from importlib.metadata import PackageNotFoundError, version",
     "try:",
-    "    installed = version('vino3dx-3dsmax-mcp') == " + JSON.stringify(PACKAGE_VERSION),
+    "    installed = version('vino3dx-3dsmax-mcp') == " + JSON.stringify(PACKAGE_VERSION)",
     "except PackageNotFoundError:",
     "    installed = False",
-    "source_mode = bool(__import__('os').environ.get('MAXMCP_PYTHONPATH')) and importlib.util.find_spec('maxmcp') is not None",
+    "spec = importlib.util.find_spec('maxmcp')",
+    "source_mode = False",
+    "roots = [os.path.realpath(p) for p in os.environ.get('MAXMCP_PYTHONPATH', '').split(os.pathsep) if p]",
+    "if spec and spec.origin and roots:",
+    "    actual = os.path.realpath(spec.origin)",
+    "    for root in roots:",
+    "        try:",
+    "            if os.path.commonpath([actual, root]) == root:",
+    "                source_mode = True",
+    "                break",
+    "        except ValueError:",
+    "            pass",
     "raise SystemExit(0 if installed or source_mode else 1)",
   ].join("\n");
   const env = { ...process.env };
