@@ -22,8 +22,17 @@
   "bugs": {
     "url": "https://github.com/vino3dx/3dsmax-mcp/issues"
   },
-  "keywords": ["mcp", "3dsmax", "autodesk", "ai", "launcher"],
+  "keywords": [
+    "mcp",
+    "3dsmax",
+    "autodesk",
+    "ai",
+    "launcher"
+  ],
   "publishConfig": {
     "access": "public"
+  },
+  "scripts": {
+    "test": "node test/launcher.test.js"
   }
 }
