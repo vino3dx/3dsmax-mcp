@@ -18,6 +18,9 @@ function run(args, extraEnv = {}, input = undefined) {
 }
 
 assert.doesNotThrow(() => execFileSync(process.execPath, ["--check", launcher]));
+const launcherSource = require("node:fs").readFileSync(launcher, "utf8");
+assert.match(launcherSource, /vino3dx-3dsmax-mcp/);
+assert.doesNotMatch(launcherSource, /1\.6\.8|cl0nazepamm/);
 
 const help = run(["--help"]);
 assert.strictEqual(help.status, 0);
