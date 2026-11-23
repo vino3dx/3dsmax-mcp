@@ -42,7 +42,7 @@ DEFAULTS: Dict[str, Any] = {
     # means "temp dir + MCP home"; set it when a producer writes captures
     # somewhere else.  Base64 payloads need no root.
     "image_roots": [],
-    "tool_profile": "full",
+    "tool_profile": "compact",
     # When enabled, mutating calls are wrapped with real scene_info snapshots.
     # Keep the default off for backwards-compatible wire payloads; clients can
     # opt in once the bridge session is known to support scene_info reliably.
@@ -70,7 +70,7 @@ class Config:
     auto_launch_hint: bool = True
     max_response_chars: int = 200000
     image_roots: List[str] = field(default_factory=list)
-    tool_profile: str = "full"
+    tool_profile: str = "compact"
     runtime_verify: bool = False
     disabled_categories: List[str] = field(default_factory=list)
     transport: str = "stdio"

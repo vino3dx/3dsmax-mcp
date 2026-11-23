@@ -154,7 +154,46 @@ def tool(
     )
 
 
-# ------------------------------------------------------------------ registry
+def hub_tool(
+    name: str,
+    category: str,
+    zh: str,
+    en: str,
+    actions: Sequence[str],
+    mutating: bool = True,
+    mutates: Optional[Sequence[str]] = None,
+) -> Tool:
+    """Declare a high-capacity compound hub tool that dispatches to one of ``actions``.
+
+    Callers pass ``action`` (required) and ``params`` (optional parameter map for
+    that action, or top-level parameters directly).
+    """
+    action_list = list(actions)
+    props: Dict[str, Any] = {
+        "action": s(
+            "要执行的子命令名称（必选）。可选值见 enum 列表。",
+            "Sub-command action to execute (required). Pick one from the enum list.",
+            enum=action_list,
+            examples=action_list[:3] if action_list else None,
+        ),
+        "params": obj_schema(
+            "params",
+            "传递给该 action 子命令的参数键值对象（例如 {\"name\":\"Box001\",\"length\":10}）。",
+            "Parameter key-value object forwarded to the chosen action (e.g. {\"name\":\"Box001\",\"length\":10}).",
+            additional=True,
+        ),
+    }
+    return tool(
+        name=name,
+        category=category,
+        zh=zh,
+        en=en,
+        props=props,
+        required=["action"],
+        mutating=mutating,
+        local=True,
+        mutates=mutates if mutates is not None else (_domains.ALL_DOMAINS if mutating else ()),
+    )
 #: Categories every profile keeps: connection, scene management, object
 #: handling, file IO and introspection.
 BASE_CATEGORIES = ("system", "scene", "objects", "files", "context")
@@ -182,9 +221,23 @@ CORE_TOOLS = frozenset({
     "mat_get", "mat_list", "light_create_omni", "light_create_spot", "uvw_map",
 })
 
-#: Named subsets, so a client does not have to carry all 375 tool descriptions.
+# The compact surface consolidates the 395 fine-grained operations into 24
+# high-capacity compound tools (4 per source module), so MCP clients with strict
+# tool-count limits (typically 20-40 tools) can access 100% of the 3ds Max
+# capabilities without dropping a single command.
+COMPACT_TOOLS = frozenset({
+    "bridge_hub", "scene_hub", "context_hub", "file_hub",
+    "create_hub", "transform_hub", "select_hub", "hierarchy_hub",
+    "poly_query_hub", "poly_edit_hub", "mod_hub", "model_hub",
+    "mat_hub", "map_uvw_hub", "light_hub", "cam_env_hub",
+    "anim_key_hub", "ctrl_constraint_hub", "rig_bone_ik_hub", "rig_skin_morph_hub",
+    "render_hub", "vision_viewport_hub", "bake_hub", "export_import_hub",
+})
+
+#: Named subsets, so a client does not have to carry all tool descriptions.
 PROFILES: Dict[str, Optional[set]] = {
     "full": None,
+    "compact": COMPACT_TOOLS,
     "core": CORE_TOOLS,
     "modeling": set(BASE_CATEGORIES) | {"modeling"},
     "lookdev": set(BASE_CATEGORIES) | {"shading"},

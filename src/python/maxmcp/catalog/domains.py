@@ -285,6 +285,10 @@ TOOL_MUTATES: Dict[str, Tuple[str, ...]] = {
     "set_time_config": ("scene", "animation", "render"),
     "set_pivot": OBJECTS,
     "set_layer_properties": OBJECTS,
+    "place_on_surface": OBJECTS,
+    "place_relative": OBJECTS,
+    "distribute_along_spline": OBJECTS_AND_SCENE,
+    "check_overlaps": (),
     # Arbitrary property on an arbitrary object, material or controller.
     "set_property_value": ALL_DOMAINS,
 

@@ -19,7 +19,7 @@ from __future__ import annotations
 
 from typing import List
 
-from .schema import Tool, arr, b, i, n, s, tool
+from .schema import Tool, arr, b, hub_tool, i, n, s, tool
 
 TOOLS: List[Tool] = []
 
@@ -853,3 +853,82 @@ TOOLS.append(tool(
     },
     mutating=False,
 ))
+
+
+# ============================================================ compact hub tools
+TOOLS.extend([
+    hub_tool(
+        "anim_key_hub", "animation",
+        "动画关键帧、轨道插值、时间轴回放与烘焙综合中枢工具（聚合 19 项动画功能）："
+        "写入单个/批量关键帧、读取/删除/清空关键帧、轨道时间平移与缩放、指定/读取控制器、"
+        "设置范围外循环、缓动切线与插值类型、动画烘焙（anim_bake/anim_bake_range）、"
+        "跳转/读取当前帧、播放控制与实时预览生成、关键帧统计。",
+        "Consolidated animation keyframes, interpolation, playback & baking hub (19 actions): "
+        "anim_set_key/set_keys/get_keys/delete_keys/clear_animation/offset_keys/scale_keys/"
+        "set_controller/get_controller/set_out_of_range/ease/bake/bake_range/set_interpolation/"
+        "goto_frame/get_frame/play/play_preview/get_key_stats.",
+        actions=[
+            "anim_set_key", "anim_set_keys", "anim_get_keys", "anim_delete_keys",
+            "anim_clear_animation", "anim_offset_keys", "anim_scale_keys",
+            "anim_set_controller", "anim_get_controller", "anim_set_out_of_range",
+            "anim_ease", "anim_bake", "anim_bake_range", "anim_set_interpolation",
+            "anim_goto_frame", "anim_get_frame", "anim_play", "anim_play_preview",
+            "anim_get_key_stats",
+        ],
+        mutating=True,
+        mutates=("scene", "animation"),
+    ),
+    hub_tool(
+        "ctrl_constraint_hub", "animation",
+        "动画控制器、参数连线、表达式与全套约束综合中枢工具（聚合 15 项控制器与约束功能）："
+        "列出可动画轨道、底层控制器设值、通用点号属性写入、叠加 List 控制器、参数连线（ctrl_wire）、"
+        "表达式控制器（ctrl_assign_expression），以及 LookAt/Position/Orientation/Path/Link/Surface 约束、"
+        "约束列表/移除/目标权重调节。",
+        "Consolidated controllers, wire parameters, expressions & constraints hub (15 actions): "
+        "ctrl_list/set_value/set_property/add_list/wire/assign_expression, plus constraint_look_at/"
+        "position/orientation/path/link/surface/list/remove/set_weight.",
+        actions=[
+            "ctrl_list", "ctrl_set_value", "ctrl_set_property", "ctrl_add_list",
+            "ctrl_wire", "ctrl_assign_expression",
+            "constraint_look_at", "constraint_position", "constraint_orientation",
+            "constraint_path", "constraint_link", "constraint_surface",
+            "constraint_list", "constraint_remove", "constraint_set_weight",
+        ],
+        mutating=True,
+        mutates=("animation", "rigging", "objects", "selection"),
+    ),
+    hub_tool(
+        "rig_bone_ik_hub", "animation",
+        "骨骼系统、辅助体与 IK 反向动力学综合中枢工具（聚合 14 项骨骼与 IK 功能）："
+        "创建单根骨骼/骨骼链/Dummy/Point 辅助体、父子链接、批量设置骨骼尺寸、镜像骨骼链（_L/_R）、"
+        "列出场景骨骼（含 Bone/Biped/CAT），以及添加 IK 解算器、调整 IK 链角、移动 IK 目标、"
+        "Spline IK 绑定、启用/禁用 IK。",
+        "Consolidated bones, rig helpers & IK solvers hub (14 actions): rig_create_bone/bone_chain/"
+        "dummy/point_helper, rig_link_objects/set_bone_size/mirror_bone_chain/list_bones, plus "
+        "rig_ik_solver/set_ik_chain/ik_goal/spline_ik/ik_enable/ik_disable.",
+        actions=[
+            "rig_create_bone", "rig_create_bone_chain", "rig_create_dummy", "rig_create_point_helper",
+            "rig_link_objects", "rig_set_bone_size", "rig_mirror_bone_chain", "rig_list_bones",
+            "rig_ik_solver", "rig_set_ik_chain", "rig_ik_goal", "rig_spline_ik",
+            "rig_ik_enable", "rig_ik_disable",
+        ],
+        mutating=True,
+        mutates=("rigging", "objects", "selection"),
+    ),
+    hub_tool(
+        "rig_skin_morph_hub", "animation",
+        "角色蒙皮（Skin）与表情变形目标（Morpher）综合中枢工具（聚合 11 项蒙皮与变形功能）："
+        "添加 Skin 修改器、添加/移除骨骼、设置单顶点单骨骼/多骨骼权重、骨骼热自动权重（rig_skin_auto_weight）、"
+        "读取蒙皮权重表，以及添加 Morpher、添加变形目标网格、设置/关键帧化通道权重、列出变形通道。",
+        "Consolidated Skin weighting & Morpher blendshapes hub (11 actions): rig_skin_add/add_bone/"
+        "set_weight/auto_weight/weight_table/remove_bone/set_vertex_weights, plus rig_morpher_add/"
+        "add_target/set_value/list.",
+        actions=[
+            "rig_skin_add", "rig_skin_add_bone", "rig_skin_set_weight", "rig_skin_auto_weight",
+            "rig_skin_weight_table", "rig_skin_remove_bone", "rig_skin_set_vertex_weights",
+            "rig_morpher_add", "rig_morpher_add_target", "rig_morpher_set_value", "rig_morpher_list",
+        ],
+        mutating=True,
+        mutates=("rigging", "objects", "selection"),
+    ),
+])

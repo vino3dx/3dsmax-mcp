@@ -47,7 +47,7 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(os.path.dirname(HERE))
 SRC = os.path.join(REPO, "src", "python")
-EVENTS = os.path.join(REPO, "src", "ms", "mcp_events.ms")
+EVENTS = os.path.join(REPO, "src", "ms", "mcp_context.ms")
 CONTEXT = os.path.join(REPO, "src", "ms", "mcp_context.ms")
 SERVER = os.path.join(SRC, "maxmcp", "server.py")
 

@@ -47,7 +47,7 @@ function packageInstalled(python) {
     "import importlib.util, os",
     "from importlib.metadata import PackageNotFoundError, version",
     "try:",
-    "    installed = version('vino3dx-3dsmax-mcp') == " + JSON.stringify(PACKAGE_VERSION)",
+    "    installed = version('vino3dx-3dsmax-mcp') == " + JSON.stringify(PACKAGE_VERSION),
     "except PackageNotFoundError:",
     "    installed = False",
     "spec = importlib.util.find_spec('maxmcp')",

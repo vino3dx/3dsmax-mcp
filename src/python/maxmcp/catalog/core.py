@@ -9,7 +9,7 @@ from __future__ import annotations
 from typing import List
 
 from .domains import ALL_DOMAINS
-from .schema import Tool, arr, b, i, n, obj_schema, s, tool
+from .schema import Tool, arr, b, hub_tool, i, n, obj_schema, s, tool
 
 TOOLS: List[Tool] = []
 
@@ -423,7 +423,7 @@ TOOLS.append(tool(
     "workflow_run", "system",
     "按顺序执行一组 MCP 工具调用，并逐步给出执行结果与场景校验结果。"
     "两种用法：`workflow` 选择一个内置工作流（basic_scene / model_processing / "
-    "material_look）；或用 `steps` 传入自定义步骤数组。"
+    "material_look / asset_layout）；或用 `steps` 传入自定义步骤数组。"
     "每一步可以声明 verification（用场景回读判断目标是否达成，而不是只看工具是否返回成功），"
     "depends_on（前一步没成功就跳过），on_failure（abort/continue）与 optional。"
     "**会修改场景**（只要步骤里有修改类工具）。返回完整记录：每步状态、失败原因、"
@@ -432,7 +432,7 @@ TOOLS.append(tool(
     "不传参数则列出可用的内置工作流。",
     "Run a sequence of MCP tool calls in order, reporting per-step execution **and** "
     "scene verification. Two modes: `workflow` picks a built-in one (basic_scene / "
-    "model_processing / material_look), or `steps` supplies explicit steps. A step may "
+    "model_processing / material_look / asset_layout), or `steps` supplies explicit steps. A step may "
     "declare `verification` (check the goal against scene read-back instead of trusting "
     "the tool's success flag), `depends_on` (skip when a predecessor did not succeed), "
     "`on_failure` (abort/continue) and `optional`. "
@@ -443,7 +443,7 @@ TOOLS.append(tool(
     "Calling it with no arguments lists the built-in workflows.",
     props={
         "workflow": s("内置工作流名称。", "Name of a built-in workflow.",
-                      enum=["basic_scene", "model_processing", "material_look"]),
+                      enum=["basic_scene", "model_processing", "material_look", "asset_layout"]),
         "steps": arr("自定义步骤数组，每项形如 "
                      "{\"id\":\"s1\",\"operation\":\"create_box\",\"arguments\":{...},"
                      "\"verification\":{\"kind\":\"exists\",\"objects\":[\"Box001\"]}}。",
@@ -763,3 +763,198 @@ TOOLS.append(tool(
     },
     required=["object", "property", "value"],
 ))
+
+
+# ===================================================================== context
+TOOLS.extend([
+    tool(
+        "context_get", "context",
+        """
+        读取场景上下文快照。一次调用返回多个“域”的摘要（scene / selection / objects /
+        materials / assets / animation / rigging / render / project），每个域带 revision、
+        changedAt（该域最后一次变化时的全局 revision）、采集时间、来源和有效性；
+        失败时带 error，不会用 0 冒充真实值。
+
+        每个域还带 state（fresh / partial / stale / unsupported / failed）和 complete；
+        本机读不到的字段返回 null 并列在 unreadable 里，不会伪装成 0 或空字符串。
+
+        用 since=<上次的 revision> 只取变化的域（未变化的列在 unchanged 里，不返回内容）。
+        detail:"full" 会让 selection 返回更完整的对象记录（包围盒、修改器列表等）。
+        与 max://scene/context 资源读取的是同一份缓存，两边结果一致。
+        """,
+        """
+        Read a scene-context snapshot. One call returns several domains (scene / selection /
+        objects / materials / assets / animation / rigging / render / project); every domain
+        carries its revision, changedAt (the global revision it last moved at), build time,
+        source and validity, and reports `error` instead of inventing zeros.
+
+        Each section also carries `state` (fresh / partial / stale / unsupported / failed) and
+        `complete`; a field this build cannot read comes back as null and is listed in
+        `unreadable`, never as a plausible 0 or "".
+
+        Pass since=<revision from the previous call> to receive only the domains that changed;
+        unchanged ones are listed and not sent. detail:"full" widens the selection records
+        (BBox, modifier list, ...). Reads the same cache as the max://scene/context resource,
+        so the two always agree.
+        """,
+        props={
+            "sections": arr(
+                "要读取的域；省略=全部。可选：scene, selection, objects, materials, assets, animation, rigging, render, project。",
+                "Domains to read; omit for all: scene, selection, objects, materials, assets, animation, rigging, render, project.",
+            ),
+            "since": i("只返回 revision 大于该值的域（增量模式）。", "Only return domains newer than this revision (incremental).", default=0),
+            "detail": s("brief=摘要（默认）；full=更完整的记录。", "brief=summary (default); full=wider records.", default="brief", enum=["brief", "full"]),
+        },
+        mutating=False,
+    ),
+    tool(
+        "context_refresh", "context",
+        """
+        强制重建上下文缓存（不做增量）。用于“我怀疑数据和 Max 不一致”时：会立即重新采集
+        指定域并返回新的全局 revision。开销比 context_get 大，不要在高频循环里调用。
+        """,
+        """
+        Force a rebuild of the context caches (no incremental shortcut). Use it when the data
+        is suspected to be out of sync with Max: the given domains are re-collected and the
+        new global revision is returned. Costlier than context_get; not for tight loops.
+        """,
+        props={
+            "sections": arr("要重建的域；省略=全部。", "Domains to rebuild; omit for all."),
+        },
+        mutating=False,
+    ),
+    tool(
+        "context_stats", "context",
+        """
+        查看上下文系统自身的状态：全局 revision、各域 revision、哪些域已过期、缓存条目数、
+        构建次数、最慢构建耗时、最近错误，以及事件回调的可用性（本机实测结果，不是按版本猜的）。
+
+        每个域还带 built 与 state：未构建（unbuilt）和读取失败（failed）不是一回事，
+        不支持（unsupported）又与前两者都不同。
+        """,
+        """
+        Inspect the context system itself: global revision, per-domain revisions, which domains
+        are stale, cache entries, build count, slowest build, last error, and which event
+        callbacks this build actually offers (measured, not assumed from a version number).
+
+        Each row also carries `built` and `state`: never built (unbuilt) is not the same as a
+        failed read (failed), and neither is the same as an API this build lacks (unsupported).
+        """,
+        mutating=False,
+    ),
+    tool(
+        "context_events", "context",
+        """
+        读取最近的变更事件（选择变化、重命名、增删对象、存盘、打开、渲染开始/结束、工具写入等），
+        按时间倒序。用于回答“刚刚发生了什么”以及在场景异常时定位触发点。
+        """,
+        """
+        Read the recent change ledger (selection, rename, node add/delete, save, open, render
+        start/end, tool writes, ...), newest first. Answers "what just happened" and helps
+        localise what triggered an unexpected scene state.
+        """,
+        props={
+            "limit": i("返回条数上限（默认 50）。", "Maximum rows (default 50).", default=50, minimum=1, maximum=250),
+        },
+        mutating=False,
+    ),
+    tool(
+        "client_ui", "context",
+        """
+        控制 3ds Max 内部的 “Vino 3dsMax MCP” 面板：open 打开、close 关闭、refresh 刷新当前页。
+        面板展示的是与 MCP 工具相同的真实数据（连接、场景、选择、资源、监听、维护、日志）。
+        """,
+        """
+        Control the in-Max "Vino 3dsMax MCP" panel: open, close or refresh. The panel shows the
+        same live data the MCP tools read (connection, scene, selection, assets, monitor,
+        maintenance, log).
+        """,
+        props={
+            "action": s("open / close / refresh。", "open / close / refresh.", default="open", enum=["open", "close", "refresh"]),
+        },
+        mutating=False,
+    ),
+    tool(
+        "client_status", "context",
+        """
+        查询内置客户端状态：面板是否已打开、事件层是否在运行、当前 revision、日志路径、
+        桥接模块目录。用于确认“监听真的在跑”而不是假定它在跑。
+        """,
+        """
+        Report the built-in client state: is the panel open, is the event layer running, current
+        revision, log path and bridge directory. Confirms the monitor is actually alive instead
+        of assuming it.
+        """,
+        mutating=False,
+    ),
+])
+
+
+# ============================================================ compact hub tools
+TOOLS.extend([
+    hub_tool(
+        "bridge_hub", "system",
+        "桥接与系统综合中枢工具（聚合 33 项系统功能）：桥接状态/心跳/自检/重启、语言切换、"
+        "Max 版本/路径/系统信息、MAXScript/Python 执行、撤销/重做/Hold/Fetch、单位与时间配置、"
+        "类反射查询与通用属性读写、以及 workflow_run 工作流编排。通过 action 选择具体命令，params 传入对应参数。",
+        "Consolidated bridge & system hub (33 actions): bridge status/ping/selftest/restart, language, "
+        "Max version/paths/system info, MAXScript/Python execution, undo/redo/hold/fetch, units & time config, "
+        "class introspection, generic property read/write, and workflow_run. Pick an action and pass its params.",
+        actions=[
+            "bridge_status", "bridge_ping", "bridge_restart", "bridge_capabilities", "bridge_selftest",
+            "set_language", "get_language", "get_max_version", "get_paths", "get_system_info",
+            "list_render_engines", "execute_maxscript", "execute_python",
+            "undo_last", "redo_last", "begin_undo", "end_undo", "cancel_undo",
+            "hold_scene", "fetch_scene", "release_scene",
+            "set_units", "get_units", "set_time_config", "get_time_config",
+            "list_max_classes", "get_class_properties", "get_class_methods", "does_class_exist",
+            "list_scene_classes", "get_property_value", "set_property_value", "workflow_run",
+        ],
+        mutating=True,
+        mutates=ALL_DOMAINS,
+    ),
+    hub_tool(
+        "scene_hub", "scene",
+        "场景、图层、外部资源与场景快照综合中枢工具（聚合 18 项场景功能）：场景信息/统计、"
+        "新建/重置/打开/保存/另存为/合并、场景快照与差异对比（scene_snapshot）、"
+        "图层列表/创建/删除/属性设置/分配对象、外部资源列表/缺失检测/批量重链接。",
+        "Consolidated scene, layer, asset & snapshot hub (18 actions): scene info/statistics, "
+        "new/reset/open/save/save_as/merge, scene_snapshot & diff, layer management, and external asset tracking/relinking.",
+        actions=[
+            "scene_info", "scene_statistics", "scene_new", "scene_reset",
+            "scene_open", "scene_save", "scene_save_as", "scene_merge", "scene_snapshot",
+            "list_layers", "create_layer", "delete_layer", "set_layer_properties",
+            "assign_to_layer", "move_objects_to_new_layer",
+            "get_scene_assets", "find_missing_assets", "relink_assets",
+        ],
+        mutating=True,
+        mutates=ALL_DOMAINS,
+    ),
+    hub_tool(
+        "context_hub", "context",
+        "场景上下文缓存、变更账本与内置面板中枢工具（聚合 6 项只读上下文功能）："
+        "context_get（增量/全量 9 域快照）、context_refresh、context_stats、context_events、"
+        "client_ui（打开/关闭/刷新 Max 内面板）、client_status。",
+        "Consolidated scene-context cache, change ledger & in-Max client panel hub (6 read-only actions): "
+        "context_get, context_refresh, context_stats, context_events, client_ui, client_status.",
+        actions=[
+            "context_get", "context_refresh", "context_stats", "context_events",
+            "client_ui", "client_status",
+        ],
+        mutating=False,
+        mutates=(),
+    ),
+    hub_tool(
+        "file_hub", "files",
+        "文件系统操作中枢工具（聚合 8 项文件功能）：读取/写入文本文件、列出目录、检查文件存在、"
+        "创建目录、复制/删除文件、获取文件信息。",
+        "Consolidated file system operations hub (8 actions): read/write text files, list directory, "
+        "file exists, make directory, copy/delete file, get file info.",
+        actions=[
+            "read_text_file", "write_text_file", "list_directory", "file_exists",
+            "make_directory", "copy_file", "delete_file", "get_file_info",
+        ],
+        mutating=True,
+        mutates=("assets",),
+    ),
+])

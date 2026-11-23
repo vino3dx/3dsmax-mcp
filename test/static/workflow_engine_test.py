@@ -457,7 +457,7 @@ def check_validation_rejects_bad_input():
 
 def check_standard_workflow_definitions():
     names = sorted(wf.STANDARD_WORKFLOWS)
-    assert names == ["basic_scene", "material_look", "model_processing"]
+    assert names == ["asset_layout", "basic_scene", "material_look", "model_processing"]
     for name, spec in wf.STANDARD_WORKFLOWS.items():
         problems = wf.validate(spec, None)
         assert problems == [], (name, problems)

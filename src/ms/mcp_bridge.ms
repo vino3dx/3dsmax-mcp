@@ -95,35 +95,22 @@ fn mcpBridgeLog msg =
 )
 
 mcpBridgeModules = #(
-    "mcp_json.ms",
     "mcp_core.ms",
     "mcp_domains.ms",
-    "mcp_net.ms",
     "mcp_system.ms",
-    "mcp_scene.ms",
     "mcp_objects.ms",
-    "mcp_poly.ms",
-    "mcp_modifiers.ms",
-    "mcp_modeling_ext.ms",
+    "mcp_modeling.ms",
     "mcp_shading.ms",
-    "mcp_lights.ms",
     "mcp_animation.ms",
-    "mcp_rigging.ms",
-    "mcp_render.ms",
-    "mcp_vision.ms",
-    "mcp_bake.ms",
-    "mcp_export.ms",
-    "mcp_events.ms",
-    "mcp_context.ms",
-    "mcp_ui.ms",
-    "mcp_selftest.ms"
+    "mcp_pipeline.ms",
+    "mcp_context.ms"
 )
 
 
 /*------------------------------------------------------------ locate the files*/
 fn mcpBridgeRoot =
 (
-    if MCP_BRIDGE_DIR != undefined and doesFileExist (MCP_BRIDGE_DIR + "mcp_json.ms") do
+    if MCP_BRIDGE_DIR != undefined and doesFileExist (MCP_BRIDGE_DIR + "mcp_core.ms") do
         return MCP_BRIDGE_DIR
 
     local candidates = #()
@@ -139,7 +126,7 @@ fn mcpBridgeRoot =
 
     for c in candidates do
     (
-        if c != undefined and c != "" and doesFileExist (c + "mcp_json.ms") do
+        if c != undefined and c != "" and doesFileExist (c + "mcp_core.ms") do
         (
             MCP_BRIDGE_DIR = c
             return c
@@ -168,7 +155,7 @@ fn mcpBridgeLoad =
     root = mcpBridgeRoot()
     if root == undefined do
     (
-        mcpBridgeLog "load: cannot locate the bridge files (mcp_json.ms)"
+        mcpBridgeLog "load: cannot locate the bridge files (mcp_core.ms)"
         return false
     )
 

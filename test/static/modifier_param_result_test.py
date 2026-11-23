@@ -32,7 +32,7 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(os.path.dirname(HERE))
-SOURCE = os.path.join(REPO, "src", "ms", "mcp_modifiers.ms")
+SOURCE = os.path.join(REPO, "src", "ms", "mcp_modeling.ms")
 CORE = os.path.join(REPO, "src", "ms", "mcp_core.ms")
 
 FAILURES = []

@@ -12,7 +12,8 @@ from __future__ import annotations
 
 from typing import Dict, List
 
-from .schema import Tool, arr, b, i, n, num3, s, tool
+from .domains import OBJECTS_AND_SCENE
+from .schema import Tool, arr, b, hub_tool, i, n, num3, s, tool
 
 TOOLS: List[Tool] = []
 
@@ -719,3 +720,187 @@ TOOLS.append(tool(
             default=0, minimum=0, maximum=1),
     },
 ))
+
+
+# ============================================================ asset placement
+TOOLS.append(tool(
+    "place_on_surface", "objects",
+    "把对象沿 -Z 向下吸附到支撑表面（地形/地板/桌面）或指定高度平面。"
+    "默认按世界包围盒底面（min.z）贴合，避免枢轴在中心导致模型半截陷进地里；"
+    "支持 offset 嵌入/抬高微调与 alignNormal 贴合坡度法线。",
+    "Drop objects along -Z onto a surface node (terrain, floor, tabletop) or a ground Z plane. "
+    "Aligns by world bounding-box bottom (min.z) by default so centered pivots do not sink "
+    "into the ground; supports offset and alignNormal for slope matching.",
+    props={
+        "objects": arr("要落位的对象名列表；省略则使用当前选择。",
+                       "Object names to place; omit for current selection.", items="string"),
+        "surface": s("支撑表面对象名；省略则落到 groundZ 指定的水平面。",
+                     "Target surface node name; omit to drop onto the groundZ horizontal plane."),
+        "groundZ": n("未指定 surface 时的目标水平面 Z 高度，默认 0.0。",
+                     "Target ground plane Z height when surface is omitted, default 0.0.", default=0.0),
+        "offset": n("落位后的 Z 轴偏移量（正数抬高、负数略微嵌入防浮空），默认 0.0。",
+                    "Vertical offset after landing (positive lifts, negative embeds slightly), default 0.0.",
+                    default=0.0),
+        "alignNormal": b("指定 surface 时是否将对象 Z 轴对齐表面命中点法线（贴合坡度），默认否。",
+                         "Align the object's up (+Z) axis to the surface hit normal, default false.",
+                         default=False),
+        "usePivot": b("是否按枢轴点而不是包围盒底面（min.z）贴合，默认否。",
+                      "Land the object's pivot instead of its world bounding-box bottom (min.z), default false.",
+                      default=False),
+    },
+))
+
+TOOLS.append(tool(
+    "place_relative", "objects",
+    "把对象精准摆放到目标对象包围盒的指定方位（top/bottom/left/right/front/back/center）。"
+    "自动读取双方世界包围盒尺寸并计算贴合坐标，适合“花瓶放桌上”“椅子放桌前”等资产摆放，无需手动算坐标。",
+    "Place objects relative to a target object's world bounding box "
+    "(top/bottom/left/right/front/back/center). Computes contact coordinates from both bounds "
+    "automatically so you never have to hand-calculate dimensions.",
+    props={
+        "objects": arr("要摆放的对象名列表；省略则使用当前选择。",
+                       "Object names to place; omit for current selection.", items="string"),
+        "target": s("参照目标对象名。", "Target reference object name."),
+        "side": s("相对方位：top(+Z)/bottom(-Z)/left(-X)/right(+X)/front(-Y)/back(+Y)/center，默认 top。",
+                  "Relative side: top(+Z)/bottom(-Z)/left(-X)/right(+X)/front(-Y)/back(+Y)/center, default top.",
+                  enum=["top", "bottom", "left", "right", "front", "back", "center"], default="top"),
+        "gap": n("两对象表面之间的间距（正数留缝、负数嵌入），默认 0.0。",
+                 "Clearance gap between bounding boxes (negative overlaps), default 0.0.", default=0.0),
+        "alignCenter": b("是否同时将非主轴方向（如 top 时的 X/Y）对齐目标包围盒中心，默认是。",
+                         "Also center-align the other two axes to the target bounds, default true.",
+                         default=True),
+    },
+    required=["target"],
+))
+
+TOOLS.append(tool(
+    "distribute_along_spline", "objects",
+    "沿着样条线（路径/道路/围栏线）均匀或按间距克隆摆放资产。"
+    "支持自动沿切线朝向、绕 Z 轴随机旋转（不会翻倒）、随机缩放，并可同时吸附到地面 surface。",
+    "Clone and distribute asset prototypes along a spline shape by count or spacing. "
+    "Supports tangent alignment, yaw-only random rotation (keeps assets upright), random scale, "
+    "and optional terrain surface projection.",
+    props={
+        "objects": arr("原型对象名列表（多个原型会轮流或随机使用）；省略则使用当前选择。",
+                       "Prototype object names to distribute; omit for current selection.", items="string"),
+        "spline": s("目标样条线（Shape）对象名。", "Target spline shape node name."),
+        "count": i("摆放总数量；与 spacing 二选一，均省略默认 10。",
+                   "Total number of instances; omit to use spacing or default 10.", minimum=1, maximum=500),
+        "spacing": n("按世界单位间距自动计算数量（指定 count 时优先用 count）。",
+                     "Distance spacing along the spline (ignored if count is provided).", minimum=0.001),
+        "followTangent": b("是否让对象朝向随样条切线方向旋转（绕 Z 轴偏航），默认是。",
+                           "Rotate each instance around Z to follow the spline tangent, default true.",
+                           default=True),
+        "yawOffset": n("切线朝向之外的额外 Z 轴偏转角（度），默认 0.0。",
+                       "Additional Z yaw offset in degrees, default 0.0.", default=0.0),
+        "randomYaw": n("绕 Z 轴随机旋转幅度（±度，0 表示不随机），不会翻倒对象，默认 0.0。",
+                       "Random Z-only yaw jitter in degrees (+/-), keeps assets upright, default 0.0.",
+                       default=0.0, minimum=0.0, maximum=180.0),
+        "randomScale": b("是否启用随机等比缩放，默认否。", "Enable uniform random scale, default false.", default=False),
+        "scaleMin": n("随机缩放最小值，默认 0.85。", "Minimum random scale, default 0.85.", default=0.85, minimum=0.01),
+        "scaleMax": n("随机缩放最大值，默认 1.15。", "Maximum random scale, default 1.15.", default=1.15, minimum=0.01),
+        "surface": s("可选地面/地形对象名；若提供则将每个实例底面贴合到该表面。",
+                     "Optional ground surface node to drop each instance onto."),
+        "offset": n("贴合表面时的 Z 偏移量，默认 0.0。", "Z offset when projecting onto surface, default 0.0.", default=0.0),
+        "seed": i("随机种子，默认 12345。", "Random seed, default 12345.", default=12345),
+    },
+    required=["spline"],
+))
+
+TOOLS.append(tool(
+    "check_overlaps", "objects",
+    "只读检测指定对象与场景其他对象之间是否存在世界包围盒（AABB）穿模/重叠。"
+    "摆放资产后调用，可快速排查哪些物体互相穿透；可用 ignore 排除地面等支撑物。",
+    "Read-only check for world bounding-box (AABB) intersections between objects and the scene. "
+    "Use after asset placement to spot intersecting models; exclude floors/terrain via ignore.",
+    props={
+        "objects": arr("要检测的对象名列表；省略则检测当前选择（若也为空则检测全部几何体）。",
+                       "Objects to check; omit for selection (or all geometry if selection is empty).",
+                       items="string"),
+        "against": arr("要对比的目标对象列表；省略则对比场景中其他所有可见几何体。",
+                       "Target objects to check against; omit to check against all visible geometry.",
+                       items="string"),
+        "ignore": arr("忽略的对象名列表（例如地面/墙体等支撑对象）。",
+                      "Object names to ignore (such as terrain/floor).", items="string"),
+        "tolerance": n("穿透容差（重叠深度大于该值才算穿模，避免紧贴接触面误报），默认 0.01。",
+                       "Minimum penetration depth to report as an overlap (avoids flush contacts), default 0.01.",
+                       default=0.01, minimum=0.0),
+        "includeHidden": b("是否包含隐藏对象，默认否。", "Include hidden objects, default false.", default=False),
+    },
+    mutating=False,
+))
+
+
+# ============================================================ compact hub tools
+TOOLS.extend([
+    hub_tool(
+        "create_hub", "objects",
+        "几何体与样条线创建综合中枢工具（聚合 25 项创建与样条点读写功能）："
+        "支持全部基础几何体（Box/Sphere/Cylinder/Cone/Torus/Teapot/Plane/Tube/Pyramid/Hedra/GeoSphere/"
+        "ChamferBox/Capsule 及通用 create_primitive）与全部样条图形（Line/Rectangle/Circle/Ellipse/NGon/"
+        "Donut/Arc/Helix/Text）以及样条点读写（spline_get_points/spline_set_points）。",
+        "Consolidated primitive & spline creation hub (25 actions): all standard/extended primitives, "
+        "generic create_primitive, all spline shapes, and spline_get_points / spline_set_points.",
+        actions=[
+            "create_primitive", "create_box", "create_sphere", "create_cylinder", "create_cone",
+            "create_torus", "create_teapot", "create_plane", "create_tube", "create_pyramid",
+            "create_hedra", "create_geosphere", "create_chamferbox", "create_capsule",
+            "create_line", "create_rectangle", "create_circle", "create_ellipse", "create_ngon",
+            "create_donut", "create_arc", "create_helix", "create_text",
+            "spline_get_points", "spline_set_points",
+        ],
+        mutating=True,
+        mutates=OBJECTS_AND_SCENE,
+    ),
+    hub_tool(
+        "transform_hub", "objects",
+        "空间变换、克隆阵列与资产自动摆放综合中枢工具（聚合 13 项变换与布局功能）："
+        "移动/旋转/缩放（transform_object）、对齐、镜像、枢轴点设置、重置变换、网格吸附、"
+        "随机散布（scatter_objects）、克隆（clone_objects）、阵列（array_objects）、"
+        "表面吸附（place_on_surface）、相对包围盒摆放（place_relative）、沿样条分布（distribute_along_spline）、"
+        "以及穿模重叠检测（check_overlaps）。",
+        "Consolidated transform, clone, array & asset placement hub (13 actions): transform_object, "
+        "align_objects, mirror_object, set_pivot, reset_transform, snap_objects_to_grid, scatter_objects, "
+        "clone_objects, array_objects, place_on_surface, place_relative, distribute_along_spline, check_overlaps.",
+        actions=[
+            "transform_object", "align_objects", "mirror_object", "set_pivot", "reset_transform",
+            "snap_objects_to_grid", "scatter_objects", "clone_objects", "array_objects",
+            "place_on_surface", "place_relative", "distribute_along_spline", "check_overlaps",
+        ],
+        mutating=True,
+        mutates=OBJECTS_AND_SCENE,
+    ),
+    hub_tool(
+        "select_hub", "objects",
+        "对象选择、查询与显隐冻结综合中枢工具（聚合 14 项选择与状态功能）："
+        "列出对象（list_objects）、查找对象（find_objects）、对象详情（get_object_info）、计数（count_objects）、"
+        "获取/设置选择（get_selection/select_objects/deselect_all/select_all/select_by_superclass）、"
+        "以及隐藏/显示/冻结/解冻（hide_objects/unhide_all/unhide_objects/freeze_objects/unfreeze_all）。",
+        "Consolidated object selection, query & visibility/freeze hub (14 actions): list/find/info/count objects, "
+        "selection management, and hide/unhide/freeze/unfreeze.",
+        actions=[
+            "list_objects", "find_objects", "get_object_info", "count_objects",
+            "get_selection", "select_objects", "deselect_all", "select_all", "select_by_superclass",
+            "hide_objects", "unhide_all", "unhide_objects", "freeze_objects", "unfreeze_all",
+        ],
+        mutating=True,
+        mutates=OBJECTS_AND_SCENE,
+    ),
+    hub_tool(
+        "hierarchy_hub", "objects",
+        "父子层级、成组、重命名、删除与布尔运算综合中枢工具（聚合 13 项层级与生命周期功能）："
+        "父子链接/解绑/层级树查询、成组/解组/开组/关组、重命名（rename_object）、删除（delete_objects）、"
+        "样条合并（attach_objects）、元素拆分（detach_elements）、以及布尔运算（boolean_operation/proboolean）。",
+        "Consolidated hierarchy, grouping, lifecycle & boolean hub (13 actions): parent/unparent/get_hierarchy, "
+        "group/ungroup/open_group/close_group, rename_object, delete_objects, attach_objects, detach_elements, "
+        "boolean_operation, proboolean.",
+        actions=[
+            "parent_objects", "unparent_objects", "get_hierarchy",
+            "group_objects", "ungroup_objects", "open_group", "close_group",
+            "rename_object", "delete_objects", "attach_objects", "detach_elements",
+            "boolean_operation", "proboolean",
+        ],
+        mutating=True,
+        mutates=("scene", "objects", "selection", "assets"),
+    ),
+])

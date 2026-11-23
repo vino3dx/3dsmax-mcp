@@ -41,7 +41,7 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(os.path.dirname(HERE))
-UI = os.path.join(REPO, "src", "ms", "mcp_ui.ms")
+UI = os.path.join(REPO, "src", "ms", "mcp_context.ms")
 CATALOG = os.path.join(REPO, "src", "python", "maxmcp", "catalog", "core.py")
 
 FAILURES = []

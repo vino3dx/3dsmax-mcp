@@ -145,7 +145,7 @@ For production work, ask the agent to verify important changes by reading the re
 
 ## Tool coverage
 
-The current GitHub README/catalog snapshot reports **391 tools across 9 categories**. Treat this as a repository snapshot, not as a guarantee that every tool has passed live validation. You can inspect the tool list exposed by your installed version:
+The current GitHub README/catalog snapshot reports **419 tools across 9 categories**. Treat this as a repository snapshot, not as a guarantee that every tool has passed live validation. You can inspect the tool list exposed by your installed version:
 
 ```bash
 python -m maxmcp --list-tools
@@ -154,15 +154,15 @@ python -m maxmcp --list-profiles
 
 | Category | Reported tools | Main areas |
 | --- | ---: | --- |
-| `system` | 33 | Bridge status, diagnostics, execution utilities, undo-related controls, units and time |
-| `scene` | 18 | Scene operations, layers, assets, missing-texture relinking |
-| `files` | 8 | File and directory operations |
-| `objects` | 61 | Primitives, transforms, hierarchy, groups, selection, cloning, Boolean operations |
-| `modeling` | 83 | Editable Poly operations, modifier stack, modeling tools |
-| `shading` | 69 | Materials, maps, UVW, lights, cameras, environment |
-| `animation` | 59 | Keyframes, controllers, constraints, rigging, skinning, Morpher |
-| `pipeline` | 54 | Rendering, baking, import/export, Vision capture tools |
-| `context` | 6 | Scene context, events, statistics, client UI/status |
+| `system` | 34 | Bridge status, diagnostics, execution utilities, undo-related controls, units and time |
+| `scene` | 19 | Scene operations, layers, assets, missing-texture relinking |
+| `files` | 9 | File and directory operations |
+| `objects` | 69 | Primitives, transforms, placement, overlap check, hierarchy, groups, selection, cloning, Booleans |
+| `modeling` | 87 | Editable Poly operations, modifier stack, modeling tools |
+| `shading` | 73 | Materials, maps, UVW, lights, cameras, environment |
+| `animation` | 63 | Keyframes, controllers, constraints, rigging, skinning, Morpher |
+| `pipeline` | 58 | Rendering, baking, import/export, Vision capture tools |
+| `context` | 7 | Scene context, events, statistics, client UI/status |
 
 Counts can change as the catalog evolves. The installed catalog and `--list-tools` output are authoritative for a particular checkout.
 

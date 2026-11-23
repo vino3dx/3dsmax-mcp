@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from typing import List
 
-from .schema import Tool, arr, b, i, n, s, tool
+from .schema import Tool, arr, b, hub_tool, i, n, s, tool
 
 TOOLS: List[Tool] = []
 
@@ -748,3 +748,80 @@ TOOLS.append(tool(
     "depending on a specific format instead of guessing.",
     mutating=False,
 ))
+
+
+# ============================================================ compact hub tools
+TOOLS.extend([
+    hub_tool(
+        "render_hub", "pipeline",
+        "渲染器配置、渲染执行与渲染元素综合中枢工具（聚合 20 项渲染功能）："
+        "切换/查询生产渲染器、读取/设置渲染分辨率/输出路径/采样质量/帧范围、保存/加载渲染预设（.rps）、"
+        "单帧渲染/指定多帧渲染/动画序列渲染/指定相机渲染/区域渲染/预览动画/批量排队渲染（render_batch）、"
+        "以及渲染元素（ZDepth/Normal/ObjectID/Alpha 等）列表/添加/移除/设置输出路径。",
+        "Consolidated renderer settings, rendering & render elements hub (20 actions): "
+        "render_set_engine/get_engine/get_settings/set_resolution/set_output/set_quality/set_frame_range/"
+        "save_preset/load_preset, render_still/frames/animation/camera_view/region/preview/batch, "
+        "and render_elements_list/element_add/element_remove/element_set_output.",
+        actions=[
+            "render_set_engine", "render_get_engine", "render_get_settings",
+            "render_set_resolution", "render_set_output", "render_set_quality",
+            "render_set_frame_range", "render_save_preset", "render_load_preset",
+            "render_still", "render_frames", "render_animation", "render_camera_view",
+            "render_region", "render_preview", "render_batch",
+            "render_elements_list", "render_element_add", "render_element_remove",
+            "render_element_set_output",
+        ],
+        mutating=True,
+        mutates=("render",),
+    ),
+    hub_tool(
+        "vision_viewport_hub", "pipeline",
+        "视觉反馈（直接回传图像块）与视口控制综合中枢工具（聚合 11 项视觉与视口功能）："
+        "抓取当前视口图像（vision_capture）、多视图标准巡检图像（vision_views）、低分辨率着色渲染预览图（vision_preview）、"
+        "视口截图存盘（viewport_capture/viewport_capture_all）、切换视图方向/布局/着色模式、"
+        "缩放适配（viewport_zoom_extents）、视口统计与网格显隐。",
+        "Consolidated visual feedback (MCP image blocks) & viewport control hub (11 actions): "
+        "vision_capture, vision_views, vision_preview, viewport_capture, viewport_capture_all, "
+        "viewport_set_view, viewport_set_layout, viewport_zoom_extents, viewport_set_shading, "
+        "viewport_stats, viewport_toggle_grid.",
+        actions=[
+            "vision_capture", "vision_views", "vision_preview",
+            "viewport_capture", "viewport_capture_all", "viewport_set_view",
+            "viewport_set_layout", "viewport_zoom_extents", "viewport_set_shading",
+            "viewport_stats", "viewport_toggle_grid",
+        ],
+        mutating=False,
+        mutates=(),
+    ),
+    hub_tool(
+        "bake_hub", "pipeline",
+        "Render To Texture / Bake To Texture 纹理烘焙综合中枢工具（聚合 7 项烘焙功能）："
+        "烘焙材质贴图（bake_texture）、环境光遮蔽（bake_ao）、高低模法线贴图（bake_normals）、"
+        "静态光照（bake_lighting）、全局烘焙输出配置（bake_set_output/bake_get_settings）以及自定义元素列表烘焙（bake_objects）。",
+        "Consolidated texture baking (RTT / BTT) hub (7 actions): bake_texture, bake_ao, bake_normals, "
+        "bake_lighting, bake_set_output, bake_objects, bake_get_settings.",
+        actions=[
+            "bake_texture", "bake_ao", "bake_normals", "bake_lighting",
+            "bake_set_output", "bake_objects", "bake_get_settings",
+        ],
+        mutating=True,
+        mutates=("materials", "assets"),
+    ),
+    hub_tool(
+        "export_import_hub", "pipeline",
+        "跨引擎资产导出与导入综合中枢工具（聚合 16 项导出与导入功能）："
+        "导出 FBX（含 Unity/Unreal/Maya 预设）/OBJ/glTF/USD/Alembic(.abc)/STL/3DS、"
+        "按引擎一键导出（export_engine_preset）、按扩展名导出选择（export_selection）、查询上次导出报告，"
+        "以及导入 FBX/OBJ/glTF/USD、合并文件（import_merge_scene）与探测本机可用格式插件（import_get_formats）。",
+        "Consolidated asset export & import hub (16 actions): export_fbx/obj/gltf/usd/abc/stl/3ds/"
+        "engine_preset/selection/get_last_report, plus import_fbx/obj/gltf/usd/merge_scene/get_formats.",
+        actions=[
+            "export_fbx", "export_obj", "export_gltf", "export_usd", "export_abc",
+            "export_stl", "export_3ds", "export_engine_preset", "export_selection",
+            "export_get_last_report", "import_fbx", "import_obj", "import_gltf",
+            "import_usd", "import_merge_scene", "import_get_formats",
+        ],
+        mutating=True,
+        mutates=("scene", "objects", "selection", "materials", "assets", "project"),
+    ),
+])

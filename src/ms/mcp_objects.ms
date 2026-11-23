@@ -25,6 +25,8 @@ global mcpH_freeze_objects, mcpH_unfreeze_all, mcpH_rename_object, mcpH_delete_o
 global mcpH_clone_objects, mcpH_array_objects, mcpH_attach_objects, mcpH_detach_elements
 global mcpH_count_objects, mcpH_boolean_operation, mcpH_proboolean
 global mcpBooleanOpCode, mcpBooleanOpName, mcpBooleanRun, mcpBooleanPayload
+global mcpH_place_on_surface, mcpH_place_relative, mcpH_distribute_along_spline, mcpH_check_overlaps
+global mcpDropNodeToSurface, mcpPoint3ToArr
 global mcpObjL
 
 
@@ -34,6 +36,12 @@ global mcpObjL
 fn mcpObjL zh en =
 (
     if mcpLang == "en" then en else zh
+)
+
+fn mcpPoint3ToArr pt =
+(
+    if pt == undefined then #(0.0, 0.0, 0.0)
+    else #((pt.x as float), (pt.y as float), (pt.z as float))
 )
 
 
@@ -462,6 +470,8 @@ fn mcpH_mirror_object params =
             local mirrored = n
             if cloneType == "copy" then mirrored = copy n
             else if cloneType == "instance" then mirrored = instance n
+            if mirrored == undefined or not (isValidNode mirrored) do
+                mcpFail "err.bad_value" a1:"clone returned no node"
 
             local mp = mirrored.position
             if axis == "x" then
@@ -480,9 +490,11 @@ fn mcpH_mirror_object params =
                 try ( mirrored.scale = [mirrored.scale.x, mirrored.scale.y, -mirrored.scale.z] ) catch()
             )
             mirrored.position = mp
+            if (distance mirrored.position mp) > 0.001 do
+                mcpFail "err.bad_value" a1:"mirrored position did not stick"
         )
-        catch ( ok = false )
-        if ok then append applied nm else append failures nm
+        catch ( ok = false; append failures (nm + ": " + (getCurrentException() as string)) )
+        if ok do append applied nm
     )
     mcpRedraw()
     local p = #()
@@ -1452,6 +1464,338 @@ fn mcpH_proboolean params =
 )
 
 
+/*------------------------------------------------------------ asset placement*/
+fn mcpDropNodeToSurface node surfaceNode groundZ offset alignNormal usePivot =
+(
+    local pos = node.position
+    local hitZ = groundZ
+    local hitNormal = [0, 0, 1]
+    if surfaceNode != undefined then
+    (
+        if node == surfaceNode do mcpFail "err.bad_value" a1:"cannot place surface onto itself"
+        local rayHit = undefined
+        try ( rayHit = intersectRay surfaceNode (ray [pos.x, pos.y, 1.0e6] [0, 0, -1]) ) catch ( rayHit = undefined )
+        if rayHit == undefined do mcpFail "err.bad_value" a1:("ray missed surface " + surfaceNode.name)
+        hitZ = rayHit.pos.z
+        hitNormal = rayHit.dir
+    )
+
+    if alignNormal and surfaceNode != undefined do
+    (
+        local zAxis = normalize hitNormal
+        local upRef = if (abs zAxis.z) > 0.99 then [0, 1, 0] else [0, 0, 1]
+        local xAxis = normalize (cross upRef zAxis)
+        local yAxis = normalize (cross zAxis xAxis)
+        local tm = matrix3 xAxis yAxis zAxis pos
+        local s = node.scale
+        node.transform = tm
+        node.scale = s
+    )
+
+    local targetZ = hitZ + offset
+    if not usePivot do
+    (
+        local bMin = node.min
+        local pivotToBottom = node.position.z - bMin.z
+        targetZ = targetZ + pivotToBottom
+    )
+    node.position = [pos.x, pos.y, targetZ]
+
+    -- Read-back verification
+    local actualZ = if usePivot then node.position.z else node.min.z
+    local expectedZ = hitZ + offset
+    if (abs (actualZ - expectedZ)) > 0.01 do
+        mcpFail "err.bad_value" a1:("z read-back " + (actualZ as string) + " != " + (expectedZ as string))
+    #(hitZ, actualZ)
+)
+
+fn mcpH_place_on_surface params =
+(
+    local nodes = mcpResolveNodes (mcpArr params "objects") fallbackToSelection:true
+    local surfaceName = mcpStr params "surface" default:""
+    local surfaceNode = undefined
+    if surfaceName != "" do
+    (
+        surfaceNode = mcpResolveNode surfaceName
+        if surfaceNode == undefined do mcpFail "err.node_not_found" a1:surfaceName
+    )
+    local groundZ = mcpNum params "groundZ" default:0.0
+    local offset = mcpNum params "offset" default:0.0
+    local alignNormal = mcpBool params "alignNormal" default:false
+    local usePivot = mcpBool params "usePivot" default:false
+
+    local applied = #()
+    local placed = #()
+    local failures = #()
+    for n in nodes do
+    (
+        local ok = true
+        local res = undefined
+        try ( res = mcpDropNodeToSurface n surfaceNode groundZ offset alignNormal usePivot )
+        catch ( ok = false; append failures (n.name + ": " + (getCurrentException() as string)) )
+        if ok do
+        (
+            append applied n.name
+            local row = #()
+            mcpPair row "name" n.name
+            mcpPair row "surfaceZ" res[1]
+            mcpPair row "finalZ" res[2]
+            mcpPair row "position" (mcpPoint3ToArr n.position)
+            append placed (mcpObj row)
+        )
+    )
+
+    mcpRedraw()
+    local p = #()
+    mcpPair p "success" (failures.count == 0 and applied.count > 0)
+    mcpPair p "applied" applied
+    mcpPair p "placed" placed
+    mcpPair p "failures" failures
+    mcpPair p "message" (mcpMsg "msg.ok")
+    mcpObj p
+)
+
+fn mcpH_place_relative params =
+(
+    local nodes = mcpResolveNodes (mcpArr params "objects") fallbackToSelection:true
+    local targetName = mcpReqStr params "target"
+    local target = mcpResolveNode targetName
+    if target == undefined do mcpFail "err.node_not_found" a1:targetName
+    local side = toLower (mcpStr params "side" default:"top")
+    local gap = mcpNum params "gap" default:0.0
+    local alignCenter = mcpBool params "alignCenter" default:true
+
+    local tMin = target.min
+    local tMax = target.max
+    local tCenter = (tMin + tMax) * 0.5
+
+    local applied = #()
+    local placed = #()
+    local failures = #()
+    for n in nodes do
+    (
+        local ok = true
+        try
+        (
+            if n == target do mcpFail "err.bad_value" a1:"cannot place target relative to itself"
+            local nMin = n.min
+            local nMax = n.max
+            local nCenter = (nMin + nMax) * 0.5
+            local dx = if alignCenter then (tCenter.x - nCenter.x) else 0.0
+            local dy = if alignCenter then (tCenter.y - nCenter.y) else 0.0
+            local dz = if alignCenter then (tCenter.z - nCenter.z) else 0.0
+
+            if side == "top" then dz = (tMax.z + gap) - nMin.z
+            else if side == "bottom" then dz = (tMin.z - gap) - nMax.z
+            else if side == "right" then dx = (tMax.x + gap) - nMin.x
+            else if side == "left" then dx = (tMin.x - gap) - nMax.x
+            else if side == "back" then dy = (tMax.y + gap) - nMin.y
+            else if side == "front" then dy = (tMin.y - gap) - nMax.y
+            else if side == "center" then ( dx = tCenter.x - nCenter.x; dy = tCenter.y - nCenter.y; dz = tCenter.z - nCenter.z )
+            else mcpFail "err.invalid_argument" a1:side a2:"unknown side"
+
+            local expectedPos = n.position + [dx, dy, dz]
+            n.position = expectedPos
+            if (distance n.position expectedPos) > 0.01 do
+                mcpFail "err.bad_value" a1:"position read-back mismatch"
+
+            append applied n.name
+            local row = #()
+            mcpPair row "name" n.name
+            mcpPair row "position" (mcpPoint3ToArr n.position)
+            mcpPair row "min" (mcpPoint3ToArr n.min)
+            mcpPair row "max" (mcpPoint3ToArr n.max)
+            append placed (mcpObj row)
+        )
+        catch ( ok = false; append failures (n.name + ": " + (getCurrentException() as string)) )
+    )
+
+    mcpRedraw()
+    local p = #()
+    mcpPair p "success" (failures.count == 0 and applied.count > 0)
+    mcpPair p "target" target.name
+    mcpPair p "side" side
+    mcpPair p "applied" applied
+    mcpPair p "placed" placed
+    mcpPair p "failures" failures
+    mcpPair p "message" (mcpMsg "msg.ok")
+    mcpObj p
+)
+
+fn mcpH_distribute_along_spline params =
+(
+    local nodes = mcpResolveNodes (mcpArr params "objects") fallbackToSelection:true
+    local splineName = mcpReqStr params "spline"
+    local sp = mcpResolveNode splineName
+    if sp == undefined do mcpFail "err.node_not_found" a1:splineName
+    if (superclassof sp) != shape do mcpFail "err.invalid_argument" a1:splineName a2:"target is not a spline shape"
+
+    local count = mcpInt params "count" default:0
+    local spacing = mcpNum params "spacing" default:0.0
+    if count <= 0 then
+    (
+        if spacing > 0.0 then
+        (
+            local len = 0.0
+            try ( len = curveLength sp 1 ) catch ( len = 0.0 )
+            count = if len > 0.0 then ((floor (len / spacing)) as integer + 1) else 10
+        )
+        else count = 10
+    )
+    if count < 1 do count = 1
+    if count > 500 do count = 500
+
+    local followTangent = mcpBool params "followTangent" default:true
+    local yawOffset = mcpNum params "yawOffset" default:0.0
+    local randomYaw = mcpNum params "randomYaw" default:0.0
+    local doScale = mcpBool params "randomScale" default:false
+    local sMin = mcpNum params "scaleMin" default:0.85
+    local sMax = mcpNum params "scaleMax" default:1.15
+    local surfaceName = mcpStr params "surface" default:""
+    local surfaceNode = undefined
+    if surfaceName != "" do
+    (
+        surfaceNode = mcpResolveNode surfaceName
+        if surfaceNode == undefined do mcpFail "err.node_not_found" a1:surfaceName
+    )
+    local offset = mcpNum params "offset" default:0.0
+    local seedVal = mcpInt params "seed" default:12345
+
+    local isClosedCurve = false
+    try ( isClosedCurve = isClosed sp 1 ) catch ( isClosedCurve = false )
+
+    seed seedVal
+    local created = #()
+    local failures = #()
+    for i = 1 to count do
+    (
+        local proto = nodes[((i - 1) mod nodes.count) + 1]
+        local t = 0.0
+        if count > 1 do
+        (
+            t = if isClosedCurve then ((i - 1) as float) / (count as float) else ((i - 1) as float) / ((count - 1) as float)
+        )
+        try
+        (
+            local pt = interpCurve3D sp 1 t pathParam:true
+            local obj = copy proto
+            if obj == undefined or not (isValidNode obj) do mcpFail "err.bad_value" a1:"copy returned no node"
+
+            local yaw = yawOffset
+            if followTangent do
+            (
+                local tang = tangentCurve3D sp 1 t pathParam:true
+                yaw = (atan2 tang.y tang.x) + yawOffset
+            )
+            if randomYaw > 0.0 do yaw = yaw + (random (-randomYaw) randomYaw)
+            obj.rotation = (eulerAngles 0 0 yaw) as quat
+            if doScale do
+            (
+                local sc = random sMin sMax
+                obj.scale = [sc, sc, sc]
+            )
+            obj.position = pt
+            if surfaceNode != undefined do
+                mcpDropNodeToSurface obj surfaceNode 0.0 offset false false
+            else if offset != 0.0 do
+                obj.position = [pt.x, pt.y, pt.z + offset]
+
+            if not (isValidNode obj) do mcpFail "err.bad_value" a1:"instance invalid after placement"
+            append created obj.name
+        )
+        catch ( append failures ("instance " + (i as string) + ": " + (getCurrentException() as string)) )
+    )
+
+    mcpRedraw()
+    local p = #()
+    mcpPair p "success" (failures.count == 0 and created.count > 0)
+    mcpPair p "spline" sp.name
+    mcpPair p "created" created
+    mcpPair p "count" created.count
+    mcpPair p "failures" failures
+    mcpPair p "message" (mcpMsg "msg.created" a1:(created.count as string))
+    mcpObj p
+)
+
+fn mcpH_check_overlaps params =
+(
+    local reqNames = mcpArr params "objects"
+    local againstNames = mcpArr params "against"
+    local ignoreNames = mcpArr params "ignore"
+    local tol = mcpNum params "tolerance" default:0.01
+    local includeHidden = mcpBool params "includeHidden" default:false
+
+    local ignoreSet = #()
+    for nm in ignoreNames do append ignoreSet (toLower (nm as string))
+
+    local targets = #()
+    if reqNames.count > 0 then
+        targets = mcpResolveNodes reqNames fallbackToSelection:false
+    else if selection.count > 0 then
+        targets = for n in selection collect n
+    else
+        targets = for n in geometry where (includeHidden or not n.isHiddenInVpt) collect n
+
+    local pool = #()
+    if againstNames.count > 0 then
+        pool = mcpResolveNodes againstNames fallbackToSelection:false
+    else
+        pool = for n in geometry where (includeHidden or not n.isHiddenInVpt) collect n
+
+    local filteredTargets = #()
+    for t in targets do
+    (
+        if (findItem ignoreSet (toLower t.name)) == 0 do append filteredTargets t
+    )
+    local filteredPool = #()
+    for q in pool do
+    (
+        if (findItem ignoreSet (toLower q.name)) == 0 do append filteredPool q
+    )
+
+    local overlaps = #()
+    local seenPairs = #()
+    local cap = 100
+    for a in filteredTargets do
+    (
+        local aMin = a.min
+        local aMax = a.max
+        for b in filteredPool do
+        (
+            if a != b and overlaps.count < cap do
+            (
+                local pairKey = if a.handle < b.handle then ((a.handle as string) + ":" + (b.handle as string)) else ((b.handle as string) + ":" + (a.handle as string))
+                if (findItem seenPairs pairKey) == 0 do
+                (
+                    local bMin = b.min
+                    local bMax = b.max
+                    local ox = (amin aMax.x bMax.x) - (amax aMin.x bMin.x)
+                    local oy = (amin aMax.y bMax.y) - (amax aMin.y bMin.y)
+                    local oz = (amin aMax.z bMax.z) - (amax aMin.z bMin.z)
+                    if ox > tol and oy > tol and oz > tol do
+                    (
+                        append seenPairs pairKey
+                        local row = #()
+                        mcpPair row "a" a.name
+                        mcpPair row "b" b.name
+                        mcpPair row "penetration" #(ox, oy, oz)
+                        append overlaps (mcpObj row)
+                    )
+                )
+            )
+        )
+    )
+
+    local p = #()
+    mcpPair p "checkedObjects" filteredTargets.count
+    mcpPair p "overlapCount" overlaps.count
+    mcpPair p "overlaps" overlaps
+    mcpPair p "tolerance" tol
+    mcpPair p "message" (mcpMsg "msg.ok")
+    mcpObj p
+)
+
+
 /*------------------------------------------------------------------ registry*/
 fn mcpRegisterObjects =
 (
@@ -1529,6 +1873,12 @@ fn mcpRegisterObjects =
     -- booleans
     mcpRegister "boolean_operation" mcpH_boolean_operation label:"Boolean Operation"
     mcpRegister "proboolean" mcpH_proboolean label:"ProBoolean"
+
+    -- asset placement & spatial check
+    mcpRegister "place_on_surface" mcpH_place_on_surface label:"Place On Surface"
+    mcpRegister "place_relative" mcpH_place_relative label:"Place Relative"
+    mcpRegister "distribute_along_spline" mcpH_distribute_along_spline label:"Distribute Along Spline"
+    mcpRegister "check_overlaps" mcpH_check_overlaps undoable:false label:"Check Overlaps"
     ok
 )
 

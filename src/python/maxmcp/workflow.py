@@ -916,9 +916,52 @@ MATERIAL_LOOK = Workflow(
 )
 
 
+ASSET_LAYOUT = Workflow(
+    name="asset_layout",
+    description_zh="创建地面与桌面资产，演示贴地落位（place_on_surface）、相对方位摆放（place_relative）与穿模检测（check_overlaps），每步均通过包围盒空间回读校验。",
+    description_en="Build a floor-and-table layout demonstrating surface drop (place_on_surface), "
+                   "bounding-box relative placement (place_relative) and AABB overlap verification (check_overlaps).",
+    steps=[
+        _step(1, "ground", "create_plane",
+              {"name": "LayoutGround", "length": 300, "width": 300, "position": [0, 0, 0]},
+              {"kind": "exists", "objects": ["LayoutGround"]}),
+        _step(2, "table", "create_box",
+              {"name": "LayoutTable", "length": 80, "width": 120, "height": 40, "position": [0, 0, 25]},
+              {"kind": "exists", "objects": ["LayoutTable"]},
+              depends_on=["ground"]),
+        _step(3, "drop_table", "place_on_surface",
+              {"objects": ["LayoutTable"], "surface": "LayoutGround"},
+              {"kind": "grounded", "object": "LayoutTable", "surface": "LayoutGround"},
+              depends_on=["table"],
+              note_zh="把悬空的桌子沿 -Z 贴合到地面顶面，并用包围盒底面回读核对。",
+              note_en="Drop the floating table onto LayoutGround and verify via boundingBox.min.z."),
+        _step(4, "crate", "create_box",
+              {"name": "LayoutCrate", "length": 24, "width": 24, "height": 24, "position": [90, 90, 0]},
+              {"kind": "exists", "objects": ["LayoutCrate"]},
+              depends_on=["drop_table"]),
+        _step(5, "place_crate_top", "place_relative",
+              {"objects": ["LayoutCrate"], "target": "LayoutTable", "side": "top", "gap": 0.0},
+              {"kind": "relative", "object": "LayoutCrate", "target": "LayoutTable", "side": "top"},
+              depends_on=["crate"],
+              note_zh="把箱子放到桌子顶面中心，无需手算高度。",
+              note_en="Place the crate on top of LayoutTable using both objects' world bounds."),
+        _step(6, "overlap_audit", "check_overlaps",
+              {"objects": ["LayoutTable", "LayoutCrate"], "ignore": ["LayoutGround"]},
+              {"kind": "payload_number", "field": "overlapCount", "equals": 0},
+              depends_on=["place_crate_top"],
+              note_zh="确认摆放后的资产之间无穿模。",
+              note_en="Confirm zero AABB penetration between the placed assets."),
+        _step(7, "visual", "vision_capture", {"max_edge": 640},
+              {"kind": "image"}, depends_on=["overlap_audit"],
+              on_failure="continue", optional=True),
+    ],
+    expect={"added_includes": ["LayoutGround", "LayoutTable", "LayoutCrate"], "count_delta": 3},
+)
+
+
 STANDARD_WORKFLOWS: Dict[str, Workflow] = {
     workflow.name: workflow
-    for workflow in (BASIC_SCENE, MODEL_PROCESSING, MATERIAL_LOOK)
+    for workflow in (BASIC_SCENE, MODEL_PROCESSING, MATERIAL_LOOK, ASSET_LAYOUT)
 }
 
 

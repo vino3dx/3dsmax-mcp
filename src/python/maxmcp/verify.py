@@ -488,6 +488,118 @@ def verify_payload_field(spec: Dict[str, Any], ctx: Dict[str, Any]) -> Dict[str,
                    field=field, value=value, checks=checks)
 
 
+def _bounds_of(node: Dict[str, Any]) -> Optional[Tuple[List[float], List[float]]]:
+    """Extract ``(min_pt, max_pt)`` from a node read-back dict."""
+    bb = node.get("boundingBox")
+    if isinstance(bb, dict):
+        bmin, bmax = bb.get("min"), bb.get("max")
+        if (isinstance(bmin, list) and len(bmin) == 3
+                and isinstance(bmax, list) and len(bmax) == 3):
+            return [float(x) for x in bmin], [float(x) for x in bmax]
+    bmin, bmax = node.get("min"), node.get("max")
+    if (isinstance(bmin, list) and len(bmin) == 3
+            and isinstance(bmax, list) and len(bmax) == 3):
+        return [float(x) for x in bmin], [float(x) for x in bmax]
+    return None
+
+
+def verify_grounded(spec: Dict[str, Any], ctx: Dict[str, Any]) -> Dict[str, Any]:
+    """Verify an object's bottom (boundingBox.min.z) rests on a surface or groundZ."""
+    reader: SceneReader = ctx["reader"]
+    name = spec.get("object")
+    if not isinstance(name, str) or not name:
+        return _unavailable("grounded", "no_object_requested")
+    status, value = reader.node(name)
+    ok, node, info = _node_of(status, value)
+    if info.get("unavailable"):
+        return _unavailable("grounded", "read_back_failed", error=info.get("error"))
+    if not ok or node is None:
+        return _result("grounded", True, False, object=name, reason="object_not_found")
+    bounds = _bounds_of(node)
+    if bounds is None:
+        return _unavailable("grounded", "bounds_unreadable", object=name)
+    bmin, _ = bounds
+
+    offset = float(spec.get("offset") or 0.0)
+    tolerance = float(spec.get("tolerance") if isinstance(spec.get("tolerance"), (int, float)) else 0.05)
+    surface_name = spec.get("surface")
+    if isinstance(surface_name, str) and surface_name:
+        s_status, s_val = reader.node(surface_name)
+        s_ok, s_node, s_info = _node_of(s_status, s_val)
+        if s_info.get("unavailable"):
+            return _unavailable("grounded", "surface_read_back_failed", surface=surface_name)
+        if not s_ok or s_node is None:
+            return _result("grounded", True, False, object=name, surface=surface_name,
+                           reason="surface_not_found")
+        s_bounds = _bounds_of(s_node)
+        if s_bounds is None:
+            return _unavailable("grounded", "surface_bounds_unreadable", surface=surface_name)
+        target_z = s_bounds[1][2] + offset
+    else:
+        target_z = float(spec.get("groundZ") or 0.0) + offset
+
+    actual_z = bmin[2]
+    passed = abs(actual_z - target_z) <= tolerance
+    return _result("grounded", True, passed, object=name, expectedZ=target_z,
+                   actualZ=actual_z, tolerance=tolerance)
+
+
+def verify_relative(spec: Dict[str, Any], ctx: Dict[str, Any]) -> Dict[str, Any]:
+    """Verify an object is placed against the requested side of a target object."""
+    reader: SceneReader = ctx["reader"]
+    name = spec.get("object")
+    target_name = spec.get("target")
+    side = str(spec.get("side") or "top").lower()
+    if not isinstance(name, str) or not name or not isinstance(target_name, str) or not target_name:
+        return _unavailable("relative", "missing_object_or_target")
+    status, value = reader.node(name)
+    ok, node, info = _node_of(status, value)
+    if info.get("unavailable"):
+        return _unavailable("relative", "read_back_failed", error=info.get("error"))
+    if not ok or node is None:
+        return _result("relative", True, False, object=name, reason="object_not_found")
+    t_status, t_val = reader.node(target_name)
+    t_ok, t_node, t_info = _node_of(t_status, t_val)
+    if t_info.get("unavailable"):
+        return _unavailable("relative", "target_read_back_failed", target=target_name)
+    if not t_ok or t_node is None:
+        return _result("relative", True, False, object=name, target=target_name,
+                       reason="target_not_found")
+    n_bounds = _bounds_of(node)
+    t_bounds = _bounds_of(t_node)
+    if n_bounds is None or t_bounds is None:
+        return _unavailable("relative", "bounds_unreadable", object=name, target=target_name)
+    n_min, n_max = n_bounds
+    t_min, t_max = t_bounds
+    gap = float(spec.get("gap") or 0.0)
+    tolerance = float(spec.get("tolerance") if isinstance(spec.get("tolerance"), (int, float)) else 0.05)
+
+    if side == "top":
+        expected, actual = t_max[2] + gap, n_min[2]
+    elif side == "bottom":
+        expected, actual = t_min[2] - gap, n_max[2]
+    elif side == "right":
+        expected, actual = t_max[0] + gap, n_min[0]
+    elif side == "left":
+        expected, actual = t_min[0] - gap, n_max[0]
+    elif side == "back":
+        expected, actual = t_max[1] + gap, n_min[1]
+    elif side == "front":
+        expected, actual = t_min[1] - gap, n_max[1]
+    elif side == "center":
+        n_c = [(n_min[i] + n_max[i]) * 0.5 for i in range(3)]
+        t_c = [(t_min[i] + t_max[i]) * 0.5 for i in range(3)]
+        dist = sum((n_c[i] - t_c[i]) ** 2 for i in range(3)) ** 0.5
+        return _result("relative", True, dist <= tolerance, object=name,
+                       target=target_name, side=side, distance=dist, tolerance=tolerance)
+    else:
+        return _unavailable("relative", "unknown_side", side=side)
+
+    passed = abs(actual - expected) <= tolerance
+    return _result("relative", True, passed, object=name, target=target_name,
+                   side=side, expected=expected, actual=actual, tolerance=tolerance)
+
+
 def verify_image(spec: Dict[str, Any], ctx: Dict[str, Any]) -> Dict[str, Any]:
     """Visual feedback is only "available" when real image bytes came back."""
     images = ctx.get("images") or []
@@ -516,6 +628,8 @@ VERIFIERS: Dict[str, Callable[[Dict[str, Any], Dict[str, Any]], Dict[str, Any]]]
     "selection": verify_selection,
     "payload_number": verify_payload_number,
     "payload_field": verify_payload_field,
+    "grounded": verify_grounded,
+    "relative": verify_relative,
     "image": verify_image,
 }
 

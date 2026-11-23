@@ -36,7 +36,7 @@ An MCP (Model Context Protocol) plugin that gives AI agents full control of Auto
 
 | 部分 | 运行位置 | 职责 |
 | --- | --- | --- |
-| **MCP 服务端** | 独立 Python 进程（stdlib-only） | 对 AI 客户端讲 MCP/JSON-RPC，对外暴露 **391 个工具** |
+| **MCP 服务端** | 独立 Python 进程（stdlib-only） | 对 AI 客户端讲 MCP/JSON-RPC，对外暴露 **419 个工具**（默认 `compact` 档位精选 24 个聚合中枢工具） |
 | **MAXScript 桥接** | 3ds Max 进程内（主线程） | 监听本地 TCP，执行真实场景操作 |
 
 AI 客户端（Cursor / Claude Desktop / 任意 MCP 客户端）→ MCP 服务端 → 本地 TCP → 3ds Max 桥接 → 场景。
@@ -68,7 +68,7 @@ AI 客户端（Cursor / Claude Desktop / 任意 MCP 客户端）→ MCP 服务�
 ```
 ┌────────────────────┐   MCP / JSON-RPC 2.0    ┌──────────────────────────┐
 │  AI client         │  ◀── stdio / HTTP ────▶ │  maxmcp (Python)         │
-│  Cursor / Claude   │                         │  · catalog: 391 tools    │
+│  Cursor / Claude   │                         │  · catalog: 419 tools    │
 │  WorkBuddy / Cline │                         │  · i18n: zh / en / auto  │
 │  国产 AI 客户端     │                         │  · wire codec (ANSI)     │
 └────────────────────┘                         └────────────┬─────────────┘
@@ -82,10 +82,9 @@ AI 客户端（Cursor / Claude Desktop / 任意 MCP 客户端）→ MCP 服务�
                                                │  TcpListener + WinForms  │
                                                │  Timer pump (main thread)│
                                                ├──────────────────────────┤
-                                               │  mcp_json.ms   JSON 引擎 │
-                                               │  mcp_core.ms   注册/派发 │
-                                               │  mcp_net.ms    TCP 泵    │
-                                               │  ... 16 个功能模块       │
+                                               │  mcp_core.ms   核心/JSON │
+                                               │  mcp_domains.ms 脏域映射 │
+                                               │  ... 7 个高内聚功能模块  │
                                                └────────────┬─────────────┘
                                                             │
                                                       3ds Max scene
@@ -127,7 +126,7 @@ python scripts/install.py --yes
 安装器会：
 
 1. 扫描所有 3ds Max 用户脚本目录（`%LOCALAPPDATA%\Autodesk\3dsMax\<年份> - 64bit\<语言>\scripts`）。
-2. 把 23 个 MAXScript 模块复制到 `<scripts>\3dsmax-mcp\`。
+2. 把 10 个 MAXScript 模块复制到 `<scripts>\3dsmax-mcp\`。
 3. 写入启动自动加载器 `<scripts>\startup\3dsmax-mcp-bridge.ms` 与端口/语言配置 `<scripts>\3dsmax-mcp\3dsmax-mcp.ini`。
 4. 把 Python 服务端复制到 `%LOCALAPPDATA%\3dsmax-mcp\maxmcp`。
 5. 注册 MCP 客户端（Cursor / Claude Desktop）。
@@ -157,7 +156,7 @@ python scripts/install.py --uninstall         # 卸载
   Status      : listening
   Address     : 127.0.0.1:8765
   3ds Max     : 2020 (major 22)
-  Commands    : 359
+  Commands    : 363
   Language    : zh
   Pump timer  : true
   ----------------------------------------------------
@@ -181,15 +180,15 @@ python scripts/doctor.py
 -- environment
   [ok]   Python 3.13.14 at ...\python.exe
   [ok]   MCP server package (installed)
-         391 tools (animation=59, context=6, files=8, modeling=83, objects=61, pipeline=54, scene=18, shading=69, system=33)
+         419 tools (animation=63, context=7, files=9, modeling=87, objects=69, pipeline=58, scene=19, shading=73, system=34)
 -- 3ds Max side
-  [ok]   3ds Max 2020 [CHS]: 23 bridge modules + autoloader
-  [ok]   3ds Max 2020 [ENU]: 23 bridge modules + autoloader
+  [ok]   3ds Max 2020 [CHS]: 10 bridge modules + autoloader
+  [ok]   3ds Max 2020 [ENU]: 10 bridge modules + autoloader
   [ok]   3ds Max is running
 -- connectivity
   [ok]   Bridge listening on port 8765
   [ok]   Live handshake succeeded
-         handlers=359  language=zh  3ds Max year=2020
+         handlers=363  language=zh  3ds Max year=2020
   [ok]   Language: zh from Max UI 'CHS' (auto)
          The server follows this while its own language is 'auto'.
 -- MCP clients
@@ -225,7 +224,7 @@ Max 未运行时对应的一行是 `[warn] No bridge listening on 8765, 8766, ..
 }
 ```
 
-重启 Cursor，在 **Settings → MCP** 里应看到 `3dsmax-mcp` 已连接、391 个工具。
+重启 Cursor，在 **Settings → MCP** 里应看到 `3dsmax-mcp` 已连接（默认 `compact` 档位暴露 24 个聚合中枢工具，完整目录包含 419 个工具）。
 
 ### Claude Desktop
 
@@ -253,19 +252,19 @@ stdio 上的 JSON-RPC 服务端，`initialize` → `tools/list` → `tools/call`
 
 ## 工具一览
 
-共 **391 个工具**，分 9 类：
+共 **419 个工具**（含 24 个高内聚复合中枢工具 `*_hub` 与 395 个原子操作工具），分 9 类：
 
 | 分类 | 数量 | 覆盖内容 |
 | --- | ---: | --- |
-| `system` | 33 | 桥接控制、握手、脚本逃逸仓、undo/redo 事务、单位与时间配置、内省 |
-| `scene` | 18 | 场景新建/打开/保存/合并、图层、资源与丢失贴图重链 |
-| `files` | 8 | 文本读写、目录列举、复制/删除、文件信息 |
-| `objects` | 61 | 基础体与样条、变换/对齐/镜像/轴心、层级与父子、组、选择、隐藏冻结、克隆阵列、布尔/ProBoolean |
-| `modeling` | 83 | 可编辑多边形（点/边/面全套操作）、修改器栈管理与 30+ 常用修改器、放样/扫掠/路径变形 |
-| `shading` | 69 | 材质读写与赋给、PBR/Arnold/V-Ray/Corona/FStorm 材质、贴图节点、材质库、UVW 贴图与 Unwrap、灯光、相机、环境 |
-| `animation` | 59 | 关键帧与曲线、控制器与表达式、约束、骨骼与 IK、蒙皮权重、Morpher |
-| `pipeline` | 54 | 渲染引擎与设置、单帧/帧序列/批渲染、渲染元素、**视口截图（vision_capture / vision_views / vision_preview，直接返回图像）**、烘焙（AO/法线/光照/贴图）、导入导出（FBX/OBJ/glTF/USD/ABC/STL/3DS）与引擎预设 |
-| `context` | 6 | **场景上下文**（`context_get` / `context_refresh` / `context_stats` / `context_events`）、内置面板（`client_ui` / `client_status`）
+| `system` | 34 | `bridge_hub` 中枢 + 桥接控制、握手、脚本逃逸仓、undo/redo 事务、单位与时间配置、内省 |
+| `scene` | 19 | `scene_hub` 中枢 + 场景新建/打开/保存/合并、图层、资源与丢失贴图重链 |
+| `files` | 9 | `file_hub` 中枢 + 文本读写、目录列举、复制/删除、文件信息 |
+| `objects` | 69 | `create_hub` / `transform_hub` / `select_hub` / `hierarchy_hub` 四大中枢 + 基础体与样条、变换/对齐/贴地/相对摆放/沿样条分布/穿模检测、层级、组、选择、克隆阵列、布尔 |
+| `modeling` | 87 | `poly_query_hub` / `poly_edit_hub` / `mod_hub` / `model_hub` 四大中枢 + 可编辑多边形（点/边/面全套操作）、修改器栈管理与 30+ 常用修改器、放样/扫掠/路径变形 |
+| `shading` | 73 | `mat_hub` / `map_uvw_hub` / `light_hub` / `cam_env_hub` 四大中枢 + 材质读写与赋给、PBR/Arnold/V-Ray/Corona/FStorm 材质、贴图节点、材质库、UVW 贴图与 Unwrap、灯光、相机、环境 |
+| `animation` | 63 | `anim_key_hub` / `ctrl_constraint_hub` / `rig_bone_ik_hub` / `rig_skin_morph_hub` 四大中枢 + 关键帧与曲线、控制器与表达式、约束、骨骼与 IK、蒙皮权重、Morpher |
+| `pipeline` | 58 | `render_hub` / `vision_viewport_hub` / `bake_hub` / `export_import_hub` 四大中枢 + 渲染引擎与设置、单帧/帧序列/批渲染、渲染元素、**视口截图（vision_capture / vision_views / vision_preview，直接返回图像）**、烘焙（AO/法线/光照/贴图）、导入导出（FBX/OBJ/glTF/USD/ABC/STL/3DS）与引擎预设 |
+| `context` | 7 | `context_hub` 中枢 + **场景上下文**（`context_get` / `context_refresh` / `context_stats` / `context_events`）、内置面板（`client_ui` / `client_status`） |
 
 查看完整列表：
 
@@ -424,16 +423,17 @@ AI 在一个操作回合里的典型闭环：
 
 ## 工具档位
 
-391 个工具全塞进上下文会明显占额度。用 `--profile` 按需裁剪：
+419 个工具全塞进上下文会明显占额度，且许多 MCP 客户端对单服务工具数量有严格限制。因此默认档位为 `compact`（仅暴露 **24 个高聚合复合中枢工具**，通过 `action` + `params` 分发底层全部 395 项功能）；也可用 `--profile` 按需切换：
 
 | 档位 | 工具数 | 包含分类 |
 | --- | ---: | --- |
+| `compact` | **24** | 24 个聚合中枢工具（默认档位，覆盖 100% 全部 395 项子功能） |
 | `core` | 60 | field-tested modeling loop and session essentials |
-| `modeling` | 209 | core + modeling |
-| `lookdev` | 195 | core + shading |
-| `animation` | 185 | core + animation |
-| `pipeline` | 180 | core + pipeline |
-| `full` | **391** | 全部（默认） |
+| `modeling` | 225 | core + modeling |
+| `lookdev` | 211 | core + shading |
+| `animation` | 201 | core + animation |
+| `pipeline` | 196 | core + pipeline |
+| `full` | 419 | 全部（24 个聚合中枢 + 395 个原子工具） |
 
 ```bash
 python -m maxmcp --profile modeling
@@ -740,35 +740,25 @@ mcpSelfTest()
 │   │   ├── wire.py            #   ANSI 线编解码（中文往返的关键）
 │   │   ├── i18n.py            #   双语消息层 + Max 语言码映射
 │   │   ├── config.py          #   配置加载
-│   │   └── catalog/           #   391 个工具定义
-│   │       ├── schema.py      #     Tool 类 + 档位 + DSL
-│   │       ├── core.py        #     system / scene / files
-│   │       ├── objects.py     #     objects
-│   │       ├── modeling.py    #     modeling（含修改器栈扩展）
-│   │       ├── shading.py     #     shading
-│   │       ├── animation.py   #     animation
-│   │       └── pipeline.py    #     pipeline（渲染/烘焙/导入导出 + vision 截图）
-│   └── ms/                    # MAXScript 桥接（字节级部署到 Max 用户脚本目录）
-│       ├── mcp_bridge.ms      #   入口：加载 22 个模块、启停桥接、语言解析
-│       ├── mcp_json.ms        #   纯 MAXScript JSON 引擎
-│       ├── mcp_core.ms        #   命令注册表、消息表、节点解析、语言探测
+│   │   └── catalog/           #   419 个工具定义（6 个高内聚源文件，每个包含 4 个 *_hub 复合中枢与全套原子定义）
+│   │       ├── schema.py      #     Tool 类 + hub_tool + 档位 + DSL
+│   │       ├── core.py        #     system / scene / files / context + bridge_hub / scene_hub / context_hub / file_hub
+│   │       ├── objects.py     #     objects + create_hub / transform_hub / select_hub / hierarchy_hub
+│   │       ├── modeling.py    #     modeling + poly_query_hub / poly_edit_hub / mod_hub / model_hub
+│   │       ├── shading.py     #     shading + mat_hub / map_uvw_hub / light_hub / cam_env_hub
+│   │       ├── animation.py   #     animation + anim_key_hub / ctrl_constraint_hub / rig_bone_ik_hub / rig_skin_morph_hub
+│   │       └── pipeline.py    #     pipeline + render_hub / vision_viewport_hub / bake_hub / export_import_hub
+│   └── ms/                    # MAXScript 桥接（10 个高内聚模块文件，字节级部署到 Max 用户脚本目录）
+│       ├── mcp_bridge.ms      #   入口：加载 9 个模块、启停桥接、语言解析
+│       ├── mcp_core.ms        #   JSON 引擎 + 命令注册表 + 消息表 + TCP 监听与主线程 Timer 泵
 │       ├── mcp_domains.ms     #   每个命令写脏哪些 context 域（生成文件，勿手改）
-│       ├── mcp_net.ms         #   TCP 监听 + 主线程 Timer 泵 + 调度
-│       ├── mcp_system.ms      #   系统 / undo / 单位 / 脚本逃逸仓
-│       ├── mcp_objects.ms     #   对象与样条
-│       ├── mcp_poly.ms        #   可编辑多边形
-│       ├── mcp_modifiers.ms   #   修改器栈与修改器
-│       ├── mcp_modeling_ext.ms#   修改器开关/塌陷 + 多边形选择查询扩展
-│       ├── mcp_shading.ms     #   材质 / 贴图 / UVW
-│       ├── mcp_lights.ms      #   灯光 / 相机 / 环境
-│       ├── mcp_animation.ms   #   动画 / 控制器 / 约束
-│       ├── mcp_rigging.ms     #   骨骼 / IK / 蒙皮 / Morpher
-│       ├── mcp_render.ms      #   渲染
-│       ├── mcp_bake.ms        #   烘焙
-│       ├── mcp_export.ms      #   导入导出
-│       ├── mcp_scene.ms       #   场景 / 图层 / 资源
-│       ├── mcp_vision.ms      #   视口截图（base64 图像回传）
-│       ├── mcp_selftest.ms    #   Max 内 13 项自检
+│       ├── mcp_system.ms      #   系统 / 场景 / 图层 / 资源 / 文件 IO / 类反射内省 / 13 项自检
+│       ├── mcp_objects.ms     #   基础体 / 样条 / 变换 / 层级 / 组 / 选择 / 布尔 / 资产自动摆放
+│       ├── mcp_modeling.ms    #   可编辑多边形 / 修改器栈 / 样条建模 / 建模扩展
+│       ├── mcp_shading.ms     #   材质 / 贴图 / 材质库 / UVW / 灯光 / 相机 / 环境
+│       ├── mcp_animation.ms   #   关键帧 / 控制器 / 约束 / 骨骼 / 蒙皮 / IK / Morpher
+│       ├── mcp_pipeline.ms    #   渲染 / 视口控制 / 视觉截图（base64 图像）/ 纹理烘焙 / 导入导出
+│       ├── mcp_context.ms     #   事件变更账本 / 9 域增量上下文缓存 / Max 内置客户端面板 UI
 │       └── 3dsmax-mcp.ini     #   端口 / 语言 / autostart（安装时按参数重写）
 ├── scripts/
 │   ├── install.py             # 安装 / 卸载 / 客户端注册（7 种客户端），字节级部署
@@ -793,7 +783,7 @@ mcpSelfTest()
 │   └── logs/                  # 证据与日志，按日期归档（gitignored）
 ├── docs/
 │   ├── BRIDGE_CONVENTIONS.md  # 桥接契约与编码规范
-│   ├── LIVE_MATRIX.md         # 391 工具 × 实机状态矩阵（生成物）
+│   ├── LIVE_MATRIX.md         # 395 工具 × 实机状态矩阵（生成物）
 │   ├── OFFLINE_LINT_GUIDE.md  # 离线门禁使用指南
 │   ├── P0_ENV.md              # Max 启动崩溃调查环境记录
 │   ├── TOOL_PROFILES_PROPOSAL.md

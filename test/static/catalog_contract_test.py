@@ -98,10 +98,10 @@ CATEGORY_DOMAIN_PREFIXES: Dict[str, set] = {
 #: verb-driven categories files / objects / system / scene).
 GENERIC_VERB_PREFIXES: set = {
     "align", "array", "attach", "assign", "begin", "boolean", "cancel",
-    "clone", "close", "copy", "count", "create", "delete", "deselect",
-    "detach", "does", "end", "execute", "fetch", "find", "freeze", "get",
+    "check", "clone", "close", "copy", "count", "create", "delete", "deselect",
+    "detach", "distribute", "does", "end", "execute", "fetch", "find", "freeze", "get",
     "group", "hide", "hold", "list", "make", "mirror", "move", "open",
-    "parent", "proboolean", "read", "redo", "release", "relink", "rename",
+    "parent", "place", "proboolean", "read", "redo", "release", "relink", "rename",
     "reset", "scatter", "select", "set", "snap", "transform", "undo",
     "unfreeze", "ungroup", "unhide", "unparent", "write",
 }
@@ -132,6 +132,10 @@ PREFIX_WHITELIST: Dict[str, str] = {
                     "is no scene object type it could be named after",
     "scene_snapshot": "scene_ is the documented domain prefix of the scene "
                       "category; this one reads the whole scene as one value",
+    "hierarchy_hub": "compound hub for parenting and grouping operations in "
+                     "the objects category",
+    "model_hub": "model_ prefix marks spline/surface and conversion hub in "
+                 "the modeling category",
 }
 
 #: mutating-flag exceptions, each with a reason (A5).
@@ -140,6 +144,8 @@ MUTATING_WHITELIST: Dict[str, str] = {
                     "undo semantics apply to it",
     "ctrl_add_list": "'list' is a noun here (Max list controller), not the "
                      "verb; adding a controller is a real mutation",
+    "poly_query_hub": "compound hub covering both read-only topology queries "
+                      "and sub-object selection writes",
 }
 
 #: Preset keys the bridge layer knows how to read, with the consumer site.
@@ -585,6 +591,7 @@ class McpClient:
     def __init__(self, port: int, log_path: str) -> None:
         env = dict(os.environ)
         env["MAXMCP_PORT"] = str(port)
+        env["MAXMCP_PROFILE"] = "full"
         env["PYTHONPATH"] = os.path.join(REPO, "src", "python")
         env["PYTHONIOENCODING"] = "utf-8"
         env["MAXMCP_HOME"] = os.path.join(TMP_DIR, "home")
@@ -739,8 +746,17 @@ def phase_c1_local(client: McpClient, bridge: MockBridge, catalog, rep: Reporter
         return
     say("C1L python-side tools (%d tools)" % len(local))
     for entry in local:
+        args = {key: minimal_argument(entry.schema["properties"][key])
+                for key in entry.schema.get("required", [])}
+        if "action" in args:
+            sub_entry = catalog.get(args["action"])
+            if sub_entry is not None:
+                args["params"] = {
+                    k: minimal_argument(sub_entry.schema["properties"][k])
+                    for k in sub_entry.schema.get("required", [])
+                }
         mark = len(bridge.calls)
-        reply = call_tool(client, entry.name, {})
+        reply = call_tool(client, entry.name, args)
         result = reply.get("result") or {}
         if reply.get("error") is not None or result.get("isError"):
             rep.quiet_case("C1L", entry.name, "answers without an error",

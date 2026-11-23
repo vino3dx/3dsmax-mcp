@@ -413,7 +413,7 @@ def check_http_transport(failures: List[str]) -> None:
         count = 0
         if status == 200:
             count = len(json.loads(body).get("result", {}).get("tools", []))
-        if count < 160:
+        if count < 24:
             failures.append("http tools/list returned {0} tools (status {1})".format(count, status))
         else:
             print("http: tools/list -> {0} tools".format(count))
@@ -513,7 +513,7 @@ def check_legacy_sse(port: int, failures: List[str]) -> None:
             failures.append("no JSON-RPC reply arrived over the SSE stream")
             return
         tools = json.loads(payload).get("result", {}).get("tools", [])
-        if len(tools) < 160:
+        if len(tools) < 24:
             failures.append("SSE reply carried {0} tools".format(len(tools)))
         else:
             print("http: legacy SSE /sse + /messages -> {0} tools".format(len(tools)))
@@ -540,7 +540,7 @@ def check_http_auth(failures: List[str]) -> None:
         status, _, body = http_post(
             port, {"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}}, token=token
         )
-        if status != 200 or "bridge_status" not in body:
+        if status != 200 or "bridge_hub" not in body:
             failures.append("an authenticated POST should succeed, got {0}".format(status))
         else:
             print("http: --http-token gate works (401 anonymous / 200 bearer)")
@@ -588,7 +588,7 @@ def check_language_auto(failures: List[str]) -> None:
                 listing = client.request("tools/list")
                 tools = listing.get("result", {}).get("tools", [])
                 description = next(
-                    (t.get("description", "") for t in tools if t["name"] == "bridge_status"), ""
+                    (t.get("description", "") for t in tools if t["name"] in ("bridge_status", "bridge_hub")), ""
                 )
                 if "[中文]" in description:
                     return "en"
@@ -647,10 +647,10 @@ def main() -> int:
         listing = client.request("tools/list")
         tools = listing.get("result", {}).get("tools", [])
         print("tools/list -> {0} tools".format(len(tools)))
-        if len(tools) < 160:
-            failures.append("expected 160+ tools, got {0}".format(len(tools)))
+        if len(tools) != 24:
+            failures.append("expected 24 compact hub tools by default, got {0}".format(len(tools)))
         names = {t["name"] for t in tools}
-        for expected in ("bridge_status", "create_box", "poly_extrude_faces", "export_fbx", "anim_bake"):
+        for expected in ("bridge_hub", "create_hub", "poly_edit_hub", "export_import_hub", "anim_key_hub"):
             if expected not in names:
                 failures.append("missing tool: {0}".format(expected))
         for tool in tools:
@@ -659,9 +659,9 @@ def main() -> int:
             if tool.get("inputSchema", {}).get("type") != "object":
                 failures.append("tool without object schema: {0}".format(tool["name"]))
         # default language is Chinese, so descriptions lead with Chinese
-        status = next(t for t in tools if t["name"] == "bridge_status")
+        status = next(t for t in tools if t["name"] == "bridge_hub")
         if "[English]" not in status["description"]:
-            failures.append("bilingual marker missing from bridge_status description")
+            failures.append("bilingual marker missing from bridge_hub description")
 
         # ------------------------------------------------------------- ping
         pong = client.request("ping")
@@ -731,7 +731,7 @@ def main() -> int:
             failures.append("set_language did not report the new language")
         listing = client.request("tools/list")
         tools_en = listing.get("result", {}).get("tools", [])
-        status_en = next(t for t in tools_en if t["name"] == "bridge_status")
+        status_en = next(t for t in tools_en if t["name"] == "bridge_hub")
         if "[中文]" not in status_en["description"]:
             failures.append("after switching to English the Chinese description should be the secondary one")
         else:

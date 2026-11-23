@@ -92,6 +92,42 @@ def _coerce(value: Any) -> Any:
         return value
 
 
+def _sync_bounds(node: Dict[str, Any]) -> Dict[str, Any]:
+    """Compute world AABB ``boundingBox`` from position, dimensions and scale."""
+    pos = [float(x) for x in (node.get("position") or [0.0, 0.0, 0.0])]
+    scale = [float(x) for x in (node.get("scale") or [1.0, 1.0, 1.0])]
+    klass = str(node.get("class") or "Box")
+    if klass in ("Plane",):
+        w = float(node.get("width") if node.get("width") is not None else 100.0) * abs(scale[0])
+        l = float(node.get("length") if node.get("length") is not None else 100.0) * abs(scale[1])
+        bmin = [pos[0] - w * 0.5, pos[1] - l * 0.5, pos[2]]
+        bmax = [pos[0] + w * 0.5, pos[1] + l * 0.5, pos[2]]
+    elif klass in ("Sphere", "GeoSphere"):
+        r = float(node.get("radius") if node.get("radius") is not None else 10.0)
+        rx, ry, rz = r * abs(scale[0]), r * abs(scale[1]), r * abs(scale[2])
+        bmin = [pos[0] - rx, pos[1] - ry, pos[2] - rz]
+        bmax = [pos[0] + rx, pos[1] + ry, pos[2] + rz]
+    else:
+        r = node.get("radius")
+        default_xy = float(r) * 2.0 if isinstance(r, (int, float)) else 20.0
+        w = float(node.get("width") if node.get("width") is not None else default_xy) * abs(scale[0])
+        l = float(node.get("length") if node.get("length") is not None else default_xy) * abs(scale[1])
+        h = float(node.get("height") if node.get("height") is not None else 20.0) * abs(scale[2])
+        # Centered pivot along Z when center_pivot is set, otherwise base-pivot (Max Box/Cylinder default)
+        if node.get("center_pivot"):
+            bmin = [pos[0] - w * 0.5, pos[1] - l * 0.5, pos[2] - h * 0.5]
+            bmax = [pos[0] + w * 0.5, pos[1] + l * 0.5, pos[2] + h * 0.5]
+        else:
+            bmin = [pos[0] - w * 0.5, pos[1] - l * 0.5, pos[2]]
+            bmax = [pos[0] + w * 0.5, pos[1] + l * 0.5, pos[2] + h]
+    node["boundingBox"] = {
+        "min": bmin,
+        "max": bmax,
+        "size": [bmax[0] - bmin[0], bmax[1] - bmin[1], bmax[2] - bmin[2]],
+    }
+    return node
+
+
 def _node(name: str, handle: int, klass: str = "Box") -> Dict[str, Any]:
     return {
         "name": name,
@@ -177,6 +213,7 @@ class FakeScene:
             node["splines"] = 1
         if position:
             node["position"] = list(position)
+        _sync_bounds(node)
         self.nodes.setdefault(name, []).append(node)
         return node
 
@@ -232,7 +269,7 @@ class FakeScene:
                 matched.extend(entries)
             elif not exact and pattern and self._glob(key, pattern):
                 matched.extend(entries)
-        return {"count": len(matched), "objects": [copy.deepcopy(node) for node in matched]}
+        return {"count": len(matched), "objects": [copy.deepcopy(_sync_bounds(node)) for node in matched]}
 
     @staticmethod
     def _glob(text: str, pattern: str) -> bool:
@@ -240,7 +277,7 @@ class FakeScene:
         return fnmatch.fnmatchcase(text, pattern)
 
     def _h_get_object_info(self, params):
-        return copy.deepcopy(self._require(str(params.get("name") or "")))
+        return copy.deepcopy(_sync_bounds(self._require(str(params.get("name") or ""))))
 
     def _targets(self, params) -> List[str]:
         """Mirror ``mcpResolveNodes ... fallbackToSelection:true``."""
@@ -1056,6 +1093,253 @@ class FakeScene:
             created.append(clone["name"])
         assert len(self.nodes) >= before
         return {"detached": created, "failures": failures, "message": "OK"}
+
+    # ------------------------------------------------- stage 11: asset placement
+    def _h_place_on_surface(self, params):
+        targets = self._targets(params)
+        if not targets:
+            raise BridgeCommandError(
+                "no objects",
+                detail={"kind": "err.no_selection", "message": "no_selection"},
+            )
+        surface_name = str(params.get("surface") or "")
+        surface_node = self._require(surface_name) if surface_name else None
+        ground_z = float(params.get("groundZ") or 0.0)
+        offset = float(params.get("offset") or 0.0)
+        use_pivot = bool(params.get("usePivot"))
+
+        applied: List[str] = []
+        placed: List[Dict[str, Any]] = []
+        failures: List[str] = []
+        for name in targets:
+            node = self._require(name)
+            if surface_node is not None and node is surface_node:
+                failures.append("{0}: cannot place surface onto itself".format(name))
+                continue
+            if name in self.reject_ops:
+                failures.append("{0}: z read-back mismatch".format(name))
+                continue
+            _sync_bounds(node)
+            pos = list(node["position"])
+            if surface_node is not None:
+                _sync_bounds(surface_node)
+                s_min = surface_node["boundingBox"]["min"]
+                s_max = surface_node["boundingBox"]["max"]
+                if not (s_min[0] <= pos[0] <= s_max[0] and s_min[1] <= pos[1] <= s_max[1]):
+                    failures.append("{0}: ray missed surface {1}".format(name, surface_name))
+                    continue
+                hit_z = s_max[2]
+            else:
+                hit_z = ground_z
+            target_z = hit_z + offset
+            if not use_pivot:
+                pivot_to_bottom = pos[2] - node["boundingBox"]["min"][2]
+                target_z += pivot_to_bottom
+            if not self.ignore_transform:
+                node["position"] = [pos[0], pos[1], target_z]
+                _sync_bounds(node)
+            actual_z = node["position"][2] if use_pivot else node["boundingBox"]["min"][2]
+            if abs(actual_z - (hit_z + offset)) > 0.01:
+                failures.append("{0}: z read-back {1} != {2}".format(name, actual_z, hit_z + offset))
+                continue
+            applied.append(name)
+            placed.append({
+                "name": name,
+                "surfaceZ": hit_z,
+                "finalZ": actual_z,
+                "position": list(node["position"]),
+            })
+        return {
+            "success": bool(applied) and not failures,
+            "applied": applied,
+            "placed": placed,
+            "failures": failures,
+            "message": "OK",
+        }
+
+    def _h_place_relative(self, params):
+        targets = self._targets(params)
+        if not targets:
+            raise BridgeCommandError(
+                "no objects",
+                detail={"kind": "err.no_selection", "message": "no_selection"},
+            )
+        target_name = str(params.get("target") or "")
+        target = self._require(target_name)
+        _sync_bounds(target)
+        t_min = target["boundingBox"]["min"]
+        t_max = target["boundingBox"]["max"]
+        t_center = [(t_min[i] + t_max[i]) * 0.5 for i in range(3)]
+        side = str(params.get("side") or "top").lower()
+        gap = float(params.get("gap") or 0.0)
+        align_center = params.get("alignCenter") is not False
+
+        applied: List[str] = []
+        placed: List[Dict[str, Any]] = []
+        failures: List[str] = []
+        for name in targets:
+            node = self._require(name)
+            if node is target:
+                failures.append("{0}: cannot place target relative to itself".format(name))
+                continue
+            if name in self.reject_ops or self.ignore_transform:
+                failures.append("{0}: position read-back mismatch".format(name))
+                continue
+            _sync_bounds(node)
+            n_min = node["boundingBox"]["min"]
+            n_max = node["boundingBox"]["max"]
+            n_center = [(n_min[i] + n_max[i]) * 0.5 for i in range(3)]
+            dx = (t_center[0] - n_center[0]) if align_center else 0.0
+            dy = (t_center[1] - n_center[1]) if align_center else 0.0
+            dz = (t_center[2] - n_center[2]) if align_center else 0.0
+            if side == "top":
+                dz = (t_max[2] + gap) - n_min[2]
+            elif side == "bottom":
+                dz = (t_min[2] - gap) - n_max[2]
+            elif side == "right":
+                dx = (t_max[0] + gap) - n_min[0]
+            elif side == "left":
+                dx = (t_min[0] - gap) - n_max[0]
+            elif side == "back":
+                dy = (t_max[1] + gap) - n_min[1]
+            elif side == "front":
+                dy = (t_min[1] - gap) - n_max[1]
+            elif side == "center":
+                dx, dy, dz = [t_center[i] - n_center[i] for i in range(3)]
+            else:
+                failures.append("{0}: unknown side {1}".format(name, side))
+                continue
+            pos = node["position"]
+            node["position"] = [pos[0] + dx, pos[1] + dy, pos[2] + dz]
+            _sync_bounds(node)
+            applied.append(name)
+            placed.append({
+                "name": name,
+                "position": list(node["position"]),
+                "min": list(node["boundingBox"]["min"]),
+                "max": list(node["boundingBox"]["max"]),
+            })
+        return {
+            "success": bool(applied) and not failures,
+            "target": target["name"],
+            "side": side,
+            "applied": applied,
+            "placed": placed,
+            "failures": failures,
+            "message": "OK",
+        }
+
+    def _h_distribute_along_spline(self, params):
+        protos = self._targets(params)
+        if not protos:
+            raise BridgeCommandError(
+                "no objects",
+                detail={"kind": "err.no_selection", "message": "no_selection"},
+            )
+        spline_name = str(params.get("spline") or "")
+        sp = self._require(spline_name)
+        if sp.get("class") not in SHAPE_CLASSES and sp.get("superClass") != "ShapeClass":
+            raise BridgeCommandError(
+                "target is not a spline shape",
+                detail={"kind": "err.invalid_argument", "message": spline_name},
+            )
+        count = int(params.get("count") or 0)
+        if count <= 0:
+            spacing = float(params.get("spacing") or 0.0)
+            count = max(1, int(100.0 / spacing) + 1) if spacing > 0 else 10
+        surface_name = str(params.get("surface") or "")
+        surface_node = self._require(surface_name) if surface_name else None
+        offset = float(params.get("offset") or 0.0)
+
+        created: List[str] = []
+        failures: List[str] = []
+        for idx in range(1, count + 1):
+            proto_name = protos[(idx - 1) % len(protos)]
+            proto = self._require(proto_name)
+            if proto_name in self.reject_ops:
+                failures.append("instance {0}: copy returned no node".format(idx))
+                continue
+            t = (idx - 1) / float(max(1, count - 1)) if count > 1 else 0.0
+            px = t * 100.0
+            py = 0.0
+            pz = offset
+            if surface_node is not None:
+                _sync_bounds(surface_node)
+                pz = surface_node["boundingBox"]["max"][2] + offset
+            clone = self.add(self._unique_name("{0}_sp".format(proto["name"])),
+                             proto.get("class") or "Box", [px, py, pz])
+            for dim in ("width", "length", "height", "radius"):
+                if dim in proto:
+                    clone[dim] = proto[dim]
+            _sync_bounds(clone)
+            created.append(clone["name"])
+        return {
+            "success": bool(created) and not failures,
+            "spline": sp["name"],
+            "created": created,
+            "count": len(created),
+            "failures": failures,
+            "message": "Created {0}".format(len(created)),
+        }
+
+    def _h_check_overlaps(self, params):
+        req_names = [str(n) for n in params.get("objects") or []]
+        against_names = [str(n) for n in params.get("against") or []]
+        ignore_set = {str(n).lower() for n in (params.get("ignore") or [])}
+        tol = float(params.get("tolerance") if params.get("tolerance") is not None else 0.01)
+        include_hidden = bool(params.get("includeHidden"))
+
+        def all_geom() -> List[Dict[str, Any]]:
+            out: List[Dict[str, Any]] = []
+            for entries in self.nodes.values():
+                for n in entries:
+                    if n.get("superClass") == "GeometryClass" and (include_hidden or not n.get("isHidden")):
+                        out.append(_sync_bounds(n))
+            return out
+
+        if req_names:
+            targets = [_sync_bounds(self._require(nm)) for nm in req_names]
+        elif self.selection:
+            targets = [_sync_bounds(self._require(nm)) for nm in self.selection]
+        else:
+            targets = all_geom()
+
+        if against_names:
+            pool = [_sync_bounds(self._require(nm)) for nm in against_names]
+        else:
+            pool = all_geom()
+
+        targets = [n for n in targets if n["name"].lower() not in ignore_set]
+        pool = [n for n in pool if n["name"].lower() not in ignore_set]
+
+        overlaps: List[Dict[str, Any]] = []
+        seen = set()
+        for a in targets:
+            a_min, a_max = a["boundingBox"]["min"], a["boundingBox"]["max"]
+            for b in pool:
+                if a is b:
+                    continue
+                pair = tuple(sorted((a["handle"], b["handle"])))
+                if pair in seen:
+                    continue
+                b_min, b_max = b["boundingBox"]["min"], b["boundingBox"]["max"]
+                ox = min(a_max[0], b_max[0]) - max(a_min[0], b_min[0])
+                oy = min(a_max[1], b_max[1]) - max(a_min[1], b_min[1])
+                oz = min(a_max[2], b_max[2]) - max(a_min[2], b_min[2])
+                if ox > tol and oy > tol and oz > tol:
+                    seen.add(pair)
+                    overlaps.append({
+                        "a": a["name"],
+                        "b": b["name"],
+                        "penetration": [ox, oy, oz],
+                    })
+        return {
+            "checkedObjects": len(targets),
+            "overlapCount": len(overlaps),
+            "overlaps": overlaps,
+            "tolerance": tol,
+            "message": "OK",
+        }
 
 
 __all__ = ["FakeScene", "PRIMITIVE_CLASSES", "PNG_BYTES",

@@ -8,7 +8,8 @@ from __future__ import annotations
 
 from typing import List
 
-from .schema import Tool, any_scalar, arr, b, i, n, num3, obj_schema, s, tool
+from .domains import OBJECTS, OBJECTS_AND_SCENE
+from .schema import Tool, any_scalar, arr, b, hub_tool, i, n, num3, obj_schema, s, tool
 
 TOOLS: List[Tool] = []
 
@@ -1267,3 +1268,83 @@ TOOLS.append(tool(
         "section": s("截面样条线对象名（可选）。", "Section shape name (optional)."),
     },
 ))
+
+
+# ============================================================ compact hub tools
+TOOLS.extend([
+    hub_tool(
+        "poly_query_hub", "modeling",
+        "可编辑多边形拓扑查询与子对象选择中枢工具（聚合 11 项拓扑查询与子对象选择功能）："
+        "多边形统计与详情（poly_info/poly_get_stats/poly_get_verts/poly_get_faces/poly_get_edges/"
+        "poly_get_elements/poly_get_selection）、以及子对象选择（poly_select/poly_select_faces/"
+        "poly_loop_select/poly_ring_select）。",
+        "Consolidated Editable Poly topology query & sub-object selection hub (11 actions): "
+        "poly_info, poly_get_stats, poly_get_verts, poly_get_faces, poly_get_edges, poly_get_elements, "
+        "poly_get_selection, poly_select, poly_select_faces, poly_loop_select, poly_ring_select.",
+        actions=[
+            "poly_info", "poly_get_verts", "poly_get_faces", "poly_get_edges",
+            "poly_get_stats", "poly_get_elements", "poly_get_selection",
+            "poly_select", "poly_select_faces", "poly_loop_select", "poly_ring_select",
+        ],
+        mutating=True,
+        mutates=("selection",),
+    ),
+    hub_tool(
+        "poly_edit_hub", "modeling",
+        "可编辑多边形全维度编辑中枢工具（聚合 28 项点/边/面/整体拓扑编辑功能）："
+        "顶点移动/焊接/目标焊接/倒角/删除、面挤出/斜角/内插/桥接/封口/翻转/删除/材质ID/平滑组/分离、"
+        "边倒角/连接/挤出/平面切割、以及整体三角化/四边化/细分/优化/松弛/自动平滑/统一法线/拍平。",
+        "Consolidated Editable Poly vertex/edge/face/mesh editing hub (28 actions): vertex move/weld/chamfer/remove, "
+        "face extrude/bevel/inset/bridge/cap/flip/delete/matId/smoothing/detach, edge chamfer/connect/extrude/slice, "
+        "and mesh triangulate/quadify/subdivide/optimize/relax/auto_smooth/unify_normals/make_planar.",
+        actions=[
+            "poly_set_vertex", "poly_move_vertices", "poly_weld_vertices", "poly_target_weld",
+            "poly_chamfer_vertices", "poly_remove_vertices",
+            "poly_extrude_faces", "poly_bevel_faces", "poly_inset_faces", "poly_bridge_faces",
+            "poly_cap_holes", "poly_flip_faces", "poly_delete_faces", "poly_assign_material_id",
+            "poly_set_smoothing", "poly_detach_faces",
+            "poly_chamfer_edges", "poly_connect_edges", "poly_extrude_edges", "poly_slice",
+            "poly_triangulate", "poly_quadify", "poly_subdivide", "poly_optimize",
+            "poly_relax", "poly_auto_smooth", "poly_unify_normals", "poly_make_planar",
+        ],
+        mutating=True,
+        mutates=OBJECTS_AND_SCENE,
+    ),
+    hub_tool(
+        "mod_hub", "modeling",
+        "修改器堆栈管理与全部常用修改器中枢工具（聚合 36 项修改器功能）："
+        "修改器添加/删除/列表/读写参数/启用/禁用/切换/排序/重命名/Gizmo/子对象选择/塌陷（mod_collapse），"
+        "以及 23 种常用修改器快捷添加（TurboSmooth/Bend/Taper/Twist/Noise/FFD/Shell/Chamfer/Symmetry/"
+        "Displace/Relax/Subdivide/Extrude/Lathe/Sweep/PathDeform/WeightedNormals/EditPoly/EditNormals/Smooth）。",
+        "Consolidated modifier stack management & 23 specific modifiers hub (36 actions): "
+        "mod_add/remove/list/get_params/set_param/set_params/enable/disable/toggle/reorder/rename/"
+        "get_gizmo_info/set_sub_object_selection/collapse, plus all 23 specific mod_* tools.",
+        actions=[
+            "mod_add", "mod_remove", "mod_list", "mod_get_params", "mod_set_param", "mod_set_params",
+            "mod_enable", "mod_disable", "mod_toggle", "mod_reorder", "mod_rename",
+            "mod_get_gizmo_info", "mod_set_sub_object_selection", "mod_collapse",
+            "mod_turbosmooth", "mod_bend", "mod_taper", "mod_twist", "mod_noise",
+            "mod_ffd_2x2x2", "mod_ffd_3x3x3", "mod_ffd_4x4x4", "mod_shell", "mod_chamfer",
+            "mod_symmetry", "mod_displace", "mod_relax", "mod_subdivide", "mod_extrude",
+            "mod_lathe", "mod_sweep", "mod_pathdeform", "mod_weightednormals",
+            "mod_editpoly", "mod_editnormals", "mod_smooth",
+        ],
+        mutating=True,
+        mutates=OBJECTS,
+    ),
+    hub_tool(
+        "model_hub", "modeling",
+        "几何类型转换与样条驱动建模中枢工具（聚合 8 项转换与曲面成形功能）："
+        "转换为可编辑多边形/网格/NURBS、堆栈塌陷（collapse_stack）、"
+        "以及样条挤出（model_extrude_spline）、车削（model_lathe_spline）、放样（model_loft）、扫掠（model_sweep）。",
+        "Consolidated geometry conversion & spline-driven modeling hub (8 actions): "
+        "convert_to_editable_poly/mesh/nurbs, collapse_stack, model_extrude_spline, model_lathe_spline, "
+        "model_loft, model_sweep.",
+        actions=[
+            "convert_to_editable_poly", "convert_to_editable_mesh", "convert_to_nurbs",
+            "collapse_stack", "model_extrude_spline", "model_lathe_spline", "model_loft", "model_sweep",
+        ],
+        mutating=True,
+        mutates=OBJECTS_AND_SCENE,
+    ),
+])

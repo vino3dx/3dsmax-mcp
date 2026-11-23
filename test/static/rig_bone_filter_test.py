@@ -36,7 +36,7 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(os.path.dirname(HERE))
-SOURCE = os.path.join(REPO, "src", "ms", "mcp_rigging.ms")
+SOURCE = os.path.join(REPO, "src", "ms", "mcp_animation.ms")
 
 FAILURES = []
 

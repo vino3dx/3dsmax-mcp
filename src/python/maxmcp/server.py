@@ -21,7 +21,7 @@ from . import errors, i18n, scene_state
 from .batch import PER_OBJECT_TOOLS, RECONCILE_TOOLS, BatchExecutor
 from .bridge import BridgeError, MaxBridge
 from .catalog import build_catalog
-from .catalog.schema import Catalog, Tool
+from .catalog.schema import COMPACT_TOOLS, Catalog, Tool
 from .config import (
     APP_NAME,
     CONTEXT_RESOURCE_URI,
@@ -846,6 +846,8 @@ class MaxMcpServer:
             return run
 
         if entry.local:
+            if entry.name in COMPACT_TOOLS:
+                return self._run_hub_tool(entry, arguments, run)
             # Local tools validate their arguments exactly like bridged ones, but
             # the payload stays as Python values (there is no ANSI wire to encode).
             try:
@@ -976,11 +978,45 @@ class MaxMcpServer:
         run.update({"ok": ok, "payload": payload, "operation_id": "local-" + uuid.uuid4().hex[:8]})
         return run
 
+    def _run_hub_tool(self, entry: Tool, arguments: Dict[str, Any],
+                      run: Dict[str, Any]) -> Dict[str, Any]:
+        """Dispatch a compound hub call to its underlying atomic tool."""
+        raw_action = arguments.get("action")
+        if raw_action is None:
+            run["validation_error"] = "missing required parameter(s): action"
+            return run
+        properties = entry.schema.get("properties", {})
+        action_spec = properties.get("action", {})
+        try:
+            action = _coerce(raw_action, action_spec, "action")
+        except ValueError as exc:
+            run["validation_error"] = str(exc)
+            return run
+
+        raw_params = arguments.get("params")
+        if raw_params is not None:
+            try:
+                sub_args = dict(_coerce(raw_params, properties.get("params", {}), "params"))
+            except ValueError as exc:
+                run["validation_error"] = str(exc)
+                return run
+        else:
+            sub_args = {}
+
+        for key, value in arguments.items():
+            if key not in ("action", "params") and key not in sub_args:
+                sub_args[key] = value
+
+        return self._execute_tool(str(action), sub_args)
+
     def _local_tools(self) -> Dict[str, Any]:
-        return {
+        handlers: Dict[str, Any] = {
             "scene_snapshot": self._tool_scene_snapshot,
             "workflow_run": self._tool_workflow_run,
         }
+        for hub_name in COMPACT_TOOLS:
+            handlers[hub_name] = self._run_hub_tool
+        return handlers
 
     # ------------------------------------------------------------ snapshots
     def _read_nodes(self, arguments: Dict[str, Any]) -> Dict[str, Any]:
@@ -1656,8 +1692,8 @@ Language:
 
 Tools:
   --port <n>               bridge TCP port (default 8765)
-  -p, --profile <name>     tool profile: core | modeling | lookdev |
-                           animation | pipeline | full   (default full)
+  -p, --profile <name>     tool profile: compact | core | modeling | lookdev |
+                           animation | pipeline | full   (default compact)
 
 Diagnostics:
   --list-tools             print every tool the current profile exposes
@@ -1733,7 +1769,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     if "--list-profiles" in argv:
         catalog = build_catalog()
         print("total: {0} tools\n".format(len(catalog)))
-        for name in ("core", "modeling", "lookdev", "animation", "pipeline", "full"):
+        for name in ("compact", "core", "modeling", "lookdev", "animation", "pipeline", "full"):
             stats = catalog.profile_summary(name)
             print("{0:<10} {1:>4} tools   {2}".format(
                 name,

@@ -623,9 +623,9 @@ def main(argv: Optional[List[str]] = None) -> int:
                              "'C:\\Users\\me\\AppData\\Local\\Autodesk\\3dsMax\\2024 - 64bit\\ENU\\scripts'")
     parser.add_argument("--language", choices=["auto", "zh", "en"], default="auto",
                         help="bridge language: auto follows the 3ds Max UI language (default auto)")
-    parser.add_argument("--profile", default="full",
-                        choices=["full", "core", "modeling", "lookdev", "animation", "pipeline"],
-                        help="how many tools to advertise (default full: all 389)")
+    parser.add_argument("--profile", default="compact",
+                        choices=["compact", "full", "core", "modeling", "lookdev", "animation", "pipeline"],
+                        help="how many tools to advertise (default compact: 24 consolidated hubs covering all 395 actions)")
     parser.add_argument("--http-port", type=int, default=0,
                         help="also register a Streamable HTTP endpoint on this port. "
                              "Needed by cloud-side agents that cannot launch a local process. "

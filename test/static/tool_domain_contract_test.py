@@ -276,8 +276,8 @@ def main(argv: List[str]) -> int:
                       field_path, reader, declared))
 
     # -- H. dispatcher / ledger invariants ---------------------------------
-    net = (MS_DIR / "mcp_net.ms").read_text(encoding="utf-8-sig")
-    events = (MS_DIR / "mcp_events.ms").read_text(encoding="utf-8-sig")
+    net = (MS_DIR / "mcp_core.ms").read_text(encoding="utf-8-sig")
+    events = (MS_DIR / "mcp_context.ms").read_text(encoding="utf-8-sig")
 
     dispatch = net.split("fn mcpDispatch method params", 1)
     check(len(dispatch) == 2, "mcpDispatch not found in mcp_net.ms")

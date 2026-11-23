@@ -66,6 +66,7 @@ from maxmcp.catalog import build_catalog  # noqa: E402
 from maxmcp.catalog.schema import PROFILES  # noqa: E402
 
 README = os.path.join(REPO, "README.md")
+README_ZH = os.path.join(REPO, "README.zh-CN.md")
 TOOLS_TXT = os.path.join(REPO, "docs", "tools.txt")
 CHEATSHEET = os.path.join(REPO, "examples", "maxscript", "listener_cheatsheet.ms")
 PROMPTS_MD = os.path.join(REPO, "examples", "prompts.md")
@@ -296,10 +297,22 @@ def audit() -> Tuple[List[str], List[str]]:
     readme = read(README)
     checked = check_scalar_claims(rel(README), readme, README_PATTERNS, facts, problems)
     checked += check_breakdown(rel(README), readme, facts, problems)
-    rows = check_table(rel(README), readme, "| 分类 | 数量 |", facts.categories, problems)
-    rows += check_table(rel(README), readme, "| 档位 | 工具数 |", facts.profiles, problems)
+    rows = 0
+    if "| Category | Reported tools |" in readme:
+        rows += check_table(rel(README), readme, "| Category | Reported tools |", facts.categories, problems)
+    else:
+        rows += check_table(rel(README), readme, "| 分类 | 数量 |", facts.categories, problems)
+        rows += check_table(rel(README), readme, "| 档位 | 工具数 |", facts.profiles, problems)
     report.append("")
     report.append("README.md: {0} scalar claims, {1} table rows checked".format(checked, rows))
+
+    if os.path.isfile(README_ZH):
+        readme_zh = read(README_ZH)
+        zh_checked = check_scalar_claims(rel(README_ZH), readme_zh, README_PATTERNS, facts, problems)
+        zh_checked += check_breakdown(rel(README_ZH), readme_zh, facts, problems)
+        zh_rows = check_table(rel(README_ZH), readme_zh, "| 分类 | 数量 |", facts.categories, problems)
+        zh_rows += check_table(rel(README_ZH), readme_zh, "| 档位 | 工具数 |", facts.profiles, problems)
+        report.append("README.zh-CN.md: {0} scalar claims, {1} table rows checked".format(zh_checked, zh_rows))
 
     cheatsheet = read(CHEATSHEET)
     checked = check_scalar_claims(

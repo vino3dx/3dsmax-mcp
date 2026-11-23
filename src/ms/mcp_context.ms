@@ -1,3 +1,584 @@
+﻿/*-----------------------------------------------------------------------------
+   3ds Max MCP  --  mcp_context.ms
+   Consolidated scene-context plane: change event ledger, 9-domain incremental
+   context store, and the in-Max client panel UI.
+-----------------------------------------------------------------------------*/
+
+/* ==========================================================================
+   SECTION: mcp_events.ms
+   ========================================================================== */
+/*-----------------------------------------------------------------------------
+   3ds Max MCP  --  mcp_events.ms
+   Event layer for the built in client: what changed, and since when.
+
+   Why this file exists
+   --------------------
+   Everything the bridge exposes is a request/response command: Python asks,
+   Max answers.  That is enough to *read* the scene, but not enough to know
+   whether the answer is still true.  This module keeps a cheap change ledger
+   inside Max, so a client can ask "give me what changed since revision 41"
+   instead of re-reading the whole scene on every call.
+
+   What is measured, not assumed (3ds Max 2022, verified on the live bridge)
+   -----------------------------------------------------------------------
+   * callbacks.addScript <name> "<code>" works and fires SYNCHRONOUSLY, which
+     is why the handlers here only set flags.  A handler that walked the scene
+     would run inside every selection the user makes.
+   * the id: argument must be a Name.  An integer raises
+     "Callback script ID must be a name", so every registration below uses a
+     #name id and can therefore be removed again on reload.
+   * only 20 of the 55 compact notifications exist on this release
+     (#selectionSetChanged, #nodeRenamed, #filePreSave, ... yes;
+      #nodeAdded, #preSave, #preOpen, #preNew, #preMerge, #systemStartup,
+      #layerChanged ... no).  The set differs between releases, so it is
+     probed at startup and reported instead of being hardcoded as available.
+   * NodeEventCallback takes a handler with EXACTLY TWO arguments
+     (eventName:Name, nodes:Array).  MAXScript is strict about arity and the
+     "argument count" error only reaches the Listener, never the bridge -- a
+     wrong arity therefore looks exactly like "the event never fires".
+     On this release it delivers added/deleted, but NOT selectionChanged,
+     nameChanged or geometryChanged for scripted edits, so those keep using
+     the general notifications above.
+
+   What is deliberately NOT here
+   -----------------------------
+   No timer, no socket, no polling loop of its own.  The bridge already owns a
+   25 ms WinForms pump; mcpCtxTick (mcp_context.ms) rides on it.  A second
+   timer would compete with that pump and re-open the re-entrancy class of bug
+   that mcpPumpBusy exists to prevent.
+-----------------------------------------------------------------------------*/
+
+global mcpEvRevision, mcpEvSeq, mcpEvLog, mcpEvLogCap, mcpEvClock
+global mcpEvRunning, mcpEvNodeCb, mcpEvIds, mcpEvCaps, mcpEvStartTime
+global mcpEventsStart, mcpEventsStop, mcpEventsStatus, mcpEventsLog, mcpEventsCaps
+global mcpEvFire, mcpEvNodeAdded, mcpEvNodeDeleted, mcpEvAfterWrite
+global mcpEvDomainsFor, mcpEvClockUpdate, mcpEvReset, mcpEvDirty
+global mcpEvRendering, mcpEvRenderStart, mcpEvLastRender
+-- Shared with mcp_json.ms: every error string that reaches the wire or the log
+-- is flattened and capped there, never raw from getCurrentException().
+global mcpErrText
+-- Owned by mcp_domains.ms (generated): the names a declared domain may use.
+global mcpDomainNames
+-- Owned by mcp_context.ms; declared here so the guard below is a real global
+-- read on every release instead of an implicit one.
+global mcpCtxMarkDirty
+
+-- Revision 0 means "nothing has happened yet".  It is preserved across a
+-- module reload so a client that cached revision 41 does not suddenly see the
+-- counter go backwards and re-read everything.
+if mcpEvRevision == undefined do mcpEvRevision = 0
+if mcpEvSeq == undefined do mcpEvSeq = 0
+if mcpEvLog == undefined do mcpEvLog = #()
+if mcpEvLogCap == undefined do mcpEvLogCap = 250
+if mcpEvRunning == undefined do mcpEvRunning = false
+if mcpEvIds == undefined do mcpEvIds = #()
+if mcpEvCaps == undefined do mcpEvCaps = #()
+if mcpEvStartTime == undefined do mcpEvStartTime = (timeStamp())
+if mcpEvClock == undefined do mcpEvClock = ""
+-- Render state: #preRender / #postRender are the only two render facts this
+-- release reports, so they bracket a job instead of describing its progress.
+if mcpEvRendering == undefined do mcpEvRendering = false
+if mcpEvRenderStart == undefined do mcpEvRenderStart = 0
+if mcpEvLastRender == undefined do mcpEvLastRender = 0
+
+
+/*------------------------------------------------------------------ plumbing*/
+-- One shared clock string, refreshed at most every 250 ms by the context tick.
+-- Formatting a DateTime per event would run inside every user selection.
+fn mcpEvClockUpdate =
+(
+    local st = ""
+    try ( st = (dotNetClass "System.DateTime").Now.ToString "HH:mm:ss" ) catch ( st = "" )
+    if st != "" do mcpEvClock = st
+    mcpEvClock
+)
+
+fn mcpEvDomainsFor kind =
+(
+    local k = toLower (kind as string)
+    case k of
+    (
+        -- `scene` travels with every selection change: mcpCtxBuildScene publishes
+        -- selectionCount, so marking only `selection` left scene.selectionCount
+        -- frozen at its first value while selection.count moved (Phase B F1).
+        "selectionsetchanged": #("scene", "selection")
+        "selectionchanged":    #("scene", "selection")
+        "noderenamed":         #("scene", "objects", "selection")
+        "nodeadded":           #("scene", "objects")
+        "nodedeleted":         #("scene", "objects", "selection", "assets")
+        "added":               #("scene", "objects")
+        "deleted":             #("scene", "objects", "selection", "assets")
+        "layercreated":        #("scene", "objects")
+        "layerdeleted":        #("scene", "objects")
+        "layerchanged":        #("scene", "objects")
+        "unitschange":         #("scene")
+        "filepresave":         #("scene")
+        "filepostsave":        #("scene")
+        "filepreopen":         #("scene")
+        "filepostopen":        #("scene", "objects", "selection", "materials", "assets", "animation", "rigging", "render", "project")
+        "preimport":           #("scene", "objects", "assets")
+        "postimport":          #("scene", "objects", "selection", "materials", "assets")
+        "preexport":           #()
+        "postexport":          #()
+        "prerender":           #("render")
+        "postrender":          #("render")
+        "prerenderframe":      #("render")
+        "postrenderframe":     #("render")
+        "sceneundo":           #("scene", "objects", "selection", "materials", "assets", "animation", "rigging")
+        "sceneredo":           #("scene", "objects", "selection", "materials", "assets", "animation", "rigging")
+        -- Posted while the Modify panel edits an object: a spinner drag or a
+        -- sub-object edit changes the geometry, which the objects domain
+        -- reports (faces / verts / totals).  This is the only notification this
+        -- release offers for those edits (Phase B F6).
+        "modpanelobjpostchange": #("objects", "selection")
+        default:               #("scene")
+    )
+)
+
+/* Every change ends up here.  O(1): bump the counter, append one log row,
+   tell the context cache which domains went stale.  Nothing scans the scene.
+
+   `domains:` overrides the kind -> domains table.  The tick (mcpCtxTick) needs
+   it: it detects a change that has no notification at all, so there is no kind
+   to look up, yet the revision it moves must still be explainable in the log.
+   Before this, the tick bumped mcpEvRevision directly and the event log had no
+   row for the revision it produced, so a client that polled `revision` saw the
+   number move with nothing to attribute it to (Phase B F5). */
+fn mcpEvFire kind detail:"" domains:undefined =
+(
+    mcpEvRevision += 1
+    mcpEvSeq += 1
+
+    local lk = toLower (kind as string)
+    if lk == "prerender" do ( mcpEvRendering = true; mcpEvRenderStart = (timeStamp()) )
+    if lk == "postrender" do
+    (
+        mcpEvRendering = false
+        mcpEvLastRender = (timeStamp()) - mcpEvRenderStart
+    )
+
+    local dlist = domains
+    if dlist == undefined do dlist = mcpEvDomainsFor kind
+    local row = #()
+    mcpPair row "seq" mcpEvSeq
+    mcpPair row "revision" mcpEvRevision
+    mcpPair row "at" (if mcpEvClock == "" then (mcpEvClockUpdate()) else mcpEvClock)
+    mcpPair row "event" (kind as string)
+    mcpPair row "domains" dlist
+    if detail != "" do mcpPair row "detail" (mcpErrText detail maxLen:200)
+    append mcpEvLog (mcpObj row)
+
+    -- Ring buffer: the newest mcpEvLogCap rows only.  Rebuilding the array is
+    -- cheaper than an O(n) delete in a hot callback for these sizes.
+    if mcpEvLog.count > mcpEvLogCap do
+    (
+        local keep = #()
+        local first = mcpEvLog.count - mcpEvLogCap + 1
+        for i = first to mcpEvLog.count do append keep mcpEvLog[i]
+        mcpEvLog = keep
+    )
+
+    -- mcp_context.ms owns the caches; it may not be loaded (or may have failed
+    -- to load) and that must not break the callback.
+    if mcpCtxMarkDirty != undefined do
+    (
+        -- Wrapped: an exception escaping a callback is invisible to the bridge
+        -- and would silently disable every later event.
+        try ( mcpCtxMarkDirty dlist ) catch()
+    )
+    mcpEvRevision
+)
+
+/* NodeEventCallback handlers -- exactly two arguments, see the header note. */
+fn mcpEvNodeAdded ev nodes =
+(
+    local n = 0
+    try ( n = nodes.count ) catch ( n = 0 )
+    mcpEvFire (ev as string) detail:((n as string) + " node(s)")
+)
+
+fn mcpEvNodeDeleted ev nodes =
+(
+    local n = 0
+    try ( n = nodes.count ) catch ( n = 0 )
+    mcpEvFire (ev as string) detail:((n as string) + " node(s)")
+)
+
+/* Which context domains a write can invalidate, derived from the tool name.
+   The catalog names tools `<prefix>_<verb><noun>`, so the prefix carries the
+   meaning.  The first draft fell back to "scene + objects + selection" for
+   everything, which invalidated three domains on every write and made
+   incremental sync useless for the domains that matter most.  `scene` stays
+   unconditional: it holds objectCount/selectionCount/currentFrame/modified and
+   costs 0-1 ms to rebuild.
+   `execute_maxscript` and any unknown prefix keep the broad, conservative set
+   because an arbitrary script really can touch anything.
+
+   This table is a *fallback*: mcp_domains.ms is authoritative and answers for
+   every registered command.  The rows that are known to be approximations are
+   still corrected here (select / deselect carry `scene` because the scene
+   section publishes selectionCount), so a bridge running on a stale table does
+   not reintroduce a bug that was already fixed. */
+fn mcpEvDomainsForMethod m =
+(
+    local n = toLower (m as string)
+    -- Empty, not #("scene"): seeding scene here made every call -- including
+    -- pure reads such as context_stats -- invalidate the scene domain, so a
+    -- polling client never saw a cache hit and the event log filled with rows
+    -- that claimed a change had happened.
+    local domains = #()
+    local p = n
+    local cut = findString n "_"
+    if cut != undefined and cut > 1 do p = substring n 1 (cut - 1)
+
+    case p of
+    (
+        "select":     ( append domains "scene"; append domains "selection" )
+        "deselect":   ( append domains "scene"; append domains "selection" )
+        "obj":        ( append domains "objects"; append domains "selection" )
+        "create":     ( append domains "objects"; append domains "selection" )
+        "clone":      ( append domains "objects"; append domains "selection" )
+        "array":      ( append domains "objects"; append domains "selection" )
+        "delete":     ( append domains "objects"; append domains "selection"; append domains "assets" )
+        "attach":     ( append domains "objects"; append domains "selection" )
+        "detach":     ( append domains "objects"; append domains "selection" )
+        "boolean":    ( append domains "objects"; append domains "selection" )
+        "proboolean": ( append domains "objects"; append domains "selection" )
+        "collapse":   ( append domains "objects"; append domains "selection" )
+        "convert":    ( append domains "objects"; append domains "selection" )
+        "mod":        ( append domains "objects"; append domains "selection" )
+        "poly":       ( append domains "objects"; append domains "selection" )
+        "model":      ( append domains "objects"; append domains "selection" )
+        "spline":     ( append domains "objects"; append domains "selection" )
+        "uvw":        ( append domains "objects" )
+        "group":      ( append domains "objects"; append domains "selection" )
+        "ungroup":    ( append domains "objects"; append domains "selection" )
+        "open":       ( append domains "objects"; append domains "selection" )
+        "close":      ( append domains "objects"; append domains "selection" )
+        "parent":     ( append domains "objects"; append domains "selection" )
+        "unparent":   ( append domains "objects"; append domains "selection" )
+        "rename":     ( append domains "objects"; append domains "selection" )
+        "layer":      ( append domains "objects" )
+        "assign":     ( append domains "objects" )
+        "move":       ( append domains "objects"; append domains "selection" )
+        "transform":  ( append domains "objects"; append domains "selection" )
+        "mirror":     ( append domains "objects"; append domains "selection" )
+        "reset":      ( append domains "objects"; append domains "selection" )
+        "snap":       ( append domains "objects"; append domains "selection" )
+        "scatter":    ( append domains "objects"; append domains "selection" )
+        "align":      ( append domains "selection" )
+        "xform":      ( append domains "selection" )
+        "hide":       ( append domains "objects"; append domains "selection" )
+        "unhide":     ( append domains "objects"; append domains "selection" )
+        "freeze":     ( append domains "objects"; append domains "selection" )
+        "unfreeze":   ( append domains "objects"; append domains "selection" )
+        "mat":        ( append domains "materials"; append domains "assets" )
+        "map":        ( append domains "materials"; append domains "assets" )
+        "tex":        ( append domains "materials"; append domains "assets" )
+        "bake":       ( append domains "materials"; append domains "assets" )
+        "relink":     ( append domains "assets"; append domains "materials" )
+        "asset":      ( append domains "assets" )
+        "env":        ( append domains "render"; append domains "materials" )
+        "anim":       ( append domains "animation" )
+        "key":        ( append domains "animation" )
+        "ctrl":       ( append domains "animation" )
+        "track":      ( append domains "animation" )
+        "time":       ( append domains "animation" )
+        "rig":        ( append domains "rigging"; append domains "objects" )
+        "skin":       ( append domains "rigging" )
+        "bone":       ( append domains "rigging"; append domains "objects" )
+        "biped":      ( append domains "rigging"; append domains "objects" )
+        "constraint": ( append domains "rigging"; append domains "objects" )
+        "light":      ( append domains "render"; append domains "objects" )
+        "cam":        ( append domains "render"; append domains "objects" )
+        "render":     ( append domains "render"; append domains "project" )
+        "import":     ( append domains "project"; append domains "assets"; append domains "objects"; append domains "materials" )
+        "export":     ( append domains "project"; append domains "assets" )
+        "file":       ( append domains "project"; append domains "assets"; append domains "scene" )
+        "xref":       ( append domains "project"; append domains "assets" )
+        "project":    ( append domains "project" )
+        "unit":       ( append domains "scene" )
+        "undo":       ( append domains "objects"; append domains "selection" )
+        "redo":       ( append domains "objects"; append domains "selection" )
+        -- Arbitrary code really can touch everything.
+        "execute":    ( append domains "objects"; append domains "selection"; append domains "materials"
+                        append domains "assets"; append domains "animation"; append domains "rigging"
+                        append domains "render"; append domains "project" )
+        -- Files, directories, viewport grabs: no context domain changes.
+        "write":      ( )
+        "make":       ( )
+        "copy":       ( )
+        "viewport":   ( )
+        "bridge":     ( )
+        "client":     ( )
+        "context":    ( )
+        "scene":      ( append domains "scene"; append domains "project"; append domains "objects"; append domains "selection"
+                        append domains "materials"; append domains "assets"; append domains "animation"
+                        append domains "rigging"; append domains "render" )
+        default:      ( append domains "objects"; append domains "selection"; append domains "materials" )
+    )
+
+    -- De-duplicate: mcpCtxMarkDirty bumps a revision per entry, and a domain
+    -- listed twice would look like two separate changes.
+    local uniq = #()
+    for d in domains do
+    (
+        local dup = false
+        for u in uniq while not dup do ( if u == d do dup = true )
+        if not dup do append uniq d
+    )
+    uniq
+)
+
+/* Called by mcpDispatch after a command succeeded.  Pass `domains:` with the
+   declared set from mcp_domains.ms; when the argument is omitted the legacy
+   prefix heuristic answers, which is only correct for commands that predate the
+   declaration table (and those all have a row by now -- the contract test
+   enforces it).
+
+   Two things this must never do: bump the revision for a command that changed
+   nothing (`domains` empty), and claim a domain that the table did not name. */
+fn mcpEvAfterWrite method domains:undefined =
+(
+    local declared = (domains != undefined)
+    local wanted = domains
+    if wanted == undefined do wanted = mcpEvDomainsForMethod method
+
+    -- De-duplicate and drop names this build does not know: a typo in the table
+    -- would otherwise mark nothing and look like a successful write.
+    local list = #()
+    for d in wanted do
+    (
+        local name = ""
+        try ( name = toLower (d as string) ) catch ( name = "" )
+        if name != "" do
+        (
+            local known = true
+            if mcpDomainNames != undefined do
+            (
+                known = false
+                for k in mcpDomainNames do ( if k == name do known = true )
+            )
+            local dup = false
+            for u in list while not dup do ( if u == name do dup = true )
+            if known and (not dup) do append list name
+        )
+    )
+
+    -- A read-only command maps to no domain at all.  Recording it would claim a
+    -- change that did not happen and bump the revision the client uses for
+    -- `since`.
+    if list.count == 0 then return mcpEvRevision
+
+    mcpEvRevision += 1
+    mcpEvSeq += 1
+    local row = #()
+    mcpPair row "seq" mcpEvSeq
+    mcpPair row "revision" mcpEvRevision
+    mcpPair row "at" (if mcpEvClock == "" then (mcpEvClockUpdate()) else mcpEvClock)
+    mcpPair row "event" "tool"
+    mcpPair row "domains" list
+    mcpPair row "source" (if declared then "declared" else "heuristic")
+    mcpPair row "detail" (mcpErrText method maxLen:120)
+    append mcpEvLog (mcpObj row)
+    if mcpEvLog.count > mcpEvLogCap do
+    (
+        local keep = #()
+        local first = mcpEvLog.count - mcpEvLogCap + 1
+        for i = first to mcpEvLog.count do append keep mcpEvLog[i]
+        mcpEvLog = keep
+    )
+    if mcpCtxMarkDirty != undefined do ( try ( mcpCtxMarkDirty list ) catch() )
+    mcpEvRevision
+)
+
+
+/*------------------------------------------------------------ registration*/
+/* The notifications this build actually offers.  Anything not in this table
+   is either covered by NodeEventCallback (added/deleted) or has no
+   notification at all on this release and is therefore detected by the
+   identity check in mcpCtxTick (new / reset / merge). */
+fn mcpEvWanted =
+(
+    #(
+        #selectionSetChanged, #nodeRenamed,
+        #filePreSave, #filePostSave, #filePreOpen, #filePostOpen,
+        #preImport, #postImport, #preExport, #postExport,
+        #preRender, #postRender, #preRenderFrame, #postRenderFrame,
+        #sceneUndo, #sceneRedo, #unitsChange,
+        #layerCreated, #layerDeleted, #modPanelObjPostChange
+    )
+)
+
+/* Probed but not required: recorded in the capability table so a different
+   release can be diagnosed from the panel instead of from a bug report. */
+fn mcpEvOptional =
+(
+    #(
+        #nodeAdded, #nodeDeleted, #nodeCreated,
+        #preSave, #postSave, #preOpen, #postOpen,
+        #preNew, #postNew, #preReset, #postReset,
+        #preMerge, #postMerge, #systemStartup, #systemShutdown,
+        #timeUnitChange, #layerChanged, #postSceneLoad, #selectionChanged
+    )
+)
+
+fn mcpEventsStop =
+(
+    local removed = 0
+    for idName in mcpEvIds do
+    (
+        local ok = true
+        try ( callbacks.removeScripts id:idName ) catch ( ok = false )
+        if ok do removed += 1
+    )
+    mcpEvIds = #()
+
+    -- NodeEventCallback has no destroy call; disabling it stops delivery and
+    -- dropping the reference lets the callback be collected.
+    if mcpEvNodeCb != undefined do ( try ( mcpEvNodeCb.enabled = false ) catch() )
+    mcpEvNodeCb = undefined
+    mcpEvRunning = false
+    removed
+)
+
+fn mcpEventsStart silent:false =
+(
+    -- Idempotent by construction: always tear down first.  Loading the module
+    -- twice (fileIn during development) must not stack duplicate handlers,
+    -- which would multiply every event and every revision bump.
+    try ( mcpEventsStop() ) catch()
+
+    mcpEvClockUpdate()
+    local caps = #()
+    local registered = #()
+
+    for note in (mcpEvWanted()) do
+    (
+        local idName = ("mcpEv_" + (note as string)) as name
+        local code = "mcpEvFire #" + (note as string)
+        local ok = true
+        local err = ""
+        try ( callbacks.addScript note code id:idName )
+        catch ( ok = false; err = (mcpErrText (getCurrentException())) )
+
+        if ok then
+        (
+            append mcpEvIds idName
+            append registered (note as string)
+        )
+        append caps #(note as string, ok, "wanted", err)
+    )
+
+    -- Optional probes: register, note whether this release knows the name,
+    -- then remove again so they never interfere.
+    for note in (mcpEvOptional()) do
+    (
+        local ok = true
+        local err = ""
+        local idName = ("mcpEvProbe_" + (note as string)) as name
+        try ( callbacks.addScript note "ok" id:idName )
+        catch ( ok = false; err = (mcpErrText (getCurrentException())) )
+        if ok do ( try ( callbacks.removeScripts id:idName ) catch() )
+        append caps #(note as string, ok, "probe", err)
+    )
+
+    -- Node level events.  Two arguments, deliberately: see the header.
+    local nodeOk = true
+    local nodeErr = ""
+    try ( mcpEvNodeCb = NodeEventCallback mouseUp:false delay:50 added:mcpEvNodeAdded deleted:mcpEvNodeDeleted )
+    catch ( nodeOk = false; nodeErr = (mcpErrText (getCurrentException())) )
+    append caps #("NodeEventCallback(added,deleted)", nodeOk, "node", nodeErr)
+
+    mcpEvCaps = caps
+    mcpEvRunning = true
+    mcpEvStartTime = (timeStamp())
+
+    if not silent do
+    (
+        local missing = #()
+        for c in caps do ( if c[3] == "wanted" and (not c[2]) do append missing c[1] )
+        try
+        (
+            local note = "events: started, " + (registered.count as string) + " notifications, "
+            if nodeOk then ( note += "node callback ok" ) else ( note += "node callback failed: " + nodeErr )
+            if missing.count > 0 do note += ", unavailable: " + (mcpStringJoin missing ", ")
+            mcpBridgeLog note
+        )
+        catch()
+    )
+
+    local p = #()
+    mcpPair p "running" mcpEvRunning
+    mcpPair p "registered" registered
+    mcpPair p "revision" mcpEvRevision
+    mcpObj p
+)
+
+fn mcpEventsStatus =
+(
+    local p = #()
+    mcpPair p "running" mcpEvRunning
+    mcpPair p "revision" mcpEvRevision
+    mcpPair p "events" mcpEvSeq
+    mcpPair p "logSize" mcpEvLog.count
+    mcpPair p "uptimeMs" ((timeStamp()) - mcpEvStartTime)
+    mcpPair p "notificationCount" mcpEvIds.count
+    mcpPair p "nodeCallback" (mcpEvNodeCb != undefined)
+    mcpPair p "clock" mcpEvClock
+    mcpPair p "capabilities" mcpEvCaps
+    mcpObj p
+)
+
+fn mcpEventsCaps =
+(
+    local used = #()
+    local missing = #()
+    local probed = #()
+    for c in mcpEvCaps do
+    (
+        if c[3] == "wanted" then ( if c[2] then append used c[1] else append missing c[1] )
+        else if c[3] == "probe" and c[2] do append probed c[1]
+    )
+    local p = #()
+    mcpPair p "registered" used
+    mcpPair p "unavailableHere" missing
+    mcpPair p "alsoAvailable" probed
+    mcpPair p "note" "availability is measured on the running build, not assumed from a version number"
+    mcpObj p
+)
+
+-- Newest first, capped, for the panel and for context_events.
+fn mcpEventsLog limit:50 =
+(
+    local lim = limit
+    if lim < 1 do lim = 1
+    local out = #()
+    local i = mcpEvLog.count
+    while i >= 1 and out.count < lim do
+    (
+        append out mcpEvLog[i]
+        i -= 1
+    )
+    local p = #()
+    mcpPair p "count" out.count
+    mcpPair p "total" mcpEvSeq
+    mcpPair p "revision" mcpEvRevision
+    mcpPair p "events" out
+    mcpObj p
+)
+
+fn mcpEvReset =
+(
+    mcpEvLog = #()
+    mcpEvSeq = 0
+    mcpEvRevision += 1
+    mcpEvRevision
+)
+
+/* ==========================================================================
+   SECTION: mcp_context.ms
+   ========================================================================== */
 /*-----------------------------------------------------------------------------
    3ds Max MCP  --  mcp_context.ms
    The scene context store: one place that answers "what is in this scene right
@@ -1354,3 +1935,687 @@ mcpRegister "context_get" mcpH_context_get undoable:false
 mcpRegister "context_refresh" mcpH_context_refresh undoable:false
 mcpRegister "context_stats" mcpH_context_stats undoable:false
 mcpRegister "context_events" mcpH_context_events undoable:false
+
+/* ==========================================================================
+   SECTION: mcp_ui.ms
+   ========================================================================== */
+/*-----------------------------------------------------------------------------
+   3ds Max MCP  --  mcp_ui.ms
+   "Vino 3dsMax MCP" -- the in-Max client panel.
+
+   Scope of this first version
+   ---------------------------
+   It is a *window onto real state*, not a simulation of it: every page is
+   filled from the same handlers the MCP tools call (bridge status, context
+   sections, event ledger, self test).  If a number is not available, the page
+   says so instead of printing a plausible zero.
+
+   Pages: Connection (bridge), Context (per-domain cache state), Events (ring
+   buffer), Diagnostics (capabilities, registration failures, environment), then
+   Scene / Selection / Assets as detail views.  The first four are counters only;
+   the last three read the context cache and rebuild solely on Rebuild.
+
+   Deliberately simple
+   -------------------
+   One dotNet TabControl with read-only text pages, and MAXScript buttons for
+   the actions.  MAXScript rollout buttons are the well-trodden path; wiring
+   every child control's events would add failure modes without adding data.
+   Later phases can replace a page with a real tree without touching the
+   collectors, because the collectors are the MCP handlers either way.
+
+   Why createDialog and not a docked dialog bar
+   --------------------------------------------
+   createDialog is modeless and returns immediately, so opening the panel from
+   a bridge command cannot deadlock the pump.  cui.RegisterDialogBar is probed
+   at open time and only used when this release has it; the panel never depends
+   on being dockable.
+-----------------------------------------------------------------------------*/
+
+global mcpUiRollout, mcpUiDialog, mcpUiPages, mcpUiTab, mcpUiCurrent, mcpUiCrlf
+global mcpUiOpen, mcpUiClose, mcpUiRefresh, mcpUiPretty, mcpUiPageText, mcpUiLogPath
+global mcpUiPad, mcpUiRow, mcpUiDomainText, mcpUiCrlf, mcpUiPageNames
+global mcpUiBridgeUp, mcpUiBridgeStart, mcpUiBridgeNote
+global mcpRunning, mcpListener, mcpTimer, mcpHost, mcpPort, mcpConns
+global mcpH_client_ui, mcpH_client_status
+
+if mcpUiPages == undefined do mcpUiPages = #()
+if mcpUiCurrent == undefined do mcpUiCurrent = 1
+
+fn mcpUiLogPath =
+(
+    local p = ""
+    try ( p = mcpBridgeLogPath() ) catch ( p = "" )
+    if p == undefined then "" else p
+)
+
+/* Readable rendering of the pair objects the bridge uses.  Compact JSON is
+   what mcpJsonStringify produces; a panel wants one field per line, so this
+   walks the same structure with an indent and a depth cap. */
+fn mcpUiPretty value indent:0 depth:0 =
+(
+    local pad = ""
+    for i = 1 to indent do pad += "  "
+    local out = ""
+
+    if depth > 6 then return (pad + "..." + "\n")
+
+    if mcpIsObj value then
+    (
+        local pairs = mcpPairs value
+        if pairs.count == 0 do return (pad + "{}" + "\n")
+        for p in pairs do
+        (
+            local v = p[2]
+            if mcpIsObj v then
+            (
+                out += pad + (p[1] as string) + ":" + "\n"
+                out += (mcpUiPretty v indent:(indent + 1) depth:(depth + 1))
+            )
+            else if isKindOf v Array then
+            (
+                if v.count == 0 then out += pad + (p[1] as string) + ": []" + "\n"
+                else
+                (
+                    local simple = true
+                    for e in v do ( if isKindOf e Array then simple = false )
+                    if simple then
+                    (
+                        local line = ""
+                        local n = 0
+                        for e in v do
+                        (
+                            n += 1
+                            if n > 12 do exit
+                            local t = if e == undefined then "null" else (e as string)
+                            line += t + (if n < v.count and n < 12 then ", " else "")
+                        )
+                        if v.count > 12 do line += " ... (" + (v.count as string) + ")"
+                        out += pad + (p[1] as string) + ": " + line + "\n"
+                    )
+                    else
+                    (
+                        out += pad + (p[1] as string) + ": (" + (v.count as string) + ")" + "\n"
+                        local n = 0
+                        for e in v do
+                        (
+                            n += 1
+                            if n <= 20 do out += (mcpUiPretty e indent:(indent + 2) depth:(depth + 1))
+                        )
+                    )
+                )
+            )
+            else
+            (
+                local t = if v == undefined then "null" else (v as string)
+                out += pad + (p[1] as string) + ": " + t + "\n"
+            )
+        )
+    )
+    else if isKindOf value Array then
+    (
+        for e in value do out += (mcpUiPretty e indent:indent depth:(depth + 1))
+    )
+    else out += pad + ((value as string) + "\n")
+    out
+)
+
+/*------------------------------ page helpers*/
+/* One list, two consumers (the tab control and client_status), so a rename can
+   never leave the tool reporting a page the panel does not have. */
+fn mcpUiPageNames =
+(
+    -- The four the client contract names come first; the last three are detail
+    -- views backed by the context cache.
+    #("Connection", "Context", "Events", "Diagnostics", "Scene", "Selection", "Assets")
+)
+fn mcpUiPad s width =
+(
+    local t = s as string
+    while t.count < width do t += " "
+    t
+)
+
+fn mcpUiRow cells widths =
+(
+    local line = ""
+    for i = 1 to cells.count do line += (mcpUiPad cells[i] widths[i])
+    line
+)
+
+/* Detail pages read whatever the context cache already holds.  Only an explicit
+   Rebuild is allowed to walk the scene graph, so refreshing the panel while a
+   large scene is open costs nothing: pages 1-4 are counters only, 5-7 are a
+   cache lookup. */
+fn mcpUiDomainText domain force:false =
+(
+    if force then
+    (
+        local res = mcpCtxPayload domain
+        return (mcpUiPretty res[1])
+    )
+
+    local cur = mcpCtxCachedEntry domain
+    if cur != undefined do return (mcpUiPretty cur[3])
+
+    -- Nothing built for the current revision.  Showing the previous snapshot
+    -- beats an empty page, but only with the staleness stated in the first
+    -- line: silent stale data is the failure mode this module exists to avoid.
+    local old = mcpCtxAnyEntry domain
+    if old == undefined then
+        return ("(never built - press Rebuild)" + "\n")
+    local head = "STALE SNAPSHOT  revision " + (old[2] as string)
+    head += ", current " + ((mcpCtxRevFor domain) as string)
+    head += ", built " + ((mcpGet old[3] "updatedAt") as string) + "\n"
+    head += "(the values below describe that snapshot, not the live scene)" + "\n"
+    head + (mcpUiPretty old[3])
+)
+
+/* One page = one live query.  Any failure becomes text in the page: the panel
+   is a diagnostic tool, so it must be able to report a broken bridge instead
+   of going blank. */
+fn mcpUiPageText index force:false =
+(
+    local text = ""
+    local t0 = (timeStamp())
+    try
+    (
+        case index of
+        (
+            1:
+            (
+                text += "Connection" + "\n"
+                text += "----------------------------------------" + "\n"
+                -- Rendered field by field instead of through mcpUiPretty: the
+                -- `product` member is a raw 9-element version array string and
+                -- reads as a defect in a panel, while year/major/build already
+                -- say the same thing.
+                local st = mcpH_bridge_status #()
+                for p in (mcpPairs st) do
+                (
+                    local k = p[1] as string
+                    if k == "maxVersion" and mcpIsObj p[2] then
+                    (
+                        local parts = ""
+                        for q in (mcpPairs p[2]) do
+                        (
+                            local qk = q[1] as string
+                            if qk != "product" do parts += qk + "=" + (q[2] as string) + "  "
+                        )
+                        text += "maxVersion: " + parts + "\n"
+                    )
+                    else if k == "maxVersion" then text += "maxVersion: " + (p[2] as string) + "\n"
+                    else text += (mcpUiPretty (mcpObj #(p)) indent:0 depth:0)
+                )
+                text += "\n" + "Events" + "\n"
+                text += (mcpUiPretty (mcpEventsStatus()))
+                -- The bridge cannot be restarted from outside Max, so point at
+                -- the one control inside Max that can do it.
+                text += "\n" + "If running or timerActive reads false, no client can reach Max." + "\n"
+                text += "Press the Start bridge button below to bring the listener back." + "\n"
+            )
+            2:
+            (
+                text += "Context" + "\n"
+                text += "----------------------------------------" + "\n"
+                local st = mcpH_context_stats #()
+                text += "revision   : " + ((mcpGet st "revision") as string) + "\n"
+                text += "tickCount  : " + ((mcpGet st "tickCount") as string) + "\n"
+                text += "events     : " + ((mcpGet st "events") as string) + "   running=" + ((mcpGet st "eventsRunning") as string) + "\n"
+                text += "builds     : " + ((mcpGet st "builds") as string) + "   slowest=" + ((mcpGet st "slowestBuildMs") as string) + " ms" + "\n"
+                local le = mcpGet st "lastError"
+                local leText = "-"
+                if le != undefined and le != "" do leText = le as string
+                text += "lastError  : " + leText + "\n"
+                text += "\n"
+                text += (mcpUiRow #("domain", "rev", "state", "valid", "stale", "sup", "ms", "updatedAt") #(11, 5, 11, 7, 7, 6, 5, 0)) + "\n"
+                text += "--------------------------------------------------" + "\n"
+                for d in (mcpGet st "domains") do
+                (
+                    -- `state` is the word that separates "never built" from
+                    -- "the read failed"; reading an absent field would raise on
+                    -- an older bridge, so it is fetched defensively.
+                    local stText = ""
+                    local rawState = mcpGet d "state"
+                    if rawState != undefined do ( try ( stText = rawState as string ) catch ( stText = "" ) )
+                    local cells = #()
+                    append cells ((mcpGet d "domain") as string)
+                    append cells ((mcpGet d "revision") as string)
+                    append cells stText
+                    append cells ((mcpGet d "valid") as string)
+                    append cells ((mcpGet d "stale") as string)
+                    append cells ((mcpGet d "supported") as string)
+                    append cells ((mcpGet d "buildMs") as string)
+                    append cells ((mcpGet d "updatedAt") as string)
+                    text += (mcpUiRow cells #(11, 5, 11, 7, 7, 6, 5, 0)) + "\n"
+                )
+                text += "\n" + "state: fresh / partial / stale / unsupported / failed / unbuilt." + "\n"
+                text += "stale=true: cached copy is older than the domain revision." + "\n"
+            )
+            3:
+            (
+                text += "Events" + "\n"
+                text += "----------------------------------------" + "\n"
+                -- mcpEventsLog returns an object (count/total/revision/events),
+                -- not a bare array; the rows live under "events", newest first.
+                local log = mcpEventsLog limit:40
+                local rows = mcpGet log "events"
+                text += "total recorded : " + ((mcpGet log "total") as string) + "   revision: " + ((mcpGet log "revision") as string) + "\n"
+                text += "\n"
+                text += (mcpUiRow #("seq", "at", "event", "domains", "detail") #(5, 10, 12, 26, 0)) + "\n"
+                text += "------------------------------------------------------------" + "\n"
+                if rows.count == 0 do text += "(no events recorded yet)" + "\n"
+                for r in rows do
+                (
+                    local dom = mcpGet r "domains"
+                    local domText = ""
+                    if isKindOf dom Array do ( for x in dom do domText += (x as string) + " " )
+                    local det = mcpGet r "detail"
+                    local cells = #()
+                    append cells ((mcpGet r "seq") as string)
+                    append cells ((mcpGet r "at") as string)
+                    append cells ((mcpGet r "event") as string)
+                    append cells domText
+                    if det != undefined do append cells (det as string)
+                    text += (mcpUiRow cells #(5, 10, 12, 26, 0)) + "\n"
+                )
+            )
+            4:
+            (
+                text += "Diagnostics" + "\n"
+                text += "----------------------------------------" + "\n"
+                local caps = mcpEventsCaps()
+                local reg = mcpGet caps "registered"
+                local miss = mcpGet caps "unavailableHere"
+                local probe = mcpGet caps "alsoAvailable"
+                text += "notifications registered : " + (reg.count as string) + "\n"
+                local missText = "none"
+                if miss.count > 0 do missText = mcpStringJoin miss ", "
+                text += "unavailable here         : " + missText + "\n"
+                if probe.count > 0 do text += "probe-only available     : " + (mcpStringJoin probe ", ") + "\n"
+
+                -- Split by intent.  A probe that this build rejects is the
+                -- probe working correctly, not a failure; listing 18 of those
+                -- under "failures" would make a healthy bridge look broken.
+                local wantedFail = #()
+                local rejected = #()
+                for c in mcpEvCaps do
+                (
+                    local kind = c[3]
+                    local ok = c[2]
+                    if (not ok) and kind == "wanted" do append wantedFail c
+                    if (not ok) and kind == "probe" do append rejected c[1]
+                )
+                local rejectedCount = 0
+                for c in mcpEvCaps do ( if (not c[2]) and c[3] == "probe" do rejectedCount += 1 )
+                text += "rejected by this build   : " + (rejectedCount as string) + " (probed, then removed)" + "\n"
+
+                text += "\n" + "Registration failures" + "\n"
+                text += "(a wanted notification that did not register is a real gap)" + "\n"
+                local bad = 0
+                for c in wantedFail do
+                (
+                    bad += 1
+                    text += "  " + (c[1] as string) + ": " + (c[4] as string) + "\n"
+                )
+                for c in mcpEvCaps do
+                (
+                    if (not c[2]) and c[3] == "node" do
+                    (
+                        bad += 1
+                        text += "  " + (c[1] as string) + ": " + (c[4] as string) + "\n"
+                    )
+                )
+                if bad == 0 do text += "  none" + "\n"
+
+                text += "\n" + "Rejected probes (expected on this release)" + "\n"
+                if rejected.count == 0 then
+                (
+                    text += "  none" + "\n"
+                )
+                else
+                (
+                    local line = "  "
+                    for n in rejected do line += (n as string) + " "
+                    text += line + "\n"
+                )
+                text += "\n" + "Environment" + "\n"
+                text += "  log        : " + (mcpUiLogPath()) + "\n"
+                text += "  bridge dir : " + (try ((MCP_BRIDGE_DIR as string)) catch ("?")) + "\n"
+                text += "  modules    : " + (mcpBridgeModules.count as string) + "\n"
+                text += "  handlers   : " + (mcpRegistry.count as string) + "\n"
+                text += "  port       : " + (mcpPort as string) + "\n"
+                text += "  3ds Max    : " + ((mcpMaxYear()) as string) + "\n"
+                text += "\n" + "Install / repair / uninstall are shell commands:" + "\n"
+                text += "  python scripts/install.py --list" + "\n"
+                text += "  python scripts/install.py --client cursor" + "\n"
+                text += "  python scripts/doctor.py" + "\n"
+                if force and mcpSelfTest != undefined then
+                (
+                    text += "\n" + "In-Max self test" + "\n"
+                    text += "----------------------------------------" + "\n"
+                    text += (mcpUiPretty (mcpSelfTest()))
+                )
+                else if force then
+                (
+                    text += "\n" + "(self test module not loaded)" + "\n"
+                )
+            )
+            5:
+            (
+                text += "Scene" + "\n"
+                text += "----------------------------------------" + "\n"
+                text += (mcpUiDomainText "scene" force:force)
+                text += "\n" + "Objects" + "\n" + (mcpUiDomainText "objects" force:force)
+                text += "\n" + "Project" + "\n" + (mcpUiDomainText "project" force:force)
+            )
+            6:
+            (
+                text += "Selection" + "\n"
+                text += "----------------------------------------" + "\n"
+                if force then
+                (
+                    text += (mcpUiPretty (mcpCtxBuildSelection detail:"full" limit:20))
+                )
+                else
+                (
+                    text += (mcpUiDomainText "selection" force:false)
+                )
+            )
+            7:
+            (
+                text += "Assets" + "\n"
+                text += "----------------------------------------" + "\n"
+                text += (mcpUiDomainText "materials" force:force)
+                text += "\n" + "Files" + "\n" + (mcpUiDomainText "assets" force:force)
+            )
+            default: text += "no page" + "\n"
+        )
+    )
+    catch ( text += "PAGE ERROR: " + (mcpErrText (getCurrentException())) + "\n" )
+    text += "\n" + "(" + (((timeStamp()) - t0) as string) + " ms)" + "\n"
+    text
+)
+
+/* WinForms TextBox does not break lines on a lone LF: it renders the page as
+   one wrapped paragraph with the newlines swallowed (measured on the running
+   build - the text held char 10 between rows and still displayed as a single
+   line).  MAXScript builds strings with "\n", so normalise to CRLF on the way
+   into the control and leave the formatters readable. */
+fn mcpUiCrlf s =
+(
+    local out = ""
+    local prev = ""
+    for i = 1 to s.count do
+    (
+        local c = s[i]
+        if c == "\n" then
+        (
+            if prev != "\r" do out += "\r\n"
+        )
+        else out += c
+        prev = c
+    )
+    out
+)
+
+/* force:false is the contract for the Refresh button: read what the context
+   already holds and never rebuild.  Panels that silently re-scan the scene are
+   how a 25 ms pump turns into a stutter. */
+fn mcpUiRefresh force:false =
+(
+    if mcpUiDialog == undefined then return false
+
+    -- Rebuild warms the detail domains before the status pages are rendered,
+    -- so the Context table reports the state the rebuild produced instead of
+    -- the state just before it (where every domain reads stale).
+    local detail = #()
+    if force then
+    (
+        -- Rebuild means every domain, not only the ones with a tab: the
+        -- Context table lists nine of them, and leaving four permanently
+        -- "stale" because no page happens to read them would be a lie about
+        -- the cache.  Measured cost on the 65-object scene: ~80 ms.
+        try ( mcpH_context_refresh #() ) catch()
+        for i = 5 to mcpUiPages.count do append detail (mcpUiPageText i force:true)
+    )
+
+    for i = 1 to mcpUiPages.count do
+    (
+        local src = 0
+        if force do src = i - 4
+        local txt = undefined
+        if src >= 1 and src <= detail.count do txt = detail[src]
+        if txt == undefined do txt = mcpUiPageText i force:false
+        try ( mcpUiPages[i].Text = (mcpUiCrlf txt) ) catch()
+    )
+    true
+)
+
+/*------------------------------ bridge recovery
+   The bridge is the only channel a client has into Max, so `bridge_stop` is a
+   one-way door: the command that would restart it has to travel over the
+   socket it just closed, and `bridge_restart` therefore never arrives.  The
+   panel lives inside Max, so it is the one place that can still call
+   mcpNetStart after the listener is gone.
+
+   It only ever starts or restarts.  There is deliberately no Stop here: a
+   panel button that can close the last door, one mis-click wide, is how the
+   door got closed in the first place. */
+
+fn mcpUiBridgeUp =
+(
+    (mcpRunning == true) and (mcpListener != undefined) and (mcpTimer != undefined)
+)
+
+fn mcpUiBridgeNote =
+(
+    -- Both branches are parenthesised blocks on purpose.  A bare `then <expr>`
+    -- followed by `else` on the next line does not parse.
+    if not (mcpUiBridgeUp()) then
+    (
+        "bridge is DOWN - no client can reach Max (press Start bridge)"
+    )
+    else
+    (
+        local note = "listening on " + (mcpHost as string) + ":" + (mcpPort as string)
+        local n = 0
+        if mcpConns != undefined do n = mcpConns.count
+        note += "   clients=" + (n as string)
+        note
+    )
+)
+
+/* Returns the note string plus whether the pump came up.  mcpNetStart throws
+   on a bind failure, and a listener without a pump is just as dead as no
+   listener at all, so both are reported rather than treated as success. */
+fn mcpUiBridgeStart =
+(
+    local res = #(false, "")
+    local p = undefined
+    try ( p = mcpNetStart() )
+    catch
+    (
+        res[2] = "start failed: " + (mcpErrText (getCurrentException()))
+        return res
+    )
+    local timerOk = false
+    if p != undefined do timerOk = mcpToBool (mcpGet p "timer") fallback:false
+    res[1] = timerOk
+    if timerOk then
+    (
+        res[2] = mcpUiBridgeNote()
+    )
+    else
+    (
+        res[2] = "listener is up but the 25 ms pump did not start"
+    )
+    res
+)
+
+rollout mcpUiRollout "Vino 3dsMax MCP" width:470 height:582
+(
+    dotNetControl tab "System.Windows.Forms.TabControl" pos:[6,6] width:458 height:500
+
+    button btnRefresh "Refresh" pos:[6,512] width:86 height:26
+    button btnRebuild "Rebuild" pos:[96,512] width:82 height:26
+    button btnCopy "Copy page" pos:[182,512] width:86 height:26
+    button btnLog "Open log" pos:[272,512] width:90 height:26
+    button btnClose "Close" pos:[418,512] width:46 height:26
+
+    button btnBridge "Start bridge" pos:[6,542] width:120 height:26
+    label lblBridge "" pos:[134,546] width:330 height:20
+
+    fn buildPages =
+    (
+        mcpUiPages = #()
+        local names = mcpUiPageNames()
+        try ( tab.TabPages.Clear() ) catch()
+        for n in names do
+        (
+            local page = dotNetObject "System.Windows.Forms.TabPage" n
+            local box = dotNetObject "System.Windows.Forms.TextBox"
+            box.Multiline = true
+            box.ReadOnly = true
+            box.WordWrap = false
+            box.ScrollBars = (dotNetClass "System.Windows.Forms.ScrollBars").Both
+            box.Dock = (dotNetClass "System.Windows.Forms.DockStyle").Fill
+            -- Match the Max dark theme; a white text box in a dark rollout
+            -- reads as a bug.
+            box.BackColor = (dotNetClass "System.Drawing.Color").FromArgb 43 43 46
+            box.ForeColor = (dotNetClass "System.Drawing.Color").FromArgb 222 222 222
+            try ( box.Font = dotNetObject "System.Drawing.Font" "Consolas" 9 ) catch()
+            page.Controls.Add box
+            tab.TabPages.Add page
+            append mcpUiPages box
+        )
+    )
+
+    fn syncBridge =
+    (
+        if mcpUiBridgeUp() then
+        (
+            btnBridge.text = "Restart bridge"
+        )
+        else
+        (
+            btnBridge.text = "Start bridge"
+        )
+        try ( lblBridge.text = mcpUiBridgeNote() ) catch()
+    )
+
+    on mcpUiRollout open do
+    (
+        buildPages()
+        mcpUiDialog = true
+        syncBridge()
+        -- Opening the panel is an explicit user action, so the first fill is
+        -- allowed to build the detail domains once.  Every later Refresh reads
+        -- the cache; Rebuild is the only thing that walks the scene again.
+        mcpUiRefresh force:true
+    )
+
+    on btnBridge pressed do
+    (
+        local wasUp = mcpUiBridgeUp()
+        local res = mcpUiBridgeStart()
+        -- A restart invalidates every open client socket, so re-read the pages
+        -- rather than leave Connection showing the state from before the click.
+        syncBridge()
+        local note = res[2]
+        if wasUp then note = "restarted - " + note
+        try ( lblBridge.text = note ) catch()
+        mcpUiRefresh force:false
+    )
+
+    on btnRefresh pressed do ( mcpUiRefresh force:false )
+
+    on btnRebuild pressed do ( mcpUiRefresh force:true )
+
+    on btnCopy pressed do
+    (
+        if mcpUiPages.count > 0 do
+        (
+            local idx = 1
+            try ( idx = tab.SelectedIndex + 1 ) catch ( idx = 1 )
+            if idx >= 1 and idx <= mcpUiPages.count do
+            (
+                try ( setClipboardText mcpUiPages[idx].Text ) catch()
+            )
+        )
+    )
+
+    on btnLog pressed do
+    (
+        local p = mcpUiLogPath()
+        if p != "" do ( try ( shellLaunch p "" ) catch() )
+    )
+
+    on btnClose pressed do ( destroyDialog mcpUiRollout )
+)
+
+fn mcpUiOpen =
+(
+    if mcpUiDialog == true do
+    (
+        try ( destroyDialog mcpUiRollout ) catch()
+        mcpUiDialog = undefined
+    )
+    try ( createDialog mcpUiRollout ) catch ( return false )
+    mcpUiDialog = true
+    mcpUiRefresh force:true
+    true
+)
+
+fn mcpUiClose =
+(
+    try ( destroyDialog mcpUiRollout ) catch()
+    mcpUiDialog = undefined
+    true
+)
+
+/* Tool entry points.  Both are read-only, so they are registered with
+   undoable:false and never enter an undo hold. */
+fn mcpH_client_ui params =
+(
+    local action = toLower (mcpStr params "action" default:"open")
+    local opened = true
+    if action == "close" then opened = mcpUiClose()
+    -- Cache only: a refresh driven from a tool call must never make the
+    -- panel re-walk the scene.  context_refresh is the forcing call.
+    else if action == "refresh" then opened = mcpUiRefresh force:false
+    else opened = mcpUiOpen()
+
+    local p = #()
+    mcpPair p "action" action
+    mcpPair p "open" (mcpUiDialog == true)
+    mcpPair p "pages" mcpUiPages.count
+    mcpPair p "ok" opened
+    mcpPair p "logPath" (mcpUiLogPath())
+    mcpObj p
+)
+
+fn mcpH_client_status params =
+(
+    local p = #()
+    mcpPair p "open" (mcpUiDialog == true)
+    mcpPair p "pages" mcpUiPages.count
+    mcpPair p "pageNames" (mcpUiPageNames())
+    mcpPair p "eventsRunning" (if mcpEvRunning == undefined then false else mcpEvRunning)
+    mcpPair p "revision" (if mcpEvRevision == undefined then 0 else mcpEvRevision)
+    mcpPair p "logPath" (mcpUiLogPath())
+    mcpPair p "bridgeDir" (try ((MCP_BRIDGE_DIR as string)) catch ("?"))
+    mcpObj p
+)
+
+-- Toolbar / quad menu entry.  macroScript with a category makes it reachable
+-- from Customize > Customize User Interface without shipping a .mcr file.
+macroScript Vino3dsMaxMCP
+category:"Vino"
+buttonText:"Vino MCP"
+toolTip:"Open the Vino 3dsMax MCP client panel"
+(
+    on execute do ( mcpUiOpen() )
+)
+
+mcpRegister "client_ui" mcpH_client_ui undoable:false
+mcpRegister "client_status" mcpH_client_status undoable:false

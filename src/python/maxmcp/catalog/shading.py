@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from typing import List
 
-from .schema import Tool, arr, b, i, n, s, tool
+from .schema import Tool, arr, b, hub_tool, i, n, s, tool
 
 TOOLS: List[Tool] = []
 
@@ -950,3 +950,79 @@ TOOLS.append(tool(
     },
     required=["type"],
 ))
+
+
+# ============================================================ compact hub tools
+TOOLS.extend([
+    hub_tool(
+        "mat_hub", "shading",
+        "材质管理、创建、赋材质与材质库综合中枢工具（聚合 29 项材质功能）："
+        "材质列表/详情/对象材质查询、材质编辑器槽位读写、赋材质（mat_assign）、"
+        "设置任意属性/漫反射/PBR/高光/不透明度/自发光/多维子材质、重命名/删除/克隆、"
+        "贴图槽位读写、创建 Standard/Physical/Arnold/VRay/Corona/FStorm/MultiSub/Blend/Shellac/Generic 材质、"
+        "以及材质库加载与保存（mat_library_load/mat_library_save）。",
+        "Consolidated material inventory, creation, assignment & library hub (29 actions): "
+        "mat_list/get/get_for_object/slots/set_slot/assign/set_property/set_diffuse/set_pbr/set_specular/"
+        "set_opacity/set_emission/set_sub_material/rename/delete/duplicate/set_map_slot/get_map_slot, "
+        "all mat_create_* tools, and mat_library_load/save.",
+        actions=[
+            "mat_list", "mat_get", "mat_get_for_object", "mat_slots", "mat_set_slot",
+            "mat_assign", "mat_set_property", "mat_set_diffuse", "mat_set_pbr",
+            "mat_set_specular", "mat_set_opacity", "mat_set_emission", "mat_set_sub_material",
+            "mat_rename", "mat_delete", "mat_duplicate", "mat_set_map_slot", "mat_get_map_slot",
+            "mat_create_standard", "mat_create_physical", "mat_create_arnold", "mat_create_vray",
+            "mat_create_corona", "mat_create_fstorm", "mat_create_generic", "mat_create_multi_sub",
+            "mat_create_blend", "mat_create_shellac", "mat_library_load", "mat_library_save",
+        ],
+        mutating=True,
+        mutates=("materials", "assets", "selection"),
+    ),
+    hub_tool(
+        "map_uvw_hub", "shading",
+        "纹理贴图节点与 UVW 展开映射综合中枢工具（聚合 13 项贴图与 UV 功能）："
+        "创建位图/棋盘格/渐变/渐变坡度/噪波/衰减/色彩校正/法线贴图、设置位图路径（map_set_bitmap_path）、"
+        "以及 UVW 贴图（uvw_map）、UVW 展开（uvw_unwrap）、快速剥皮（uvw_quick_peel）、查询 UV 通道（uvw_get_channels）。",
+        "Consolidated texture maps & UVW mapping hub (13 actions): map_create_bitmap/set_bitmap_path/"
+        "create_checker/gradient/gradient_ramp/noise/falloff/color_correct/normal, plus uvw_map/unwrap/quick_peel/get_channels.",
+        actions=[
+            "map_create_bitmap", "map_set_bitmap_path", "map_create_checker",
+            "map_create_gradient", "map_create_gradient_ramp", "map_create_noise",
+            "map_create_falloff", "map_create_color_correct", "map_create_normal",
+            "uvw_map", "uvw_unwrap", "uvw_quick_peel", "uvw_get_channels",
+        ],
+        mutating=True,
+        mutates=("objects", "selection", "materials", "assets"),
+    ),
+    hub_tool(
+        "light_hub", "shading",
+        "灯光系统综合中枢工具（聚合 12 项布光功能）：通用灯光创建（light_create）、"
+        "泛光灯/聚光灯/平行光/日光/面积光快捷创建、灯光列表/详情/修改/删除、对准对象（light_align_to_object）、"
+        "以及太阳方位角/高度角调节（light_set_sun）。",
+        "Consolidated lighting system hub (12 actions): light_create, light_create_omni/spot/directional/sun/area, "
+        "light_list, light_get, light_set, light_delete, light_align_to_object, light_set_sun.",
+        actions=[
+            "light_create", "light_create_omni", "light_create_spot", "light_create_directional",
+            "light_create_sun", "light_create_area", "light_list", "light_get", "light_set",
+            "light_delete", "light_align_to_object", "light_set_sun",
+        ],
+        mutating=True,
+        mutates=("objects", "render", "selection"),
+    ),
+    hub_tool(
+        "cam_env_hub", "shading",
+        "相机与场景环境曝光综合中枢工具（聚合 14 项相机与环境功能）："
+        "创建相机/物理相机、读取/修改/列出/删除相机、视口透过相机观察/对齐到视图/设相机视口、"
+        "以及环境读取、背景色、背景贴图、环境光色与曝光控制器设置（env_*）。",
+        "Consolidated cameras & environment/exposure hub (14 actions): cam_create, cam_create_physical, "
+        "cam_get, cam_set, cam_look_through, cam_align_to_view, cam_set_viewport, cam_list, cam_delete, "
+        "env_get, env_set_background_color, env_set_background_map, env_set_ambient, env_set_exposure.",
+        actions=[
+            "cam_create", "cam_create_physical", "cam_get", "cam_set", "cam_look_through",
+            "cam_align_to_view", "cam_set_viewport", "cam_list", "cam_delete",
+            "env_get", "env_set_background_color", "env_set_background_map",
+            "env_set_ambient", "env_set_exposure",
+        ],
+        mutating=True,
+        mutates=("objects", "render", "selection", "materials"),
+    ),
+])

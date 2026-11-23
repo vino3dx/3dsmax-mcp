@@ -339,7 +339,7 @@ def check_workflow_listing_and_dry_run():
         is_error, listing = h.call("workflow_run", {})
         assert not is_error, listing
         names = [item["name"] for item in listing["workflows"]]
-        assert names == ["basic_scene", "model_processing", "material_look"]
+        assert names == ["basic_scene", "model_processing", "material_look", "asset_layout"]
 
         is_error, plan = h.call("workflow_run", {"workflow": "basic_scene", "dry_run": True})
         assert not is_error, plan
@@ -371,7 +371,7 @@ def check_unknown_and_nested_workflow_are_refused():
         guard = h.server._tool_workflow_run({"workflow": "does_not_exist"})
         assert guard["failures"][0]["kind"] == "workflow_unknown"
         assert sorted(guard["failures"][0]["available"]) == [
-            "basic_scene", "material_look", "model_processing"]
+            "asset_layout", "basic_scene", "material_look", "model_processing"]
 
         is_error, payload = h.call("workflow_run", {"steps": [
             {"id": "s1", "operation": "workflow_run", "arguments": {}}]})
@@ -692,10 +692,27 @@ def check_unknown_verification_kind_is_refused():
         h.close()
 
 
+def check_workflow_asset_layout():
+    h = Harness()
+    try:
+        is_error, record = workflow(h, "asset_layout")
+        assert not is_error, record
+        assert record["status"] == "success", record["summary"]
+        assert record["summary"]["total"] == 7
+        assert record["summary"]["succeeded"] == 7
+        table = h.scene.node("LayoutTable")
+        crate = h.scene.node("LayoutCrate")
+        assert table is not None and abs(table["boundingBox"]["min"][2] - 0.0) <= 0.01
+        assert crate is not None and abs(crate["boundingBox"]["min"][2] - 40.0) <= 0.01
+    finally:
+        h.close()
+
+
 def main():
     check_workflow_basic_scene()
     check_workflow_model_processing()
     check_workflow_material_look()
+    check_workflow_asset_layout()
     check_snapshot_and_baseline_diff()
     check_snapshot_truncation()
     check_rename_is_not_delete_plus_create()
