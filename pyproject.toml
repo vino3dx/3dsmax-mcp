@@ -3,13 +3,13 @@ requires = ["setuptools>=61"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "3dsmax-mcp"
+name = "vino3dx-3dsmax-mcp"
 version = "0.1.0"
 description = "MCP plugin that lets AI agents drive Autodesk 3ds Max (2020 and later) for modelling, materials, rigging, animation, rendering, baking and engine export."
 readme = "README.md"
 requires-python = ">=3.8"
 license = { text = "MIT" }
-authors = [{ name = "3dsmax-mcp contributors" }]
+authors = [{ name = "Vino" }]
 keywords = ["mcp", "3dsmax", "autodesk", "maxscript", "ai", "agent", "dcc"]
 classifiers = [
     "Development Status :: 4 - Beta",
@@ -33,8 +33,8 @@ dev = ["pytest>=7", "ruff>=0.5"]
 3dsmax-mcp = "maxmcp.server:main"
 
 [project.urls]
-Homepage = "https://github.com/vino3dx/3dsmax-ai-mcp"
-Changelog = "https://github.com/vino3dx/3dsmax-ai-mcp/blob/main/docs/CHANGELOG.md"
+Homepage = "https://github.com/vino3dx/3dsmax-mcp"
+Changelog = "https://github.com/vino3dx/3dsmax-mcp/blob/main/docs/CHANGELOG.md"
 
 [tool.setuptools]
 package-dir = { "" = "src/python" }
