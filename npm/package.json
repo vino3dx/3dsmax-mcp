@@ -1,5 +1,5 @@
 {
-  "name": "@vino3dx/3dsmax-mcp",
+  "name": "vino-3dsmax-mcp",
   "version": "0.1.0",
   "description": "Launcher for the 3dsmax-mcp Python MCP server",
   "license": "MIT",
