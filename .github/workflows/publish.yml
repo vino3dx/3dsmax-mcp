@@ -185,6 +185,19 @@ jobs:
             echo "::warning::CHANGELOG 中没有 ${VERSION} 段落，改用 GitHub 自动生成说明"
           fi
 
+      - name: Package release archive
+        if: steps.check.outputs.exists == 'false'
+        id: pkg
+        shell: bash
+        env:
+          TITLE: ${{ steps.meta.outputs.title }}
+        run: |
+          set -euo pipefail
+          ARCHIVE="${RUNNER_TEMP}/${TITLE}.zip"
+          zip -r "${ARCHIVE}" src scripts pyproject.toml README.md README.zh-CN.md LICENSE
+          echo "archive=${ARCHIVE}" >> "${GITHUB_OUTPUT}"
+          echo "已打包 Release 压缩包：${ARCHIVE}"
+
       - name: Create GitHub Release
         if: steps.check.outputs.exists == 'false'
         shell: bash
@@ -192,6 +205,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ steps.meta.outputs.tag }}
           TITLE: ${{ steps.meta.outputs.title }}
+          ARCHIVE: ${{ steps.pkg.outputs.archive }}
           NOTES_FILE: ${{ steps.notes.outputs.notes_file }}
           FROM_CHANGELOG: ${{ steps.notes.outputs.from_changelog }}
           PRERELEASE: ${{ inputs.prerelease }}
@@ -207,7 +221,7 @@ jobs:
           if [ "${PRERELEASE}" = "true" ]; then ARGS+=(--prerelease); fi
           if [ "${DRAFT}" = "true" ]; then ARGS+=(--draft); fi
 
-          gh release create "${TAG}" "${ARGS[@]}"
+          gh release create "${TAG}" "${ARCHIVE}" "${ARGS[@]}"
           echo "已创建 Release：${TITLE}"
 
       - name: Sync README and publish to npm

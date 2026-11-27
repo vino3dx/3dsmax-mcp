@@ -12,7 +12,25 @@ An MCP (Model Context Protocol) server and in-process MAXScript bridge for conne
 
 ## Quick Start & Installation
 
-### 1. Install the 3ds Max Bridge & Server (PowerShell)
+### 1. Install the 3ds Max Bridge & Server
+
+**Option 1 — One-Line PowerShell Installer (Recommended, no Git required):**
+
+Open PowerShell and run:
+
+```powershell
+irm https://raw.githubusercontent.com/vino3dx/3dsmax-mcp/main/scripts/install.ps1 | iex
+```
+
+**Option 2 — Download Release Zip (No command-line download needed):**
+
+1. Download the latest `3dsmax-mcp-v*.zip` from [GitHub Releases](https://github.com/vino3dx/3dsmax-mcp/releases).
+2. Extract the zip file, open PowerShell in the extracted folder, and run:
+   ```powershell
+   python scripts/install.py --yes
+   ```
+
+**Option 3 — Git Clone (For developers):**
 
 ```powershell
 git clone https://github.com/vino3dx/3dsmax-mcp.git

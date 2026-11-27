@@ -12,7 +12,25 @@ An MCP (Model Context Protocol) plugin that gives AI agents full control of Auto
 
 ## 快速安装与配置
 
-### 1. 安装 3ds Max 桥接与服务端（PowerShell）
+### 1. 安装 3ds Max 桥接与服务端
+
+**方式一：PowerShell 一行命令安装（最简单推荐，无需安装 Git）：**
+
+打开 PowerShell 运行：
+
+```powershell
+irm https://raw.githubusercontent.com/vino3dx/3dsmax-mcp/main/scripts/install.ps1 | iex
+```
+
+**方式二：下载 GitHub Release 压缩包（适合不熟悉命令行下载的用户）：**
+
+1. 前往 [GitHub Releases](https://github.com/vino3dx/3dsmax-mcp/releases) 下载最新的 `3dsmax-mcp-v*.zip`。
+2. 解压后，在解压目录中打开 PowerShell 运行：
+   ```powershell
+   python scripts/install.py --yes
+   ```
+
+**方式三：Git 克隆源码安装（适合开发者）：**
 
 ```powershell
 git clone https://github.com/vino3dx/3dsmax-mcp.git
