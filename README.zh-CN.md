@@ -6,6 +6,55 @@
 An MCP (Model Context Protocol) plugin that gives AI agents full control of Autodesk
 3ds Max for modelling, shading, rigging, animation, rendering, baking and engine export.
 
+[English](README.md) · [简体中文](README.zh-CN.md)
+
+---
+
+## 快速安装与配置
+
+### 1. 安装 3ds Max 桥接与服务端（PowerShell）
+
+```powershell
+git clone https://github.com/vino3dx/3dsmax-mcp.git
+cd 3dsmax-mcp
+python scripts/install.py --yes
+```
+
+> **重要提示：** 安装完成后请**重启 3ds Max**，使启动脚本自动加载 MAXScript 桥接模块。
+
+### 2. 配置 AI 客户端（`mcp.json`）
+
+将以下配置添加到你的 MCP 客户端（Cursor、Claude Desktop、Windsurf、Cline、WorkBuddy 等）中：
+
+**方式 A — 通过 `npx` 启动（推荐）：**
+
+```json
+{
+  "mcpServers": {
+    "3dsmax-mcp": {
+      "command": "npx",
+      "args": ["-y", "vino-3dsmax-mcp"]
+    }
+  }
+}
+```
+
+**方式 B — 通过本地 Python 启动：**
+
+```json
+{
+  "mcpServers": {
+    "3dsmax-mcp": {
+      "command": "python",
+      "args": ["-m", "maxmcp.server"],
+      "env": {
+        "PYTHONPATH": "C:\\path\\to\\3dsmax-mcp\\src\\python"
+      }
+    }
+  }
+}
+```
+
 ---
 
 ## 目录

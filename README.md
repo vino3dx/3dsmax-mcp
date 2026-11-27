@@ -10,6 +10,53 @@ An MCP (Model Context Protocol) server and in-process MAXScript bridge for conne
 
 ---
 
+## Quick Start & Installation
+
+### 1. Install the 3ds Max Bridge & Server (PowerShell)
+
+```powershell
+git clone https://github.com/vino3dx/3dsmax-mcp.git
+cd 3dsmax-mcp
+python scripts/install.py --yes
+```
+
+> **Important:** Restart **3ds Max** after installation so its startup script loads the MAXScript bridge.
+
+### 2. Configure Your AI Client (`mcp.json`)
+
+Add `3dsmax-mcp` to your MCP client configuration (Cursor, Claude Desktop, Windsurf, Cline, WorkBuddy, etc.):
+
+**Option A — via `npx` (Recommended):**
+
+```json
+{
+  "mcpServers": {
+    "3dsmax-mcp": {
+      "command": "npx",
+      "args": ["-y", "vino-3dsmax-mcp"]
+    }
+  }
+}
+```
+
+**Option B — via local Python:**
+
+```json
+{
+  "mcpServers": {
+    "3dsmax-mcp": {
+      "command": "python",
+      "args": ["-m", "maxmcp.server"],
+      "env": {
+        "PYTHONPATH": "C:\\path\\to\\3dsmax-mcp\\src\\python"
+      }
+    }
+  }
+}
+```
+
+---
+
 ## Overview
 
 3dsmax-mcp connects an MCP-compatible AI client to a running 3ds Max instance. It exposes structured tools for inspecting and editing scenes, while the MAXScript bridge performs operations inside 3ds Max.
