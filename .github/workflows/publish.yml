@@ -1,8 +1,8 @@
-name: Release
+name: Publish
 
 # 两种触发方式：
-#   1) push 一个 v*.*.* 标签（例如 git push origin v0.1.0）→ 自动创建 GitHub Release
-#   2) Actions 页面手动运行（workflow_dispatch）→ 自动创建并推送标签，再创建 Release
+#   1) push 一个 v*.*.* 标签（例如 git push origin v0.1.0）→ 自动创建 GitHub Release 并发布到 npm
+#   2) Actions 页面手动运行（workflow_dispatch）→ 自动创建并推送标签，创建 Release 并发布到 npm
 #
 # Release 标题规则：<RELEASE_TITLE_PREFIX>-<tag>，当前为 3dsmax-mcp-v0.1.0
 
@@ -17,12 +17,12 @@ on:
         required: true
         type: string
       prerelease:
-        description: "标记为 pre-release"
+        description: "标记为 pre-release（npm 将使用 next 标签）"
         required: false
         type: boolean
         default: false
       draft:
-        description: "创建为草稿（不立即公开）"
+        description: "创建为草稿（不立即公开，且跳过 npm 发布）"
         required: false
         type: boolean
         default: false
@@ -33,15 +33,15 @@ permissions:
 
 # 同一个标签不并发发布，且不取消正在进行的发布
 concurrency:
-  group: release-${{ github.ref }}
+  group: publish-${{ github.ref }}
   cancel-in-progress: false
 
 env:
   RELEASE_TITLE_PREFIX: "3dsmax-mcp"
 
 jobs:
-  release:
-    name: Tag + Release
+  publish:
+    name: Tag + Release + npm Publish
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -59,6 +59,7 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: "22"
+          registry-url: "https://registry.npmjs.org"
 
       - name: Validate Python package build
         run: |
@@ -104,10 +105,11 @@ jobs:
           VERSION: ${{ steps.meta.outputs.version }}
         run: |
           set -euo pipefail
-          # 发布版本的唯一来源：pyproject.toml / maxmcp.config.VERSION，两者必须与标签一致
+          # 发布版本的唯一来源：pyproject.toml / maxmcp.config.VERSION / npm/package.json，三者必须与标签一致
           PYPROJECT_VERSION="$(grep -m1 -E '^version[[:space:]]*=' pyproject.toml | sed -E 's/.*"([^"]+)".*/\1/')"
           CONFIG_VERSION="$(grep -m1 -E '^VERSION[[:space:]]*=' src/python/maxmcp/config.py | sed -E 's/.*"([^"]+)".*/\1/')"
-          echo "标签版本=${VERSION} pyproject=${PYPROJECT_VERSION} config.VERSION=${CONFIG_VERSION}"
+          NPM_VERSION="$(node -p "require('./npm/package.json').version")"
+          echo "标签版本=${VERSION} pyproject=${PYPROJECT_VERSION} config.VERSION=${CONFIG_VERSION} npm=${NPM_VERSION}"
           FAIL=0
           if [ "${PYPROJECT_VERSION}" != "${VERSION}" ]; then
             echo "::error::pyproject.toml 版本 ${PYPROJECT_VERSION} 与标签版本 ${VERSION} 不一致"
@@ -115,6 +117,10 @@ jobs:
           fi
           if [ "${CONFIG_VERSION}" != "${VERSION}" ]; then
             echo "::error::src/python/maxmcp/config.py VERSION ${CONFIG_VERSION} 与标签版本 ${VERSION} 不一致"
+            FAIL=1
+          fi
+          if [ "${NPM_VERSION}" != "${VERSION}" ]; then
+            echo "::error::npm/package.json version ${NPM_VERSION} 与标签版本 ${VERSION} 不一致"
             FAIL=1
           fi
           exit "${FAIL}"
@@ -203,14 +209,40 @@ jobs:
           gh release create "${TAG}" "${ARGS[@]}"
           echo "已创建 Release：${TITLE}"
 
+      - name: Sync README and publish to npm
+        if: inputs.draft != true
+        shell: bash
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          VERSION: ${{ steps.meta.outputs.version }}
+          PRERELEASE: ${{ inputs.prerelease }}
+        run: |
+          set -euo pipefail
+          cp README.md npm/README.md
+          cp LICENSE npm/LICENSE
+          PKG_NAME="$(node -p "require('./npm/package.json').name")"
+          if npm view "${PKG_NAME}@${VERSION}" version >/dev/null 2>&1; then
+            echo "::notice::npm 包 ${PKG_NAME}@${VERSION} 已存在，跳过发布"
+            exit 0
+          fi
+          cd npm
+          PUBLISH_ARGS=(--access public)
+          if [ "${PRERELEASE}" = "true" ]; then
+            PUBLISH_ARGS+=(--tag next)
+          fi
+          npm publish "${PUBLISH_ARGS[@]}"
+          echo "已发布到 npm：${PKG_NAME}@${VERSION}"
+
       - name: Summary
         if: steps.check.outputs.exists == 'false'
         shell: bash
         env:
           TAG: ${{ steps.meta.outputs.tag }}
           TITLE: ${{ steps.meta.outputs.title }}
+          VERSION: ${{ steps.meta.outputs.version }}
         run: |
           set -euo pipefail
+          PKG_NAME="$(node -p "require('./npm/package.json').name")"
           {
             echo "## 发布完成"
             echo ""
@@ -218,6 +250,7 @@ jobs:
             echo "|---|---|"
             echo "| 标签 | \`${TAG}\` |"
             echo "| Release 标题 | ${TITLE} |"
+            echo "| npm 包 | \`${PKG_NAME}@${VERSION}\` |"
             echo "| 提交 | \`${GITHUB_SHA}\` |"
             echo "| 页面 | ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/releases/tag/${TAG} |"
           } >> "${GITHUB_STEP_SUMMARY}"

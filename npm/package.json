@@ -1,6 +1,6 @@
 {
   "name": "vino-3dsmax-mcp",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Launcher for the 3dsmax-mcp Python MCP server",
   "license": "MIT",
   "bin": {

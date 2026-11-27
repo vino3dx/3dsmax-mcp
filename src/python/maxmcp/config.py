@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
 APP_NAME = "3dsmax-mcp"
-VERSION = "0.1.0"
+VERSION = "0.1.1"
 PROTOCOL_VERSION = "2025-06-18"
 SUPPORTED_PROTOCOL_VERSIONS = ("2025-06-18", "2025-03-26", "2024-11-05")
 
