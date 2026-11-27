@@ -27,9 +27,10 @@ on:
         type: boolean
         default: false
 
-# 创建 Release / 推送标签都需要 contents: write
+# 创建 Release / 推送标签需要 contents: write；OIDC 受信任发布需要 id-token: write
 permissions:
   contents: write
+  id-token: write
 
 # 同一个标签不并发发布，且不取消正在进行的发布
 concurrency:
@@ -213,20 +214,20 @@ jobs:
         if: inputs.draft != true
         shell: bash
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           VERSION: ${{ steps.meta.outputs.version }}
           PRERELEASE: ${{ inputs.prerelease }}
         run: |
           set -euo pipefail
           cp README.md npm/README.md
           cp LICENSE npm/LICENSE
+          npm install -g npm@latest
           PKG_NAME="$(node -p "require('./npm/package.json').name")"
           if npm view "${PKG_NAME}@${VERSION}" version >/dev/null 2>&1; then
             echo "::notice::npm 包 ${PKG_NAME}@${VERSION} 已存在，跳过发布"
             exit 0
           fi
           cd npm
-          PUBLISH_ARGS=(--access public)
+          PUBLISH_ARGS=(--access public --provenance)
           if [ "${PRERELEASE}" = "true" ]; then
             PUBLISH_ARGS+=(--tag next)
           fi
