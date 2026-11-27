@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "vino3dx-3dsmax-mcp"
-version = "0.1.1"
+version = "0.1.2"
 description = "MCP plugin that lets AI agents drive Autodesk 3ds Max (2020 and later) for modelling, materials, rigging, animation, rendering, baking and engine export."
 readme = "README.md"
 requires-python = ">=3.8"
